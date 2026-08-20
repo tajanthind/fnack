@@ -50,6 +50,12 @@ music/*
 *.log
 logs/
 
+# Archives & Backups
+*.tar.gz
+*.tar
+*.zip
+*.bak
+
 # IDEs and OS
 .idea/
 .vscode/

@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   fnack:
-    image: fnack:latest
+    image: ghcr.io/tajanthind/fnack:latest
     build:
       context: .
       dockerfile: Dockerfile
