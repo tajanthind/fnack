@@ -1,0 +1,28 @@
+FROM python:3.11-slim-bookworm
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb procps curl && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV CHROME_PATH=/usr/bin/chromium \
+    DISPLAY=:99 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+RUN chmod +x /app/entrypoint.sh
+
+RUN mkdir -p /config /downloads /music
+VOLUME ["/config", "/downloads", "/music"]
+
+EXPOSE 4688
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:4688/api/artists || exit 1
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["gunicorn", "-k", "geventwebsocket.gunicorn.workers.GeventWebSocketWorker", "-w", "1", "-b", "0.0.0.0:4688", "app:app"]

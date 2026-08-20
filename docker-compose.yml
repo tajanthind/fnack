@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  fnack:
+    image: fnack:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fnack
+    ports:
+      - "4688:4688"
+    volumes:
+      - ./config:/config
+      - ./downloads:/downloads
+      - ${MUSIC_PATH:-/home/tajanthind/Music}:/music
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-}
+      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
+      - CHROME_PATH=/usr/bin/chromium
+      - DISPLAY=:99
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4688/api/artists || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  fnack_downloads:

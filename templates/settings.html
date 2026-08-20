@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fnack — Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('fnack_theme') || 'onyx-dark';
+      const isLight = savedTheme.includes('light');
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      document.documentElement.setAttribute('data-bs-theme', isLight ? 'light' : 'dark');
+    })();
+  </script>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <nav class="navbar navbar-custom sticky-top">
+    <div class="container-fluid d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center gap-3">
+        <a class="brand-logo" href="/">
+          <i class="fas fa-compact-disc text-danger"></i>
+          <span>fnack</span>
+        </a>
+        <div class="d-none d-md-flex align-items-center gap-1 ms-3">
+          <a href="/" class="nav-link-custom"><i class="fas fa-th-large me-1"></i>Library</a>
+          <a href="/import" class="nav-link-custom"><i class="fas fa-file-import me-1"></i>Import</a>
+          <a href="/queue" class="nav-link-custom"><i class="fas fa-tasks me-1"></i>Activity</a>
+          <a href="/settings" class="nav-link-custom active"><i class="fas fa-cog me-1"></i>Settings</a>
+        </div>
+      </div>
+
+      <div class="d-flex align-items-center gap-2">
+        <a href="/" class="btn btn-outline-secondary btn-sm">
+          <i class="fas fa-arrow-left me-1"></i>Dashboard
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <div class="container py-4" style="max-width: 780px; padding-bottom: 100px;">
+    
+    <!-- Page Header with Top Save Button -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4 pb-2 border-bottom border-secondary border-opacity-25">
+      <div class="d-flex align-items-center gap-3">
+        <div>
+          <div class="d-flex align-items-center gap-2">
+            <h3 class="fw-bold m-0"><i class="fas fa-sliders-h text-danger me-2"></i>Application Settings</h3>
+            <span class="badge bg-secondary-subtle text-secondary font-monospace">v{{ app_version }}</span>
+          </div>
+          <p class="text-secondary small m-0 mt-1">Configure lossless download engines, concurrency, and library directories.</p>
+        </div>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <button id="topSaveBtn" class="btn btn-save-prominent btn-sm d-flex align-items-center gap-2" onclick="saveSettings()">
+          <i class="fas fa-save"></i>
+          <span class="save-btn-text">Save Settings</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Unsaved Changes Warning Banner (Appears when inputs are modified) -->
+    <div id="unsavedBanner" class="unsaved-alert-banner mb-4 d-none">
+      <div class="d-flex align-items-center gap-2">
+        <i class="fas fa-exclamation-triangle text-warning fs-5"></i>
+        <div>
+          <span class="fw-bold text-white small d-block">You have unsaved changes!</span>
+          <span class="text-secondary small">Click "Save Settings" below or at the top to apply your new configuration.</span>
+        </div>
+      </div>
+      <button class="btn btn-brand btn-sm fw-bold px-3" onclick="saveSettings()">
+        <i class="fas fa-save me-1"></i>Save Now
+      </button>
+    </div>
+
+    <!-- Interface Appearance & Themes (6 Themes: 3 Dark + 3 Light) -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+          <h5 class="fw-bold m-0"><i class="fas fa-palette text-danger me-2"></i>Interface Appearance & Themes</h5>
+          <span class="badge bg-secondary-subtle text-secondary">6 Themes (3 Dark / 3 Light)</span>
+        </div>
+        <p class="text-secondary small mb-3">Choose your color palette. Themes update live across the entire application and persist in local storage.</p>
+
+        <!-- Dark Themes -->
+        <h6 class="fw-bold text-secondary text-uppercase small mb-2" style="font-size: 0.75rem; letter-spacing: 0.5px;">
+          <i class="fas fa-moon me-1"></i>Dark Themes
+        </h6>
+        <div class="row g-3 mb-4">
+          <!-- Onyx Red -->
+          <div class="col-12 col-md-4">
+            <div class="theme-card" id="themeCard_onyx-dark" onclick="selectTheme('onyx-dark')">
+              <div class="theme-card-preview">
+                <span class="theme-swatch" style="background-color: #0b0f19;"></span>
+                <span class="theme-swatch" style="background-color: #1f2937;"></span>
+                <span class="theme-swatch" style="background-color: #e94560;"></span>
+              </div>
+              <div class="theme-card-title">
+                <span>Onyx Red</span>
+                <span class="theme-check-icon d-none" id="check_onyx-dark"><i class="fas fa-check-circle"></i></span>
+              </div>
+              <div class="theme-card-desc">Obsidian dark background with vivid crimson accents.</div>
+            </div>
+          </div>
+          <!-- Midnight Ocean -->
+          <div class="col-12 col-md-4">
+            <div class="theme-card" id="themeCard_ocean-dark" onclick="selectTheme('ocean-dark')">
+              <div class="theme-card-preview">
+                <span class="theme-swatch" style="background-color: #080d1a;"></span>
+                <span class="theme-swatch" style="background-color: #1e293b;"></span>
+                <span class="theme-swatch" style="background-color: #06b6d4;"></span>
+              </div>
+              <div class="theme-card-title">
+                <span>Midnight Ocean</span>
+                <span class="theme-check-icon d-none" id="check_ocean-dark"><i class="fas fa-check-circle"></i></span>
+              </div>
+              <div class="theme-card-desc">Deep navy slate background with electric cyan accents.</div>
+            </div>
+          </div>
+          <!-- Emerald Cyber -->
+          <div class="col-12 col-md-4">
+            <div class="theme-card" id="themeCard_emerald-dark" onclick="selectTheme('emerald-dark')">
+              <div class="theme-card-preview">
+                <span class="theme-swatch" style="background-color: #060b08;"></span>
+                <span class="theme-swatch" style="background-color: #15241b;"></span>
+                <span class="theme-swatch" style="background-color: #10b981;"></span>
+              </div>
+              <div class="theme-card-title">
+                <span>Emerald Cyber</span>
+                <span class="theme-check-icon d-none" id="check_emerald-dark"><i class="fas fa-check-circle"></i></span>
+              </div>
+              <div class="theme-card-desc">Matrix jet-black background with neon emerald accents.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Light Themes -->
+        <h6 class="fw-bold text-secondary text-uppercase small mb-2" style="font-size: 0.75rem; letter-spacing: 0.5px;">
+          <i class="fas fa-sun me-1"></i>Light Themes
+        </h6>
+        <div class="row g-3">
+          <!-- Nordic Frost -->
+          <div class="col-12 col-md-4">
+            <div class="theme-card" id="themeCard_nordic-light" onclick="selectTheme('nordic-light')">
+              <div class="theme-card-preview">
+                <span class="theme-swatch" style="background-color: #f1f5f9;"></span>
+                <span class="theme-swatch" style="background-color: #ffffff;"></span>
+                <span class="theme-swatch" style="background-color: #2563eb;"></span>
+              </div>
+              <div class="theme-card-title">
+                <span>Nordic Frost</span>
+                <span class="theme-check-icon d-none" id="check_nordic-light"><i class="fas fa-check-circle"></i></span>
+              </div>
+              <div class="theme-card-desc">Crisp white/ice surface with vibrant royal blue accents.</div>
+            </div>
+          </div>
+          <!-- Warm Amber -->
+          <div class="col-12 col-md-4">
+            <div class="theme-card" id="themeCard_amber-light" onclick="selectTheme('amber-light')">
+              <div class="theme-card-preview">
+                <span class="theme-swatch" style="background-color: #faf6f0;"></span>
+                <span class="theme-swatch" style="background-color: #ffffff;"></span>
+                <span class="theme-swatch" style="background-color: #ea580c;"></span>
+              </div>
+              <div class="theme-card-title">
+                <span>Warm Amber</span>
+                <span class="theme-check-icon d-none" id="check_amber-light"><i class="fas fa-check-circle"></i></span>
+              </div>
+              <div class="theme-card-desc">Warm linen cream surface with bold tangerine amber accents.</div>
+            </div>
+          </div>
+          <!-- Rose Latte -->
+          <div class="col-12 col-md-4">
+            <div class="theme-card" id="themeCard_rose-light" onclick="selectTheme('rose-light')">
+              <div class="theme-card-preview">
+                <span class="theme-swatch" style="background-color: #fdf4f5;"></span>
+                <span class="theme-swatch" style="background-color: #ffffff;"></span>
+                <span class="theme-swatch" style="background-color: #e11d48;"></span>
+              </div>
+              <div class="theme-card-title">
+                <span>Rose Latte</span>
+                <span class="theme-check-icon d-none" id="check_rose-light"><i class="fas fa-check-circle"></i></span>
+              </div>
+              <div class="theme-card-desc">Soft pastel blush surface with crimson rose accents.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Download Engine Settings -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <h5 class="fw-bold mb-3"><i class="fas fa-bolt text-warning me-2"></i>Download Engines</h5>
+
+        <!-- SpotiFLAC (Primary) -->
+        <div class="p-3 bg-dark rounded mb-3">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <div class="d-flex align-items-center gap-2">
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input settings-input" type="checkbox" id="setEnableSpotiflac" checked>
+              </div>
+              <h6 class="fw-bold m-0 text-white">SpotiFLAC Engine (Primary Lossless)</h6>
+            </div>
+            <span class="badge bg-success-subtle text-success">Zero Auth Required</span>
+          </div>
+          <p class="text-secondary small mb-3">Fetches true lossless FLAC streams from Tidal, Qobuz, SoundCloud, and Deezer without account credentials.</p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary">Preferred Audio Quality</label>
+              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setSpotiflacQuality">
+                <option value="LOSSLESS" selected>LOSSLESS (16-bit / 24-bit FLAC)</option>
+                <option value="HIGH">HIGH (320kbps)</option>
+                <option value="LOW">LOW (160kbps)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- yt-dlp (Fallback) -->
+        <div class="p-3 bg-dark rounded">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <div class="d-flex align-items-center gap-2">
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input settings-input" type="checkbox" id="setEnableYtdlp" checked>
+              </div>
+              <h6 class="fw-bold m-0 text-white">yt-dlp Engine (Fallback)</h6>
+            </div>
+            <span class="badge bg-secondary-subtle text-secondary">Secondary Fallback</span>
+          </div>
+          <p class="text-secondary small mb-3">Direct YouTube / YouTube Music audio extraction with candidate scoring & Topic channel prioritization.</p>
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label small text-secondary">Output Format</label>
+              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setYtdlpFormat">
+                <option value="opus" selected>Opus (Native YouTube 160kbps — Zero Transcoding / Recommended)</option>
+                <option value="m4a">M4A / AAC (Native 128kbps AAC — Zero Transcoding)</option>
+                <option value="flac">FLAC (Transcoded Container)</option>
+                <option value="mp3">MP3 (Transcoded 320kbps)</option>
+              </select>
+              <div class="form-text text-secondary small">
+                <strong>Opus</strong> is YouTube's highest quality native audio stream (~160kbps Opus). Selecting Opus or M4A downloads and remuxes the original stream with <em>zero transcoding</em>.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Album Artwork & Cover Art -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <h5 class="fw-bold mb-3"><i class="fas fa-image text-danger me-2"></i>Album Artwork & Cover Art</h5>
+        <p class="text-secondary small mb-3">Control how album covers are saved in directory folders and embedded inside audio files.</p>
+
+        <div class="bg-dark p-3 rounded mb-3">
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input settings-input" type="checkbox" id="setSaveCoverArt" checked>
+            <label class="form-check-label fw-bold text-white small" for="setSaveCoverArt">Save Album Cover Art in Album Folders</label>
+            <div class="text-secondary small">Automatically downloads high-resolution artwork into the album directory as <code>cover.jpg</code> or <code>folder.jpg</code> (Navidrome-compatible).</div>
+          </div>
+
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary">Cover Art Filename</label>
+              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setCoverArtFilename">
+                <option value="cover.jpg" selected>cover.jpg (Default / Navidrome)</option>
+                <option value="folder.jpg">folder.jpg (Windows / Plex)</option>
+                <option value="both">Both cover.jpg & folder.jpg</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-check form-switch">
+            <input class="form-check-input settings-input" type="checkbox" id="setEmbedCoverArt" checked>
+            <label class="form-check-label fw-bold text-white small" for="setEmbedCoverArt">Embed Artwork in Audio Tags</label>
+            <div class="text-secondary small">Embeds front cover image bytes into FLAC Picture blocks and MP3/M4A ID3 tags during download.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Song Identification & Matching (Sonarr-Style) -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <h5 class="fw-bold mb-3"><i class="fas fa-fingerprint text-info me-2"></i>Song Identification & Audio Matching</h5>
+        <p class="text-secondary small mb-3">Sonarr-style verification parameters to eliminate mismatched, live, or wrong versions of songs.</p>
+
+        <div class="bg-dark p-3 rounded mb-3">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary fw-bold">Duration Strictness Profile</label>
+              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setMatchingStrictness">
+                <option value="strict">Strict (±4.0s tolerance — Highest accuracy)</option>
+                <option value="standard" selected>Standard (±8.0s tolerance — Recommended)</option>
+                <option value="lenient">Lenient (±15.0s tolerance)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input settings-input" type="checkbox" id="setRejectMismatches" checked>
+            <label class="form-check-label fw-bold text-white small" for="setRejectMismatches">Reject Mismatched Audio</label>
+            <div class="text-secondary small">If downloaded audio fails strict duration and tag verification, discard it immediately rather than keeping the incorrect song.</div>
+          </div>
+
+          <div class="form-check form-switch">
+            <input class="form-check-input settings-input" type="checkbox" id="setEnableFolderWatcher" checked>
+            <label class="form-check-label fw-bold text-white small" for="setEnableFolderWatcher">Real-Time /music Folder Watcher</label>
+            <div class="text-secondary small">Monitors the <code>/music</code> storage directory for deleted or relocated audio files in the background and keeps the database in sync.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navidrome Subsonic Integration -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <h5 class="fw-bold m-0"><i class="fas fa-broadcast-tower text-success me-2"></i>Navidrome Integration</h5>
+          <span class="badge bg-success-subtle text-success">Subsonic API</span>
+        </div>
+        <p class="text-secondary small mb-3">Connect your Navidrome music server to trigger automatic library rescans whenever fnack finishes downloading albums or songs.</p>
+
+        <div class="bg-dark p-3 rounded mb-3">
+          <div class="row g-3 mb-3">
+            <div class="col-md-12">
+              <label class="form-label small text-secondary fw-bold">Navidrome Server URL</label>
+              <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="setNavidromeUrl" placeholder="http://192.168.1.50:4533">
+              <div class="form-text text-secondary small">Your Navidrome web address or IP.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary fw-bold">Username</label>
+              <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="setNavidromeUser" placeholder="admin">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary fw-bold">Password / Subsonic Token</label>
+              <input type="password" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="setNavidromeToken" placeholder="••••••••">
+            </div>
+          </div>
+
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input settings-input" type="checkbox" id="setNavidromeAutoScan" checked>
+            <label class="form-check-label fw-bold text-white small" for="setNavidromeAutoScan">Auto-Trigger Navidrome Library Scan</label>
+            <div class="text-secondary small">Automatically send a Subsonic scan request to Navidrome as soon as any track download finishes.</div>
+          </div>
+
+          <div class="d-flex flex-wrap align-items-center gap-2 pt-2 border-top border-secondary border-opacity-25">
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btnTestNavidrome" onclick="testNavidromeConnection()">
+              <i class="fas fa-plug me-1"></i>Test Connection
+            </button>
+            <button type="button" class="btn btn-outline-success btn-sm" id="btnScanNavidrome" onclick="triggerNavidromeScan()">
+              <i class="fas fa-sync me-1"></i>Trigger Navidrome Scan Now
+            </button>
+            <div id="navidromeTestResult" class="ms-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concurrency & Paths -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <h5 class="fw-bold mb-3"><i class="fas fa-cogs text-info me-2"></i>Performance & Automation</h5>
+
+        <!-- Max Concurrent Downloads -->
+        <div class="mb-4">
+          <div class="d-flex align-items-center justify-content-between mb-1">
+            <label class="form-label fw-bold m-0">Max Concurrent Downloads</label>
+            <span class="badge bg-danger fs-6" id="concurrentBadge">3</span>
+          </div>
+          <p class="text-secondary small mb-2">Number of tracks to download in parallel (1–10).</p>
+          <input type="range" class="form-range settings-input" id="concurrentRange" min="1" max="10" value="3">
+        </div>
+
+        <!-- Discography Sync Interval -->
+        <div class="mb-3">
+          <label class="form-label fw-bold small">Discography Auto-Sync Interval (Hours)</label>
+          <input type="number" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="syncIntervalInput" min="1" max="72" value="6" style="max-width: 140px;">
+          <div class="form-text text-secondary small">How often fnack queries Deezer to discover new releases for monitored artists.</div>
+        </div>
+
+        <!-- Music Storage Path -->
+        <div class="mb-3">
+          <label class="form-label fw-bold small">Music Storage Path</label>
+          <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="musicPathInput" value="/music">
+          <div class="form-text text-secondary small">Target directory for downloaded music, structured as <code>/music/Artist/Album/01. Track.flac</code>.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Primary Prominent Save Section -->
+    <div class="card bg-dark-card border border-secondary border-opacity-50 shadow mb-4">
+      <div class="card-body p-4 text-center">
+        <button id="mainSaveBtn" class="btn btn-save-prominent btn-lg w-100 py-3 d-flex align-items-center justify-content-center gap-2" onclick="saveSettings()">
+          <i class="fas fa-save fs-5"></i>
+          <span class="save-btn-text fs-6 fw-bold">SAVE ALL SETTINGS</span>
+        </button>
+        <div class="text-secondary small mt-2">
+          <i class="fas fa-info-circle text-info me-1"></i>You must click <strong>Save All Settings</strong> above for your changes to be applied and saved to disk.
+        </div>
+      </div>
+    </div>
+
+    <!-- Lidarr Integration (SABnzbd & Newznab) -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <h5 class="fw-bold m-0"><i class="fas fa-link text-primary me-2"></i>Lidarr Integration</h5>
+          <span class="badge bg-primary-subtle text-primary">SABnzbd + Torznab</span>
+        </div>
+        <p class="text-secondary small mb-3">Connect Lidarr to fnack as a Download Client and Indexer.</p>
+
+        <div class="mb-3">
+          <label class="form-label small fw-bold">API Key</label>
+          <div class="input-group input-group-sm">
+            <input type="text" class="form-control bg-dark text-white border-secondary font-monospace" id="apiKeyInput" readonly>
+            <button class="btn btn-outline-secondary" onclick="copyApiKey()" title="Copy API Key"><i class="fas fa-copy"></i></button>
+            <button class="btn btn-outline-warning" onclick="rotateApiKey()" title="Rotate API Key"><i class="fas fa-sync"></i></button>
+          </div>
+        </div>
+
+        <div class="bg-dark p-3 rounded">
+          <div class="mb-2 small">
+            <span class="text-secondary">Download Client (SABnzbd):</span><br>
+            <code>Host: &lt;fnack-ip&gt; · Port: 4688 · URL Base: /api/sabnzbd</code>
+          </div>
+          <div class="small">
+            <span class="text-secondary">Indexer (Torznab / Newznab):</span><br>
+            <code>URL: http://&lt;fnack-ip&gt;:4688/api/newznab · Categories: 3000, 3020</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sticky Bottom Save Bar (Appears when changes are detected) -->
+  <div id="stickySaveBar" class="settings-sticky-save-bar">
+    <div class="container d-flex flex-wrap align-items-center justify-content-between gap-3" style="max-width: 780px;">
+      <div class="d-flex align-items-center gap-2">
+        <i class="fas fa-circle-exclamation text-warning fs-5"></i>
+        <span class="fw-semibold text-white">Unsaved changes detected</span>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-outline-secondary btn-sm" onclick="discardSettingsChanges()">Discard</button>
+        <button id="stickySaveBtn" class="btn btn-save-prominent btn-sm d-flex align-items-center gap-2" onclick="saveSettings()">
+          <i class="fas fa-save"></i>
+          <span class="save-btn-text">Save Changes</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer" style="z-index: 2100;"></div>
+
+  <!-- Mobile Bottom Navigation Bar -->
+  <div class="mobile-bottom-nav">
+    <a href="/" class="mobile-nav-link"><i class="fas fa-th-large"></i><span>Library</span></a>
+    <a href="/import" class="mobile-nav-link"><i class="fas fa-file-import"></i><span>Import</span></a>
+    <a href="/queue" class="mobile-nav-link"><i class="fas fa-tasks"></i><span>Activity</span></a>
+    <a href="/settings" class="mobile-nav-link active"><i class="fas fa-cog"></i><span>Settings</span></a>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script>
+    let _initialSettings = {};
+    let _isDirty = false;
+    let _currentTheme = localStorage.getItem('fnack_theme') || 'onyx-dark';
+
+    function applyTheme(themeKey, notify = true) {
+      _currentTheme = themeKey || 'onyx-dark';
+      const isLight = _currentTheme.includes('light');
+      document.documentElement.setAttribute('data-theme', _currentTheme);
+      document.documentElement.setAttribute('data-bs-theme', isLight ? 'light' : 'dark');
+      localStorage.setItem('fnack_theme', _currentTheme);
+
+      // Update theme cards active UI
+      document.querySelectorAll('.theme-card').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.theme-check-icon').forEach(el => el.classList.add('d-none'));
+
+      const activeCard = document.getElementById(`themeCard_${_currentTheme}`);
+      const activeCheck = document.getElementById(`check_${_currentTheme}`);
+      if (activeCard) activeCard.classList.add('active');
+      if (activeCheck) activeCheck.classList.remove('d-none');
+    }
+
+    function selectTheme(themeKey) {
+      applyTheme(themeKey);
+      checkDirty();
+      showToast(`Switched theme to ${themeKey.replace('-', ' ').toUpperCase()}`, 'info');
+    }
+
+    // Load Settings
+    async function loadSettings() {
+      try {
+        const resp = await fetch('/api/settings');
+        const s = await resp.json();
+        _initialSettings = { ...s };
+
+        applyTheme(s.theme || localStorage.getItem('fnack_theme') || 'onyx-dark', false);
+
+        document.getElementById('setEnableSpotiflac').checked = s.enable_spotiflac !== false;
+        document.getElementById('setEnableYtdlp').checked = s.enable_ytdlp !== false;
+        document.getElementById('concurrentRange').value = s.max_concurrent || 3;
+        document.getElementById('concurrentBadge').textContent = s.max_concurrent || 3;
+        document.getElementById('setSpotiflacQuality').value = s.spotiflac_quality || 'LOSSLESS';
+        document.getElementById('setYtdlpFormat').value = s.ytdlp_format || s.spotdl_format || 'flac';
+        document.getElementById('syncIntervalInput').value = s.discography_interval_hours || 6;
+        document.getElementById('musicPathInput').value = s.music_path || '/music';
+        document.getElementById('apiKeyInput').value = s.api_key || '';
+
+        document.getElementById('setSaveCoverArt').checked = s.save_cover_art !== false;
+        document.getElementById('setCoverArtFilename').value = s.cover_art_filename || 'cover.jpg';
+        document.getElementById('setEmbedCoverArt').checked = s.embed_cover_art !== false;
+
+        document.getElementById('setMatchingStrictness').value = s.matching_strictness || 'standard';
+        document.getElementById('setRejectMismatches').checked = s.reject_mismatches !== false;
+        document.getElementById('setEnableFolderWatcher').checked = s.enable_folder_watcher !== false;
+
+        document.getElementById('setNavidromeUrl').value = s.navidrome_url || '';
+        document.getElementById('setNavidromeUser').value = s.navidrome_user || '';
+        document.getElementById('setNavidromeToken').value = s.navidrome_token || '';
+        document.getElementById('setNavidromeAutoScan').checked = s.navidrome_auto_scan !== false;
+
+        setDirty(false);
+      } catch (err) {
+        console.error('Failed to load settings:', err);
+      }
+    }
+
+    function checkDirty() {
+      const curEnableSpotiflac = document.getElementById('setEnableSpotiflac').checked;
+      const curEnableYtdlp = document.getElementById('setEnableYtdlp').checked;
+      const curMaxConc = parseInt(document.getElementById('concurrentRange').value);
+      const curSpotQuality = document.getElementById('setSpotiflacQuality').value;
+      const curYtdlp = document.getElementById('setYtdlpFormat').value;
+      const curSync = parseInt(document.getElementById('syncIntervalInput').value);
+      const curPath = document.getElementById('musicPathInput').value.trim();
+
+      const curSaveCover = document.getElementById('setSaveCoverArt').checked;
+      const curCoverFn = document.getElementById('setCoverArtFilename').value;
+      const curEmbedCover = document.getElementById('setEmbedCoverArt').checked;
+
+      const curStrict = document.getElementById('setMatchingStrictness').value;
+      const curReject = document.getElementById('setRejectMismatches').checked;
+      const curWatcher = document.getElementById('setEnableFolderWatcher').checked;
+
+      const curNavUrl = document.getElementById('setNavidromeUrl').value.trim();
+      const curNavUser = document.getElementById('setNavidromeUser').value.trim();
+      const curNavToken = document.getElementById('setNavidromeToken').value;
+      const curNavAuto = document.getElementById('setNavidromeAutoScan').checked;
+      const curTheme = _currentTheme;
+
+      const isChanged = (
+        curTheme !== (_initialSettings.theme || 'onyx-dark') ||
+        curEnableSpotiflac !== (_initialSettings.enable_spotiflac !== false) ||
+        curEnableYtdlp !== (_initialSettings.enable_ytdlp !== false) ||
+        curMaxConc !== (_initialSettings.max_concurrent || 3) ||
+        curSpotQuality !== (_initialSettings.spotiflac_quality || 'LOSSLESS') ||
+        curYtdlp !== (_initialSettings.ytdlp_format || _initialSettings.spotdl_format || 'flac') ||
+        curSync !== (_initialSettings.discography_interval_hours || 6) ||
+        curPath !== (_initialSettings.music_path || '/music') ||
+        curSaveCover !== (_initialSettings.save_cover_art !== false) ||
+        curCoverFn !== (_initialSettings.cover_art_filename || 'cover.jpg') ||
+        curEmbedCover !== (_initialSettings.embed_cover_art !== false) ||
+        curStrict !== (_initialSettings.matching_strictness || 'standard') ||
+        curReject !== (_initialSettings.reject_mismatches !== false) ||
+        curWatcher !== (_initialSettings.enable_folder_watcher !== false) ||
+        curNavUrl !== (_initialSettings.navidrome_url || '') ||
+        curNavUser !== (_initialSettings.navidrome_user || '') ||
+        curNavToken !== (_initialSettings.navidrome_token || '') ||
+        curNavAuto !== (_initialSettings.navidrome_auto_scan !== false)
+      );
+
+      setDirty(isChanged);
+    }
+
+    function setDirty(isDirty) {
+      _isDirty = isDirty;
+      const banner = document.getElementById('unsavedBanner');
+      const stickyBar = document.getElementById('stickySaveBar');
+      const mainBtn = document.getElementById('mainSaveBtn');
+      const topBtn = document.getElementById('topSaveBtn');
+
+      if (isDirty) {
+        if (banner) banner.classList.remove('d-none');
+        if (stickyBar) stickyBar.classList.add('visible');
+        if (mainBtn) mainBtn.classList.add('btn-save-glow');
+        if (topBtn) topBtn.classList.add('btn-save-glow');
+      } else {
+        if (banner) banner.classList.add('d-none');
+        if (stickyBar) stickyBar.classList.remove('visible');
+        if (mainBtn) mainBtn.classList.remove('btn-save-glow');
+        if (topBtn) topBtn.classList.remove('btn-save-glow');
+      }
+    }
+
+    function discardSettingsChanges() {
+      if (!_initialSettings) return;
+      applyTheme(_initialSettings.theme || 'onyx-dark', false);
+      document.getElementById('setEnableSpotiflac').checked = _initialSettings.enable_spotiflac !== false;
+      document.getElementById('setEnableYtdlp').checked = _initialSettings.enable_ytdlp !== false;
+      document.getElementById('concurrentRange').value = _initialSettings.max_concurrent || 3;
+      document.getElementById('concurrentBadge').textContent = _initialSettings.max_concurrent || 3;
+      document.getElementById('setSpotiflacQuality').value = _initialSettings.spotiflac_quality || 'LOSSLESS';
+      document.getElementById('setYtdlpFormat').value = _initialSettings.ytdlp_format || _initialSettings.spotdl_format || 'flac';
+      document.getElementById('syncIntervalInput').value = _initialSettings.discography_interval_hours || 6;
+      document.getElementById('musicPathInput').value = _initialSettings.music_path || '/music';
+
+      document.getElementById('setSaveCoverArt').checked = _initialSettings.save_cover_art !== false;
+      document.getElementById('setCoverArtFilename').value = _initialSettings.cover_art_filename || 'cover.jpg';
+      document.getElementById('setEmbedCoverArt').checked = _initialSettings.embed_cover_art !== false;
+
+      document.getElementById('setMatchingStrictness').value = _initialSettings.matching_strictness || 'standard';
+      document.getElementById('setRejectMismatches').checked = _initialSettings.reject_mismatches !== false;
+      document.getElementById('setEnableFolderWatcher').checked = _initialSettings.enable_folder_watcher !== false;
+
+      document.getElementById('setNavidromeUrl').value = _initialSettings.navidrome_url || '';
+      document.getElementById('setNavidromeUser').value = _initialSettings.navidrome_user || '';
+      document.getElementById('setNavidromeToken').value = _initialSettings.navidrome_token || '';
+      document.getElementById('setNavidromeAutoScan').checked = _initialSettings.navidrome_auto_scan !== false;
+
+      setDirty(false);
+      showToast('Changes discarded', 'info');
+    }
+
+    // Attach change detection to all inputs
+    document.querySelectorAll('.settings-input').forEach(el => {
+      el.addEventListener('input', () => {
+        if (el.id === 'concurrentRange') {
+          document.getElementById('concurrentBadge').textContent = el.value;
+        }
+        checkDirty();
+      });
+      el.addEventListener('change', checkDirty);
+    });
+
+    async function saveSettings() {
+      const saveButtons = [
+        document.getElementById('topSaveBtn'),
+        document.getElementById('mainSaveBtn'),
+        document.getElementById('stickySaveBtn')
+      ].filter(Boolean);
+
+      saveButtons.forEach(btn => {
+        btn.disabled = true;
+        const icon = btn.querySelector('i');
+        const text = btn.querySelector('.save-btn-text');
+        if (icon) icon.className = 'fas fa-spinner fa-spin';
+        if (text) text.textContent = 'Saving...';
+      });
+
+      const payload = {
+        theme: _currentTheme,
+        enable_spotiflac: document.getElementById('setEnableSpotiflac').checked,
+        enable_ytdlp: document.getElementById('setEnableYtdlp').checked,
+        max_concurrent: parseInt(document.getElementById('concurrentRange').value),
+        spotiflac_quality: document.getElementById('setSpotiflacQuality').value,
+        ytdlp_format: document.getElementById('setYtdlpFormat').value,
+        discography_interval_hours: parseInt(document.getElementById('syncIntervalInput').value),
+        music_path: document.getElementById('musicPathInput').value.trim(),
+        save_cover_art: document.getElementById('setSaveCoverArt').checked,
+        cover_art_filename: document.getElementById('setCoverArtFilename').value,
+        embed_cover_art: document.getElementById('setEmbedCoverArt').checked,
+        matching_strictness: document.getElementById('setMatchingStrictness').value,
+        reject_mismatches: document.getElementById('setRejectMismatches').checked,
+        enable_folder_watcher: document.getElementById('setEnableFolderWatcher').checked,
+        navidrome_url: document.getElementById('setNavidromeUrl').value.trim(),
+        navidrome_user: document.getElementById('setNavidromeUser').value.trim(),
+        navidrome_token: document.getElementById('setNavidromeToken').value,
+        navidrome_auto_scan: document.getElementById('setNavidromeAutoScan').checked,
+      };
+
+      try {
+        const resp = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          _initialSettings = { ...payload };
+          setDirty(false);
+          showToast(data.message || 'Settings saved successfully!', 'success');
+
+          saveButtons.forEach(btn => {
+            const icon = btn.querySelector('i');
+            const text = btn.querySelector('.save-btn-text');
+            if (icon) icon.className = 'fas fa-check';
+            if (text) text.textContent = btn.id === 'mainSaveBtn' ? 'SETTINGS SAVED!' : 'Saved!';
+          });
+
+          setTimeout(() => {
+            saveButtons.forEach(btn => {
+              btn.disabled = false;
+              const icon = btn.querySelector('i');
+              const text = btn.querySelector('.save-btn-text');
+              if (icon) icon.className = 'fas fa-save';
+              if (text) {
+                text.textContent = btn.id === 'mainSaveBtn' ? 'SAVE ALL SETTINGS' : (btn.id === 'topSaveBtn' ? 'Save Settings' : 'Save Changes');
+              }
+            });
+          }, 2000);
+        } else {
+          showToast(data.error || 'Failed to save settings', 'error');
+          saveButtons.forEach(btn => {
+            btn.disabled = false;
+            const icon = btn.querySelector('i');
+            const text = btn.querySelector('.save-btn-text');
+            if (icon) icon.className = 'fas fa-save';
+            if (text) {
+              text.textContent = btn.id === 'mainSaveBtn' ? 'SAVE ALL SETTINGS' : (btn.id === 'topSaveBtn' ? 'Save Settings' : 'Save Changes');
+            }
+          });
+        }
+      } catch (err) {
+        showToast('Error saving settings: ' + err.message, 'error');
+        saveButtons.forEach(btn => {
+          btn.disabled = false;
+          const icon = btn.querySelector('i');
+          const text = btn.querySelector('.save-btn-text');
+          if (icon) icon.className = 'fas fa-save';
+          if (text) {
+            text.textContent = btn.id === 'mainSaveBtn' ? 'SAVE ALL SETTINGS' : (btn.id === 'topSaveBtn' ? 'Save Settings' : 'Save Changes');
+          }
+        });
+      }
+    }
+
+    async function testNavidromeConnection() {
+      const btn = document.getElementById('btnTestNavidrome');
+      const resDiv = document.getElementById('navidromeTestResult');
+      if (btn) btn.disabled = true;
+      if (resDiv) resDiv.innerHTML = '<span class="text-secondary small"><i class="fas fa-spinner fa-spin me-1"></i>Testing...</span>';
+
+      const payload = {
+        url: document.getElementById('setNavidromeUrl').value.trim(),
+        user: document.getElementById('setNavidromeUser').value.trim(),
+        token: document.getElementById('setNavidromeToken').value,
+      };
+
+      try {
+        const resp = await fetch('/api/navidrome/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          if (resDiv) resDiv.innerHTML = `<span class="text-success small fw-semibold"><i class="fas fa-check-circle me-1"></i>${escapeHtml(data.message)}</span>`;
+          showToast(data.message, 'success');
+        } else {
+          if (resDiv) resDiv.innerHTML = `<span class="text-danger small fw-semibold"><i class="fas fa-times-circle me-1"></i>${escapeHtml(data.message)}</span>`;
+          showToast(data.message || 'Connection failed', 'error');
+        }
+      } catch (err) {
+        if (resDiv) resDiv.innerHTML = `<span class="text-danger small fw-semibold"><i class="fas fa-times-circle me-1"></i>${escapeHtml(err.message)}</span>`;
+        showToast('Connection error: ' + err.message, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function triggerNavidromeScan() {
+      const btn = document.getElementById('btnScanNavidrome');
+      if (btn) btn.disabled = true;
+      showToast('Triggering Navidrome scan...', 'info');
+
+      try {
+        const resp = await fetch('/api/navidrome/scan', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok) {
+          showToast(data.message, 'success');
+        } else {
+          showToast(data.message || 'Scan failed', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function copyApiKey() {
+      const input = document.getElementById('apiKeyInput');
+      input.select();
+      navigator.clipboard.writeText(input.value);
+      showToast('API Key copied to clipboard', 'info');
+    }
+
+    async function rotateApiKey() {
+      if (!confirm('Rotate API Key? You will need to update Lidarr with the new key.')) return;
+      try {
+        const resp = await fetch('/api/settings/rotate-key', { method: 'POST' });
+        const data = await resp.json();
+        document.getElementById('apiKeyInput').value = data.api_key;
+        showToast('API key rotated', 'success');
+      } catch (err) {
+        showToast('Error rotating key: ' + err.message, 'error');
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadSettings);
+  </script>
+</body>
+</html>

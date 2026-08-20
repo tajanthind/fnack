@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# SQLite & App Data
+config/*.db*
+config/*.db-journal
+config/*.db-wal
+config/*.db-shm
+!config/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite3
+
+# Local storage and runtime state dirs
+downloads/*
+!downloads/.gitkeep
+music/*
+!music/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# IDEs and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
