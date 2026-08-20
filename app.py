@@ -111,6 +111,12 @@ class _AccessLogFilter(logging.Filter):
 for _name in ("werkzeug", "geventwebsocket.handler", "gunicorn.access", "gunicorn.error"):
     logging.getLogger(_name).addFilter(_AccessLogFilter())
 
+for _noisy in ("primp", "ddgs", "ddgs.ddgs", "urllib3", "curl_cffi", "duckduckgo_search"):
+    _nl = logging.getLogger(_noisy)
+    _nl.setLevel(logging.CRITICAL)
+    _nl.propagate = False
+    _nl.disabled = True
+
 
 def _get_setting(key: str, default: str = "") -> str:
     s = db.session.get(AppSetting, key)

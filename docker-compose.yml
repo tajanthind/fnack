@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   fnack:
     image: ghcr.io/tajanthind/fnack:latest

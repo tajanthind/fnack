@@ -54,8 +54,6 @@ Automated Lossless Music Discography Downloader, Tagger, and Library Manager.
 Create `docker-compose.yml`:
 
 ```yaml
-version: "3.9"
-
 services:
   fnack:
     image: ghcr.io/YOUR_GITHUB_USERNAME/fnack:latest
