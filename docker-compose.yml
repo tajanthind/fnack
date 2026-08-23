@@ -12,11 +12,13 @@ services:
       - ./downloads:/downloads
       - ${MUSIC_PATH:-/home/tajanthind/Music}:/music
     environment:
+      # Set a fixed SECRET_KEY (e.g. openssl rand -hex 32) so sessions survive restarts.
       - SECRET_KEY=${SECRET_KEY:-}
       - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
       - CHROME_PATH=/usr/bin/chromium
       - DISPLAY=:99
     restart: unless-stopped
+    stop_grace_period: 60s
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:4688/api/artists || exit 1"]
       interval: 30s

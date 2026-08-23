@@ -1,100 +1,193 @@
-# fnack Production Deployment & Migration Guide
+# fnack – Production Deployment Guide
 
-This document explains how to export, transfer, and run **fnack** on another machine.
+fnack is a self-hosted, zero-authentication music discography downloader and library
+manager. It downloads **true lossless FLAC** via SpotiFLAC (Tidal / Qobuz / Deezer /
+SoundCloud) and falls back to **yt-dlp** (YouTube / YouTube Music / SoundCloud) for
+everything else. **No Spotify, Tidal, Qobuz, or YouTube account is required.**
 
----
-
-## 1. Export the Docker Image (Current Machine)
-
-You can save the production Docker image to a compressed `.tar.gz` archive:
-
-```bash
-docker save fnack:latest | gzip > fnack_image.tar.gz
-```
-
-*(Optional)* If you want to backup your existing database and configurations as well:
-```bash
-docker run --rm -v fnack_config:/config -v $(pwd):/backup alpine tar czf /backup/fnack_config_backup.tar.gz -C /config .
-```
+This guide covers building and running fnack yourself (no GitHub registry needed).
 
 ---
 
-## 2. Transfer to Another Machine
+## 1. Quick Start (Docker Compose)
 
-Transfer `fnack_image.tar.gz` (and `docker-compose.yml`) to the target machine via `scp`, `rsync`, or USB drive:
+Requirements: Docker Engine 24+ with the Compose plugin, ~3 GB free disk for the image.
 
 ```bash
-# Example using scp:
-scp fnack_image.tar.gz docker-compose.yml user@remote-ip:~/fnack/
+# 1. Clone / copy the project and enter its directory
+cd fnack
+
+# 2. Choose where your music library lives (default: ~/Music)
+export MUSIC_PATH="$HOME/Music"
+
+# 3. (Recommended) Set a fixed secret key so sessions survive restarts
+export SECRET_KEY="$(openssl rand -hex 32)"
+
+# 4. Build and start
+docker compose up -d --build
+```
+
+Open the web UI: **http://localhost:4688** (or `http://<server-ip>:4688`).
+
+Check it is healthy:
+
+```bash
+docker ps --filter name=fnack          # status should show (healthy)
+docker logs -f fnack                    # live logs
 ```
 
 ---
 
-## 3. Load & Run on the New Machine
+## 2. What Gets Created
 
-On the target machine:
+| Path (host)          | Mounted at (container) | Purpose                                  |
+| :------------------- | :--------------------- | :--------------------------------------- |
+| `./config`           | `/config`              | SQLite database, cookies.txt, settings   |
+| `./downloads`        | `/downloads`           | Temporary work directory for downloads   |
+| `${MUSIC_PATH}`      | `/music`               | Your organized music library             |
 
-### Step 3A: Load the Docker Image
+The database, settings, and downloaded music are all persistent across restarts.
+
+---
+
+## 3. How Downloads Work (Zero Auth)
+
+1. **Discography sync** – fnack reads metadata from the public Deezer API
+   (artist search, albums, tracks, ISRC codes). No account needed.
+2. **Spotify link resolution** – ISRC / title search via DuckDuckGo + Yandex
+   (`ddgs`), plus an optional official Spotify API path *only if* you add
+   `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` (free API credentials, not
+   user accounts). Without them, zero-auth search is used.
+3. **SpotiFLAC (primary)** – downloads true lossless FLAC from Tidal / Qobuz /
+   Deezer / SoundCloud. No login. Rate-limited + retried automatically.
+4. **yt-dlp (fallback)** – extracts audio from YouTube / YouTube Music /
+   SoundCloud. No login. If YouTube enforces a bot-check, fnack automatically
+   retries with the Android player client before giving up.
+
+Every downloaded file is verified (duration match against the official
+release, configurable strictness) and tagged (title, artist, album artist,
+album, track/disc number, year, embedded cover art). Mismatched or corrupted
+downloads are rejected and deleted automatically.
+
+### Optional: YouTube cookies.txt
+
+If YouTube rate-limits your IP (common on datacenter IPs), provide cookies to
+raise limits. This is **optional** — everything works without it.
+
+- **Dashboard upload:** Settings → YouTube Cookies → upload `cookies.txt`
+  (export from a signed-in browser with "Get cookies.txt LOCALLY").
+- **File mount:** place `cookies.txt` in your host `./config` directory.
+
+---
+
+## 4. Configuration
+
+All settings are editable from the web UI (Settings page) and stored in the
+database. Environment variables set defaults at first boot.
+
+| Env var                   | Default        | Description                                    |
+| :------------------------ | :------------- | :--------------------------------------------- |
+| `SECRET_KEY`              | random         | Flask session key; set a fixed value in prod   |
+| `MAX_CONCURRENT_DOWNLOADS`| `3`            | Parallel download workers (1–10)               |
+| `CHROME_PATH`             | `/usr/bin/chromium` | Headless browser used by SpotiFLAC         |
+| `DISPLAY`                 | `:99`          | Xvfb virtual display for the headless browser  |
+| `CONFIG_DIR`              | `/config`      | Where the SQLite DB and cookies live           |
+| `SQLALCHEMY_DATABASE_URI` | sqlite in /config | Override the database location (e.g. Postgres) |
+
+### Firewall / ports
+
+Only port **4688** needs to be reachable. The container runs as root by
+design (needs to spawn Chromium/Xvfb/ffmpeg); do not expose it to the public
+internet without a reverse proxy and, ideally, an auth layer (Authelia /
+Authentik / Tailscale).
+
+---
+
+## 5. Building & Running Manually (without compose)
+
 ```bash
-gunzip -c fnack_image.tar.gz | docker load
-```
-Verify the image is loaded:
-```bash
-docker images | grep fnack
-```
+# Build the image
+docker build -t fnack:latest .
 
-### Step 3B: (Optional) Restore Existing Configuration/Database
-If you backed up your config volume in Step 1:
-```bash
-docker volume create fnack_config
-docker run --rm -v fnack_config:/config -v $(pwd):/backup alpine tar xzf /backup/fnack_config_backup.tar.gz -C /config
-```
-
-### Step 3C: Start the Container
-
-#### Option 1: Using Docker Compose (Recommended)
-Make sure `docker-compose.yml` is in the folder, then run:
-```bash
-docker compose up -d
-```
-
-#### Option 2: Using Standalone Docker Run
-```bash
+# Run it with host bind mounts
 docker run -d \
   --name fnack \
   --restart unless-stopped \
   -p 4688:4688 \
-  -v fnack_config:/config \
-  -v fnack_downloads:/downloads \
-  -v fnack_music:/music \
-  -e MAX_CONCURRENT_DOWNLOADS=3 \
-  fnack:latest
-```
-
-*If you prefer bind mounts to host folders instead of named volumes:*
-```bash
-docker run -d \
-  --name fnack \
-  --restart unless-stopped \
-  -p 4688:4688 \
-  -v /path/to/my/config:/config \
-  -v /path/to/my/downloads:/downloads \
-  -v /path/to/my/music:/music \
+  -v "$PWD/config:/config" \
+  -v "$PWD/downloads:/downloads" \
+  -v "$HOME/Music:/music" \
+  -e SECRET_KEY="$(openssl rand -hex 32)" \
   -e MAX_CONCURRENT_DOWNLOADS=3 \
   fnack:latest
 ```
 
 ---
 
-## 4. Verification
+## 6. Upgrading
 
-Open your web browser and navigate to:
-```text
-http://<server-ip>:4688
+```bash
+# Pull the new code, rebuild, and recreate the container
+cd fnack
+git pull                       # or copy the new source over
+docker compose up -d --build
 ```
 
-Check container health status and logs:
+Your database, settings, cookies, and music are untouched (they live in host
+directories). On startup, any downloads that were interrupted by the upgrade
+are automatically re-queued.
+
+To upgrade a manually-run container:
+
 ```bash
-docker ps
+docker stop fnack && docker rm fnack
+docker build -t fnack:latest .
+docker run -d ...   # same command as section 5
+```
+
+---
+
+## 7. Backup & Restore
+
+Back up the `config` directory (database + cookies) and your music library.
+Nothing else is stateful.
+
+```bash
+# Backup (database + cookies + settings)
+tar czf fnack-config-backup-$(date +%F).tar.gz config/
+
+# Restore on a new machine
+mkdir -p config && tar xzf fnack-config-backup-*.tar.gz
+docker compose up -d --build
+```
+
+---
+
+## 8. Troubleshooting
+
+| Symptom | Fix |
+| :------ | :-- |
+| Container shows `(unhealthy)` | `docker logs fnack`; ensure port 4688 is free, check the healthcheck URL |
+| SpotiFLAC fails on one track | Expected: some tracks are region-locked or unavailable. fnack falls back to yt-dlp, then marks the track failed — retry later |
+| "Sign in to confirm you're not a bot" | Datacenter IP YouTube block. Upload `cookies.txt` (Settings → YouTube Cookies) or wait; the Android-client auto-retry already helps |
+| Wrong song downloaded | Raise matching strictness in Settings (Strict ±4s) or use Manual Match with the exact URL |
+| Downloads not starting | Settings → check `enable_spotiflac` / `enable_ytdlp`; `docker logs fnack` for queue activity |
+| Xvfb / display errors | Ensure `DISPLAY=:99` and the container can start Xvfb (auto-handled by entrypoint) |
+
+---
+
+## 9. Verifying It All Works
+
+```bash
+# Health
+curl -s http://localhost:4688/health
+
+# Version
+curl -s http://localhost:4688/api/version
+
+# Live log stream (watch downloads complete)
 docker logs -f fnack
+
+# Check the library directory for organized output
+find "$MUSIC_PATH" -type f | head -20
 ```

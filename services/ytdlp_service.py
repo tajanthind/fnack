@@ -284,6 +284,7 @@ def download_track_ytdlp(
 
     resolved_cookies = get_cookies_path(cookies_path)
     last_error = ""
+    audio_files = []  # populated per-target; initialized here for safety
 
     for cand_target in targets_to_try:
         cmd = [
@@ -359,6 +360,66 @@ def download_track_ytdlp(
         except Exception as e:
             logger.exception("[YT-DLP] Execution error for %s: %s", cand_target, e)
             last_error = str(e)
+
+    # Zero-auth resilience: if YouTube refused every candidate with a bot/sign-in check and no
+    # cookies are configured, retry the same targets once using the Android player client, which
+    # frequently bypasses the anti-bot gate without any account or cookies.
+    if not audio_files and not resolved_cookies and last_error and any(
+        w in last_error.lower() for w in ("sign in to confirm", "not a bot", "bot check", "login required", "confirm you")
+    ):
+        logger.info("[YT-DLP] YouTube bot-check detected and no cookies configured; retrying with Android player client...")
+        for cand_target in targets_to_try:
+            if "youtube.com" not in cand_target and "youtu.be" not in cand_target:
+                continue
+            cmd = [
+                sys.executable,
+                "-m",
+                "yt_dlp",
+                "--no-playlist",
+                "-f",
+                "ba/ba*/bestaudio/best",
+                "-x",
+                "--audio-format",
+                output_format,
+                "--audio-quality",
+                "0",
+                "-o",
+                str(output_dir / "%(title)s.%(ext)s"),
+                "--no-warnings",
+                "--extractor-args",
+                "youtube:player_client=android",
+            ]
+            if Path("/usr/bin/node").exists():
+                cmd.extend(["--js-runtimes", "node:/usr/bin/node"])
+            elif Path("/usr/local/bin/deno").exists():
+                cmd.extend(["--js-runtimes", "deno:/usr/local/bin/deno"])
+            cmd.append(cand_target)
+
+            logger.info("[YT-DLP] (android client) Executing target: %s", cand_target)
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                )
+                try:
+                    out, _ = proc.communicate(timeout=timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    last_error = f"yt-dlp timed out after {timeout_seconds}s"
+                    continue
+
+                audio_files = [f for f in output_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
+                if audio_files:
+                    latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
+                    logger.info("[YT-DLP] Android-client retry succeeded: %s (%d bytes)", latest_file.name, latest_file.stat().st_size)
+                    return True, latest_file, None
+            except Exception as e:
+                logger.exception("[YT-DLP] Android-client execution error for %s: %s", cand_target, e)
+                last_error = str(e)
 
     logger.warning("[YT-DLP] All candidates failed for '%s'. Last error: %s", query_or_url, last_error)
     return False, None, last_error

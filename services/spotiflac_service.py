@@ -46,6 +46,12 @@ def ensure_xvfb() -> None:
     try:
         res = subprocess.run(["pgrep", "-f", "Xvfb :99"], capture_output=True)
         if res.returncode != 0:
+            # Remove stale lock/socket files that survive container restarts and block Xvfb startup
+            for stale in ("/tmp/.X99-lock", "/tmp/.X11-unix/X99"):
+                try:
+                    os.remove(stale)
+                except OSError:
+                    pass
             logger.info("[SPOTIFLAC] Starting background Xvfb on display :99...")
             subprocess.Popen(
                 ["Xvfb", ":99", "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],

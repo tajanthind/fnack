@@ -9,6 +9,9 @@ interactive library import, and full Lidarr emulation.
 import nest_asyncio
 nest_asyncio.apply()
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from gevent import monkey
 monkey.patch_all()
 

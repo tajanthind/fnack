@@ -784,6 +784,45 @@ def start_queue_worker(app: Flask, socketio: SocketIO):
     logger.info("[QUEUE] Starting queue worker loop")
     _executor = ThreadPoolExecutor(max_workers=_get_max_concurrent(app))
 
+    # Reconcile stale jobs left in "downloading" state by an unclean shutdown
+    # (container stop/restart mid-download). The worker only picks up "queued"
+    # jobs, so without this they would sit in the UI as active forever.
+    try:
+        with app.app_context():
+            stale = DownloadJob.query.filter_by(status="downloading").all()
+            reset_count = 0
+            for j in stale:
+                j.status = "queued"
+                j.progress = 0.0
+                if j.track:
+                    j.track.status = "queued"
+                    j.track.error_message = None
+                reset_count += 1
+            if reset_count:
+                db.session.commit()
+                logger.info("[QUEUE] Reset %d stale 'downloading' job(s) to queued after unclean shutdown", reset_count)
+    except Exception:
+        logger.exception("[QUEUE] Failed to reconcile stale downloading jobs")
+
+    # Purge orphaned temp work directories left behind by a killed process.
+    # At boot no download is running, so every dir under /downloads/work is
+    # orphaned and safe to remove; new jobs recreate their own work dirs.
+    try:
+        work_root = DOWNLOADS_DIR / "work"
+        if work_root.exists():
+            purged = 0
+            for d in work_root.iterdir():
+                try:
+                    if d.is_dir():
+                        shutil.rmtree(str(d))
+                        purged += 1
+                except OSError:
+                    pass
+            if purged:
+                logger.info("[QUEUE] Purged %d orphaned temp work directorie(s) from %s", purged, work_root)
+    except Exception:
+        logger.exception("[QUEUE] Failed to purge orphaned temp work directories")
+
     while True:
         try:
             max_workers = _get_max_concurrent(app)
@@ -844,6 +883,9 @@ def download_manual_match_track(
         expected_duration = track.duration
         track_isrc = track.isrc
         track_deezer_id = track.deezer_id
+        # Capture plain IDs before session expiry/detachment (safe to use outside app context)
+        album_id = album.id if album else 0
+        artist_id = artist.id if artist else 0
 
         quality_setting = _get_setting(app, "spotiflac_quality", "LOSSLESS")
         fallback_format = _get_setting(app, "ytdlp_format") or _get_setting(app, "spotdl_format", "flac")
@@ -1084,14 +1126,14 @@ def download_manual_match_track(
 
         socketio.emit("download_progress", {
             "track_id": track_id,
-            "album_id": album.id if album else 0,
-            "artist_id": artist.id if artist else 0,
+            "album_id": album_id,
+            "artist_id": artist_id,
             "status": "completed",
             "progress": 100.0,
             "title": track_title,
             "local_path": str(final_dest),
         })
-        socketio.emit("artist_updated", {"artist_id": artist.id if artist else 0})
+        socketio.emit("artist_updated", {"artist_id": artist_id})
 
         logger.info("[QUEUE] Manual match succeeded for '%s - %s' -> %s", artist_name, track_title, final_dest)
         return True, f"Successfully downloaded and tagged '{track_title}' into library"

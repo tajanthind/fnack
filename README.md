@@ -71,7 +71,9 @@ Create `docker-compose.yml`:
 ```yaml
 services:
   fnack:
-    image: ghcr.io/tajanthind/fnack:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: fnack
     restart: unless-stopped
     ports:
@@ -81,16 +83,23 @@ services:
       - ./downloads:/downloads
       - /path/to/music:/music
     environment:
+      - SECRET_KEY=${SECRET_KEY:-}
       - MAX_CONCURRENT_DOWNLOADS=3
 ```
 
-Run the container:
+Build and run the container:
 
 ```bash
-docker compose up -d
+export MUSIC_PATH="/path/to/music"          # where your music library lives
+export SECRET_KEY="$(openssl rand -hex 32)" # optional but recommended
+docker compose up -d --build
 ```
 
 Access the web interface at `http://<server-ip>:4688`.
+
+> **Zero authentication required.** fnack resolves and downloads tracks without
+> any Spotify, Tidal, Qobuz, or YouTube account. See [DEPLOY.md](DEPLOY.md) for
+> the full production guide (upgrades, backups, troubleshooting).
 
 ---
 
