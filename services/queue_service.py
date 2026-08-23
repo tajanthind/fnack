@@ -393,6 +393,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         strictness_setting = _get_setting(app, "matching_strictness", "standard")
         max_duration_delta = STRICTNESS_DELTAS.get(strictness_setting, 8.0)
         reject_mismatches = _get_setting(app, "reject_mismatches", "true").lower() != "false"
+        enable_duration_check = _get_setting(app, "enable_duration_check", "true").lower() != "false"
         save_cover_setting = _get_setting(app, "save_cover_art", "true").lower() != "false"
         cover_filename_setting = _get_setting(app, "cover_art_filename", "cover.jpg")
         embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
@@ -403,6 +404,9 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         prefer_yt_music = _get_setting(app, "youtube_source", "youtube_music").lower() == "youtube_music"
         spotify_client_id = _get_setting(app, "spotify_client_id", "")
         spotify_client_secret = _get_setting(app, "spotify_client_secret", "")
+        # When the duration check is disabled, skip the duration comparison entirely
+        # (any valid audio file is accepted) while keeping basic file validation.
+        verify_expected_duration = expected_duration if enable_duration_check else None
 
         # Auto-resolve ISRC from Deezer if missing
         if not isrc and track_deezer_id:
@@ -554,8 +558,9 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 # Step 3: Verify audio file with strict duration checking
                 v_ok, v_err, meta = verify_audio_file(
                     downloaded_file,
-                    expected_duration_seconds=expected_duration,
+                    expected_duration_seconds=verify_expected_duration,
                     max_duration_delta=max_duration_delta,
+                    delete_on_failure=reject_mismatches,
                 )
                 if v_ok:
                     verified_file = downloaded_file
@@ -581,13 +586,15 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 expected_duration=expected_duration,
                 cookies_path=cookies_path,
                 prefer_youtube_music=prefer_yt_music,
+                max_duration_delta=max_duration_delta,
+                check_duration=enable_duration_check,
             )
             if ok and downloaded_file:
                 v_ok, v_err, meta = verify_audio_file(
                     downloaded_file,
-                    expected_duration_seconds=expected_duration,
+                    expected_duration_seconds=verify_expected_duration,
                     max_duration_delta=max_duration_delta,
-                    delete_on_failure=True,
+                    delete_on_failure=reject_mismatches,
                 )
                 if v_ok:
                     verified_file = downloaded_file
@@ -946,6 +953,7 @@ def download_manual_match_track(
                     track_title=track_title,
                     expected_duration=expected_duration,
                     cookies_path=cookies_path,
+                    check_duration=False,
                 )
 
         # 2. YouTube / YouTube Music URL
@@ -959,6 +967,7 @@ def download_manual_match_track(
                 track_title=track_title,
                 expected_duration=expected_duration,
                 cookies_path=cookies_path,
+                check_duration=False,
             )
             # Fallback if direct YouTube URL was blocked or failed
             if not ok or not downloaded_file:
@@ -980,6 +989,7 @@ def download_manual_match_track(
                         track_title=track_title,
                         expected_duration=expected_duration,
                         cookies_path=cookies_path,
+                        check_duration=False,
                     )
 
         # 3. Deezer URL
@@ -1002,6 +1012,7 @@ def download_manual_match_track(
                         tmp_work_dir,
                         output_format=fallback_format,
                         cookies_path=cookies_path,
+                        check_duration=False,
                     )
             else:
                 ok, downloaded_file, last_err = download_track_ytdlp(
@@ -1009,6 +1020,7 @@ def download_manual_match_track(
                     tmp_work_dir,
                     output_format=fallback_format,
                     cookies_path=cookies_path,
+                    check_duration=False,
                 )
 
         # 4. Raw Query / Other URL
@@ -1019,6 +1031,7 @@ def download_manual_match_track(
                 tmp_work_dir,
                 output_format=fallback_format,
                 cookies_path=cookies_path,
+                check_duration=False,
             )
 
         if not downloaded_file or not downloaded_file.exists():

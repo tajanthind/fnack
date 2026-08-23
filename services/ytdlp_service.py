@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 import yt_dlp
 
+from services.verifier_service import verify_audio_file
+
 logger = logging.getLogger("fnack.ytdlp")
 
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
@@ -248,10 +250,14 @@ def download_track_ytdlp(
     cookies_path: Optional[str] = None,
     prefer_youtube_music: bool = True,
     timeout_seconds: int = 180,
+    max_duration_delta: float = 8.0,
+    check_duration: bool = True,
 ) -> Tuple[bool, Optional[Path], Optional[str]]:
     """
     Download a single audio track using yt-dlp with candidate scoring, YouTube Music prioritization,
     automatic multi-candidate fallback, and cookies.txt authentication.
+    Each candidate's duration is verified against the expected duration before it is accepted,
+    so a wrong first search result is discarded and the next candidate is tried.
     Returns (success, output_file_path, error_message).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -285,6 +291,21 @@ def download_track_ytdlp(
     resolved_cookies = get_cookies_path(cookies_path)
     last_error = ""
     audio_files = []  # populated per-target; initialized here for safety
+
+    def _accept_or_reject(cand_target: str, produced: Path) -> bool:
+        """Verify a produced audio file against the expected duration; delete on mismatch."""
+        if expected_duration and expected_duration > 0 and check_duration:
+            v_ok, v_err, _meta = verify_audio_file(
+                produced,
+                expected_duration_seconds=expected_duration,
+                max_duration_delta=max_duration_delta,
+                delete_on_failure=True,
+            )
+            if not v_ok:
+                logger.info("[YT-DLP] Candidate '%s' rejected (%s); trying next candidate...", cand_target, v_err)
+                return False
+        logger.info("[YT-DLP] Successfully downloaded: %s (%d bytes)", produced.name, produced.stat().st_size)
+        return True
 
     for cand_target in targets_to_try:
         cmd = [
@@ -341,15 +362,10 @@ def download_track_ytdlp(
             # Find produced audio file in output_dir
             audio_files = [f for f in output_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
 
-            if proc.returncode == 0 and audio_files:
-                latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
-                logger.info("[YT-DLP] Successfully downloaded: %s (%d bytes)", latest_file.name, latest_file.stat().st_size)
-                return True, latest_file, None
-
             if audio_files:
                 latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
-                logger.info("[YT-DLP] Audio file found despite non-zero code: %s", latest_file.name)
-                return True, latest_file, None
+                if _accept_or_reject(cand_target, latest_file):
+                    return True, latest_file, None
 
             # Clean error snippet
             err_lines = [l for l in full_output.splitlines() if "ERROR:" in l or "WARNING:" in l or "HTTP Error" in l or "Sign in" in l]
@@ -415,8 +431,8 @@ def download_track_ytdlp(
                 audio_files = [f for f in output_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
                 if audio_files:
                     latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
-                    logger.info("[YT-DLP] Android-client retry succeeded: %s (%d bytes)", latest_file.name, latest_file.stat().st_size)
-                    return True, latest_file, None
+                    if _accept_or_reject(cand_target, latest_file):
+                        return True, latest_file, None
             except Exception as e:
                 logger.exception("[YT-DLP] Android-client execution error for %s: %s", cand_target, e)
                 last_error = str(e)

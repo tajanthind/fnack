@@ -412,6 +412,12 @@
           </div>
 
           <div class="form-check form-switch mb-3">
+            <input class="form-check-input settings-input" type="checkbox" id="setEnableDurationCheck" checked>
+            <label class="form-check-label fw-bold text-white small" for="setEnableDurationCheck">Duration Check</label>
+            <div class="text-secondary small">Compare downloaded audio duration against the official release and reject candidates that differ. <strong>Disable this</strong> to accept any audio file that downloads (e.g. for remixes, live versions, or when official track durations are unavailable).</div>
+          </div>
+
+          <div class="form-check form-switch mb-3">
             <input class="form-check-input settings-input" type="checkbox" id="setRejectMismatches" checked>
             <label class="form-check-label fw-bold text-white small" for="setRejectMismatches">Reject Mismatched Audio</label>
             <div class="text-secondary small">If downloaded audio fails strict duration and tag verification, discard it immediately rather than keeping the incorrect song.</div>
@@ -730,6 +736,7 @@
 
         document.getElementById('setMatchingStrictness').value = s.matching_strictness || 'standard';
         document.getElementById('setRejectMismatches').checked = s.reject_mismatches !== false;
+        document.getElementById('setEnableDurationCheck').checked = s.enable_duration_check !== false;
         document.getElementById('setEnableFolderWatcher').checked = s.enable_folder_watcher !== false;
 
         document.getElementById('setNavidromeUrl').value = s.navidrome_url || '';
@@ -857,6 +864,7 @@
 
       const curStrict = document.getElementById('setMatchingStrictness').value;
       const curReject = document.getElementById('setRejectMismatches').checked;
+      const curDurCheck = document.getElementById('setEnableDurationCheck').checked;
       const curWatcher = document.getElementById('setEnableFolderWatcher').checked;
 
       const curNavUrl = document.getElementById('setNavidromeUrl').value.trim();
@@ -884,6 +892,7 @@
         curEmbedCover !== (_initialSettings.embed_cover_art !== false) ||
         curStrict !== (_initialSettings.matching_strictness || 'standard') ||
         curReject !== (_initialSettings.reject_mismatches !== false) ||
+        curDurCheck !== (_initialSettings.enable_duration_check !== false) ||
         curWatcher !== (_initialSettings.enable_folder_watcher !== false) ||
         curNavUrl !== (_initialSettings.navidrome_url || '') ||
         curNavUser !== (_initialSettings.navidrome_user || '') ||
@@ -943,6 +952,7 @@
 
       document.getElementById('setMatchingStrictness').value = _initialSettings.matching_strictness || 'standard';
       document.getElementById('setRejectMismatches').checked = _initialSettings.reject_mismatches !== false;
+      document.getElementById('setEnableDurationCheck').checked = _initialSettings.enable_duration_check !== false;
       document.getElementById('setEnableFolderWatcher').checked = _initialSettings.enable_folder_watcher !== false;
 
       document.getElementById('setNavidromeUrl').value = _initialSettings.navidrome_url || '';
@@ -1002,6 +1012,7 @@
         embed_cover_art: document.getElementById('setEmbedCoverArt').checked,
         matching_strictness: document.getElementById('setMatchingStrictness').value,
         reject_mismatches: document.getElementById('setRejectMismatches').checked,
+        enable_duration_check: document.getElementById('setEnableDurationCheck').checked,
         enable_folder_watcher: document.getElementById('setEnableFolderWatcher').checked,
         navidrome_url: document.getElementById('setNavidromeUrl').value.trim(),
         navidrome_user: document.getElementById('setNavidromeUser').value.trim(),

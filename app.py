@@ -1084,6 +1084,8 @@ def api_settings():
             _set_setting("matching_strictness", str(data["matching_strictness"]))
         if "reject_mismatches" in data:
             _set_setting("reject_mismatches", "true" if data["reject_mismatches"] else "false")
+        if "enable_duration_check" in data:
+            _set_setting("enable_duration_check", "true" if data["enable_duration_check"] else "false")
         if "enable_folder_watcher" in data:
             _set_setting("enable_folder_watcher", "true" if data["enable_folder_watcher"] else "false")
         if "navidrome_url" in data:
@@ -1129,6 +1131,7 @@ def api_settings():
         "embed_cover_art": _get_setting("embed_cover_art", "true").lower() == "true",
         "matching_strictness": _get_setting("matching_strictness", "standard"),
         "reject_mismatches": _get_setting("reject_mismatches", "true").lower() == "true",
+        "enable_duration_check": _get_setting("enable_duration_check", "true").lower() == "true",
         "enable_folder_watcher": _get_setting("enable_folder_watcher", "true").lower() == "true",
         "navidrome_url": _get_setting("navidrome_url", ""),
         "navidrome_user": _get_setting("navidrome_user", ""),
@@ -1283,6 +1286,7 @@ with app.app_context():
         ("embed_cover_art", "true"),
         ("matching_strictness", "standard"),
         ("reject_mismatches", "true"),
+        ("enable_duration_check", "true"),
         ("enable_folder_watcher", "true"),
         ("navidrome_auto_scan", "true"),
         ("theme", "onyx-dark"),

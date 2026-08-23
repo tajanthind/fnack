@@ -171,6 +171,7 @@ docker compose up -d --build
 | SpotiFLAC fails on one track | Expected: some tracks are region-locked or unavailable. fnack falls back to yt-dlp, then marks the track failed — retry later |
 | "Sign in to confirm you're not a bot" | Datacenter IP YouTube block. Upload `cookies.txt` (Settings → YouTube Cookies) or wait; the Android-client auto-retry already helps |
 | Wrong song downloaded | Raise matching strictness in Settings (Strict ±4s) or use Manual Match with the exact URL |
+| Downloads fail with "Duration mismatch" | The official track duration doesn't match any search result (common for remixes, live versions, or tracks absent from YouTube/SoundCloud). Options: loosen strictness to Lenient, or disable the **Duration Check** toggle in Settings to accept any downloaded audio |
 | Tracks show "missing" but the files exist | Older databases (pre v0.2.04) can have DB/FS drift caused by a fixed watcher race. Run the one-time repair below |
 | Downloads not starting | Settings → check `enable_spotiflac` / `enable_ytdlp`; `docker logs fnack` for queue activity |
 | Xvfb / display errors | Ensure `DISPLAY=:99` and the container can start Xvfb (auto-handled by entrypoint) |
