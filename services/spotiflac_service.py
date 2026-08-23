@@ -132,6 +132,67 @@ def ensure_xvfb() -> None:
         logger.debug("[SPOTIFLAC] Xvfb ensure note: %s", e)
 
 
+def _patch_soundcloud_extension() -> None:
+    """Repair the broken SoundCloud extension in place.
+
+    The registry version (1.0.5) references `matching.compareStrings(...)` /
+    `matching.compareDuration(...)` in findBestMatch but never defines `matching`,
+    so every search crashes with 'matching is not defined'. This inserts the
+    missing implementation once (idempotent).
+    """
+    try:
+        from SpotiFLAC.extensions.manager import ExtensionManager
+        mgr = ExtensionManager()
+        installed = {x.name: x for x in mgr.list_installed()}
+        ext = installed.get("soundcloud")
+        if not ext:
+            return
+        path = Path(getattr(ext, "path", "") or "")
+        if not path.is_file():
+            path = Path(getattr(ext, "install_path", "") or "") / "index.js"
+        if not path.is_file():
+            # Extension manager stores providers under ~/.spotiflac/extensions/<name>/
+            home = Path(os.environ.get("HOME", "/root"))
+            path = home / ".spotiflac" / "extensions" / "soundcloud" / "index.js"
+        if not path.is_file():
+            logger.debug("[SPOTIFLAC] SoundCloud extension index.js not found for patching")
+            return
+        src = path.read_text(encoding="utf-8", errors="ignore")
+        if "matching.compareStrings" not in src:
+            return
+        if "var matching" in src or "const matching" in src or "let matching" in src:
+            return  # already patched
+
+        impl = (
+            "\nvar matching = {\n"
+            "  compareStrings: function (a, b) {\n"
+            "    a = (a || '').toString().toLowerCase().replace(/[^a-z0-9]+/g, '').trim();\n"
+            "    b = (b || '').toString().toLowerCase().replace(/[^a-z0-9]+/g, '').trim();\n"
+            "    if (!a || !b) return 0;\n"
+            "    if (a === b) return 1;\n"
+            "    if (a.indexOf(b) !== -1 || b.indexOf(a) !== -1) return 0.85;\n"
+            "    return 0;\n"
+            "  },\n"
+            "  compareDuration: function (targetMs, actualMs) {\n"
+            "    if (!targetMs || !actualMs) return 0;\n"
+            "    var diff = Math.abs(targetMs - actualMs);\n"
+            "    return Math.max(0, 1 - diff / targetMs);\n"
+            "  }\n"
+            "};\n"
+        )
+        anchor = "function findBestMatch"
+        if anchor not in src:
+            return
+        patched = src.replace(anchor, impl + "\n" + anchor, 1)
+        # The registry version demands a 65/100 match score; with the missing helper
+        # restored that is too strict for most search results, so relax it to 45.
+        patched = patched.replace("targetDurationMs, 65)", "targetDurationMs, 45)", 1)
+        path.write_text(patched, encoding="utf-8")
+        logger.info("[SPOTIFLAC] Patched SoundCloud extension (missing 'matching' helper) at %s", path)
+    except Exception as e:
+        logger.debug("[SPOTIFLAC] SoundCloud extension patch note: %s", e)
+
+
 def ensure_spotiflac_extensions() -> None:
     """Ensure SpotiFLAC extension registry and zero-auth providers are installed and active."""
     global _initialized
@@ -158,6 +219,7 @@ def ensure_spotiflac_extensions() -> None:
                         logger.debug("[SPOTIFLAC] Extension install %s: %s", getattr(e, "name", e), ie)
                 installed = mgr.list_installed()
                 logger.info("[SPOTIFLAC] Active lossless providers: %s", [x.name for x in installed])
+            _patch_soundcloud_extension()
             _initialized = True
         except Exception as e:
             logger.warning("[SPOTIFLAC] Extension auto-init note: %s", e)
