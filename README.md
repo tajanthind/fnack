@@ -108,7 +108,7 @@ Access the web interface at `http://<server-ip>:4688`.
 | Setting | Default | Description |
 | :--- | :--- | :--- |
 | `max_concurrent` | `3` | Maximum simultaneous track downloads |
-| `spotiflac_delay` | `1.5s` | Pacing delay between SpotiFLAC processes to prevent 429 rate limiting |
+| `spotiflac_delay` | `3.0s` | Pacing delay between SpotiFLAC processes to prevent 429 rate limiting |
 | `youtube_source` | `youtube_music` | Prioritize official YouTube Music Topic releases vs general YouTube |
 | `youtube_cookies_path` | `/config/cookies.txt` | Path to active Netscape cookies file for YouTube authentication |
 | `music_path` | `/music` | Target directory for organized music library |

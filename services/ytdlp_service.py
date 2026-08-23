@@ -69,7 +69,7 @@ def get_cookies_status(custom_path: Optional[str] = None) -> dict:
             "size_bytes": stat.st_size,
             "cookie_count": len(lines),
             "last_modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-            "message": f"Active ({len(lines)} cookies loaded from {cp.name})",
+            "message": f"Active ({len(lines)} cookies loaded from {cp.name}). This file lives on your host volume (e.g. ./config/cookies.txt) — it is NOT baked into the Docker image.",
         }
     except Exception as e:
         return {
@@ -278,6 +278,19 @@ def download_track_ytdlp(
             targets_to_try = [c["url"] for c in candidates]
         else:
             targets_to_try = [f"ytsearch1:{target}"]
+
+        # Try BOTH the regular YouTube and YouTube Music frontends for every candidate
+        # (music.youtube.com sometimes bypasses bot-checks that block www.youtube.com)
+        expanded = []
+        for t in targets_to_try:
+            m = re.search(r"(?:youtube\.com|youtu\.be)/watch\?v=([a-zA-Z0-9_-]{6,})", t)
+            if m:
+                vid = m.group(1)
+                expanded.append(f"https://www.youtube.com/watch?v={vid}")
+                expanded.append(f"https://music.youtube.com/watch?v={vid}")
+            else:
+                expanded.append(t)
+        targets_to_try = expanded
 
         # Add SoundCloud fallback targets for resilient zero-account audio downloading
         clean_t = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", "", track_title).strip()

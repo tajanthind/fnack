@@ -21,6 +21,44 @@ _spotiflac_lock = threading.Lock()
 _last_spotiflac_time = 0.0
 _DEFAULT_DELAY = 1.5  # Seconds between SpotiFLAC process invocations
 
+# 429 circuit breaker: when upstream providers keep returning 429, back off hard
+# and let the queue skip SpotiFLAC in favor of the yt-dlp fallback until recovery.
+_rate_limit_cooldown_until = 0.0
+_consecutive_429s = 0
+_rate_lock = threading.Lock()
+
+
+def _on_rate_limit_detected() -> float:
+    """Record a 429 and return the cool-down seconds to wait before the next attempt."""
+    global _rate_limit_cooldown_until, _consecutive_429s
+    with _rate_lock:
+        _consecutive_429s += 1
+        backoff = min(300.0, 30.0 * _consecutive_429s)
+        _rate_limit_cooldown_until = time.time() + backoff
+        return backoff
+
+
+def _on_success() -> None:
+    """Reset the 429 circuit breaker after a successful download."""
+    global _consecutive_429s, _rate_limit_cooldown_until
+    with _rate_lock:
+        _consecutive_429s = 0
+        _rate_limit_cooldown_until = 0.0
+
+
+def is_spotiflac_rate_limited() -> bool:
+    """True while the 429 cool-down is active (queue should prefer the yt-dlp fallback)."""
+    return time.time() < _rate_limit_cooldown_until
+
+
+def _wait_out_cooldown() -> float:
+    """Return the remaining 429 cool-down seconds (sticky: the cool-down stays armed
+    until its time elapses, so the queue's circuit-breaker check also sees it)."""
+    with _rate_lock:
+        if time.time() < _rate_limit_cooldown_until:
+            return _rate_limit_cooldown_until - time.time()
+        return 0.0
+
 
 def set_spotiflac_pacing_delay(seconds: float) -> None:
     """Configure the pacing delay between consecutive SpotiFLAC downloads."""
@@ -39,6 +77,37 @@ def _pace_spotiflac_call(delay: Optional[float] = None) -> None:
         logger.debug("[SPOTIFLAC] Rate limiter pacing: sleeping %.2fs", sleep_amount)
         time.sleep(sleep_amount)
     _last_spotiflac_time = time.time()
+
+
+def _extract_failure_details(output: str, max_chars: int = 900) -> str:
+    """Pull meaningful failure lines out of SpotiFLAC's raw CLI output.
+
+    The CLI prints box-drawing tables and debug noise; this extracts the lines
+    that explain WHY a download failed (provider errors, 429s, matches, etc.).
+    """
+    if not output:
+        return "No output produced"
+    interesting = []
+    seen = set()
+    for line in output.splitlines():
+        low = line.strip()
+        if not low:
+            continue
+        if any(k in low.lower() for k in (
+            "✗", "failed", "429", "too many requests", "rate limit", "not available",
+            "no match", "not_found", "is not defined", "error", "denied",
+            "timed out", "timeout", "login", "authentication", "unavailable",
+        )):
+            # Strip box-drawing characters and leading bullets
+            clean = low.replace("║", "").replace("═", "").replace("╔", "").replace("╗", "").replace("╚", "").replace("╝", "").replace("╠", "").replace("╣", "").strip()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            interesting.append(clean)
+        if len(interesting) >= 6:
+            break
+    snippet = " | ".join(interesting) if interesting else output[-400:].strip()
+    return snippet[:max_chars]
 
 
 def ensure_xvfb() -> None:
@@ -145,6 +214,9 @@ def download_track_spotiflac(
     for attempt in range(1, max_retries + 1):
         # Serialize SpotiFLAC process executions with rate limiting lock and pacing delay
         with _spotiflac_lock:
+            cooldown_waited = _wait_out_cooldown()
+            if cooldown_waited:
+                logger.info("[SPOTIFLAC] Waited %.0fs for upstream 429 cool-down before retrying %s", cooldown_waited, spotify_url)
             _pace_spotiflac_call(rate_limit_delay)
             logger.info("[SPOTIFLAC] (Attempt %d/%d) Running: %s", attempt, max_retries, " ".join(cmd))
 
@@ -176,21 +248,28 @@ def download_track_spotiflac(
 
                 if proc.returncode == 0 and audio_files:
                     latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
+                    _on_success()
                     logger.info("[SPOTIFLAC] Successfully downloaded: %s (%d bytes)", latest_file.name, latest_file.stat().st_size)
                     return True, latest_file, None
 
                 if audio_files:
                     latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
+                    _on_success()
                     logger.info("[SPOTIFLAC] Output file found despite non-zero exit: %s", latest_file.name)
                     return True, latest_file, None
 
-                err_snippet = full_output[-500:].strip() if full_output else "No output"
-                last_error = f"SpotiFLAC produced no audio file: {err_snippet}"
+                err_snippet = _extract_failure_details(full_output)
+                last_error = f"SpotiFLAC failed: {err_snippet}"
+                logger.warning(
+                    "[SPOTIFLAC] Download failed for %s (attempt %d/%d). Reasons: %s",
+                    spotify_url, attempt, max_retries, err_snippet,
+                )
 
-                # Check if rate limit / 429 error occurred in output
+                # Check if rate limit / 429 error occurred in output; open the circuit
+                # breaker so the shared upstream proxies can recover before the next try
                 if any(w in full_output.lower() for w in ("429", "rate limit", "too many requests", "throttle")):
-                    logger.warning("[SPOTIFLAC] Rate limit detected from upstream provider on attempt %d. Backing off...", attempt)
-                    time.sleep(3.0 * attempt)
+                    backoff = _on_rate_limit_detected()
+                    logger.warning("[SPOTIFLAC] Upstream rate limit (429) detected on attempt %d. Circuit breaker: pausing SpotiFLAC for %.0fs...", attempt, backoff)
 
             except Exception as e:
                 logger.exception("[SPOTIFLAC] Execution error for %s: %s", spotify_url, e)

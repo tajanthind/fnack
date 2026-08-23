@@ -648,12 +648,25 @@ def api_artist_monitor(artist_id):
         artist.filter_live = bool(data["filter_live"])
     if "filter_compilations" in data:
         artist.filter_compilations = bool(data["filter_compilations"])
+    if "include_albums" in data:
+        artist.include_albums = bool(data["include_albums"])
+    if "include_singles" in data:
+        artist.include_singles = bool(data["include_singles"])
+    if "include_compilations" in data:
+        artist.include_compilations = bool(data["include_compilations"])
 
     db.session.commit()
     return jsonify({
         "message": "Preferences updated",
         "monitored": artist.monitored,
         "auto_download": artist.auto_download,
+        "filter_remixes": artist.filter_remixes,
+        "filter_lofi": artist.filter_lofi,
+        "filter_live": artist.filter_live,
+        "filter_compilations": artist.filter_compilations,
+        "include_albums": artist.include_albums,
+        "include_singles": artist.include_singles,
+        "include_compilations": artist.include_compilations,
     })
 
 
@@ -1113,7 +1126,7 @@ def api_settings():
         "api_key": get_api_key(app),
         "theme": _get_setting("theme", "onyx-dark"),
         "spotiflac_quality": _get_setting("spotiflac_quality", "LOSSLESS"),
-        "spotiflac_delay": float(_get_setting("spotiflac_delay", "1.5")),
+        "spotiflac_delay": float(_get_setting("spotiflac_delay", "3.0")),
         "spotify_client_id": _get_setting("spotify_client_id", ""),
         "spotify_client_secret": _get_setting("spotify_client_secret", ""),
         "youtube_source": _get_setting("youtube_source", "youtube_music"),
@@ -1272,7 +1285,7 @@ with app.app_context():
     default_settings = [
         ("max_concurrent", str(app.config["MAX_CONCURRENT_DEFAULT"])),
         ("spotiflac_quality", "LOSSLESS"),
-        ("spotiflac_delay", "1.5"),
+        ("spotiflac_delay", "3.0"),
         ("youtube_source", "youtube_music"),
         ("youtube_cookies_path", "/config/cookies.txt"),
         ("spotdl_format", "opus"),

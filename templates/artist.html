@@ -177,6 +177,74 @@
     </div>
   </div>
 
+  <!-- Artist Discography Filters Modal -->
+  <div class="modal-overlay d-none" id="artistFiltersModal">
+    <div class="modal-dialog-box">
+      <div class="modal-header d-flex align-items-center justify-content-between">
+        <h5 class="modal-title m-0 fw-bold"><i class="fas fa-sliders-h text-danger me-2"></i>Discography Filters</h5>
+        <button type="button" class="btn-close btn-close-white" onclick="closeArtistFiltersModal()"></button>
+      </div>
+      <div class="modal-body">
+        <div class="p-3 bg-dark rounded mb-3">
+          <div class="fw-bold text-white" id="artistFiltersName">Artist</div>
+          <div class="text-secondary small">Changing filters re-syncs the discography so excluded releases are hidden.</div>
+        </div>
+
+        <h6 class="fw-bold text-secondary text-uppercase small mb-2" style="letter-spacing: 0.5px;">Exclude Release Types</h6>
+        <div class="bg-dark p-3 rounded mb-3">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="artistFilterRemixes" checked>
+            <label class="form-check-label small" for="artistFilterRemixes">Exclude Remixes, VIPs & Club Edits</label>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="artistFilterLofi" checked>
+            <label class="form-check-label small" for="artistFilterLofi">Exclude Lo-Fi, Acoustic, Slowed & Sped Up versions</label>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="artistFilterLive" checked>
+            <label class="form-check-label small" for="artistFilterLive">Exclude Live Albums & Concert Recordings</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="artistFilterCompilations" checked>
+            <label class="form-check-label small" for="artistFilterCompilations">Exclude Compilations & Various Artists</label>
+          </div>
+        </div>
+
+        <h6 class="fw-bold text-secondary text-uppercase small mb-2" style="letter-spacing: 0.5px;">Release Types to Include</h6>
+        <div class="d-flex gap-3 bg-dark p-2 rounded mb-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="artistIncAlbums" checked>
+            <label class="form-check-label small" for="artistIncAlbums">Albums</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="artistIncSingles" checked>
+            <label class="form-check-label small" for="artistIncSingles">Singles & EPs</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="artistIncCompilations">
+            <label class="form-check-label small" for="artistIncCompilations">Compilations</label>
+          </div>
+        </div>
+
+        <h6 class="fw-bold text-secondary text-uppercase small mb-2" style="letter-spacing: 0.5px;">Monitoring & Automation</h6>
+        <div class="bg-dark p-3 rounded">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="artistOptMonitored" checked>
+            <label class="form-check-label small" for="artistOptMonitored"><strong>Monitor for new releases</strong> (automatically sync future albums)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="artistOptAutoDownload">
+            <label class="form-check-label small" for="artistOptAutoDownload"><strong>Auto-download missing tracks</strong> after each sync</label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer d-flex justify-content-end gap-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="closeArtistFiltersModal()">Cancel</button>
+        <button type="button" class="btn btn-brand btn-sm" id="artistFiltersSaveBtn" onclick="saveArtistFilters()"><i class="fas fa-check me-1"></i>Save & Re-sync</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Generic Confirm Modal -->
   <div class="modal-overlay d-none" id="confirmModal">
     <div class="modal-dialog-box">

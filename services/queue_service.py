@@ -17,7 +17,10 @@ from flask_socketio import SocketIO
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
 from services.deezer_service import get_track_info
 from services.spotify_service import resolve_spotify_url
-from services.spotiflac_service import download_track_spotiflac
+from services.spotiflac_service import (
+    download_track_spotiflac,
+    is_spotiflac_rate_limited,
+)
 from services.ytdlp_service import download_track_ytdlp
 from services.verifier_service import STRICTNESS_DELTAS, verify_audio_file
 from services.navidrome_service import trigger_navidrome_scan
@@ -521,7 +524,10 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                         # "missing" marking). Always create an independent copy rather than
                         # a hardlink so embedded tags (Album, Album Artist, Track Number)
                         # belong strictly to this album without cross-album tag collisions.
-                        shutil.copy2(str(src_file), str(target_file))
+                        try:
+                            shutil.copy2(str(src_file), str(target_file))
+                        except shutil.SameFileError:
+                            logger.info("[QUEUE] Source and target are the same file for '%s - %s'; already in place", artist_name, track_title)
                         logger.info("[QUEUE] Copied existing file for '%s - %s' from '%s'", artist_name, track_title, src_file)
 
                     verified_file = target_file
@@ -545,32 +551,38 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         else:
             spotify_url = None
 
-        # Step 2: Primary Downloader -> SpotiFLAC with rate limiter pacing
+        # Step 2: Primary Downloader -> SpotiFLAC with rate limiter pacing.
+        # If the upstream 429 circuit breaker is open (providers rate-limiting),
+        # skip SpotiFLAC entirely and let the yt-dlp fallback run instead.
         if not verified_file and enable_spotiflac and spotify_url and job_id not in cancel_requested_jobs:
-            socketio.emit("download_progress", {"job_id": job_id, "track_id": track_id, "progress": 35.0, "status": "downloading"})
-            ok, downloaded_file, err = download_track_spotiflac(
-                spotify_url,
-                tmp_work_dir,
-                quality=quality_setting,
-                rate_limit_delay=spotiflac_delay,
-            )
-            if ok and downloaded_file:
-                # Step 3: Verify audio file with strict duration + tag checking
-                v_ok, v_err, meta = verify_audio_file(
-                    downloaded_file,
-                    expected_duration_seconds=verify_expected_duration,
-                    expected_artist=artist_name,
-                    expected_title=track_title,
-                    max_duration_delta=max_duration_delta,
-                    delete_on_failure=reject_mismatches,
-                )
-                if v_ok:
-                    verified_file = downloaded_file
-                    file_meta = meta
-                else:
-                    failure_reasons.append(f"SpotiFLAC verification failed: {v_err}")
+            if is_spotiflac_rate_limited():
+                logger.info("[QUEUE] SpotiFLAC 429 circuit breaker active; using yt-dlp fallback for '%s - %s'", artist_name, track_title)
+                failure_reasons.append("SpotiFLAC skipped (upstream rate limit circuit breaker)")
             else:
-                failure_reasons.append(f"SpotiFLAC failed: {err}")
+                socketio.emit("download_progress", {"job_id": job_id, "track_id": track_id, "progress": 35.0, "status": "downloading"})
+                ok, downloaded_file, err = download_track_spotiflac(
+                    spotify_url,
+                    tmp_work_dir,
+                    quality=quality_setting,
+                    rate_limit_delay=spotiflac_delay,
+                )
+                if ok and downloaded_file:
+                    # Step 3: Verify audio file with strict duration + tag checking
+                    v_ok, v_err, meta = verify_audio_file(
+                        downloaded_file,
+                        expected_duration_seconds=verify_expected_duration,
+                        expected_artist=artist_name,
+                        expected_title=track_title,
+                        max_duration_delta=max_duration_delta,
+                        delete_on_failure=reject_mismatches,
+                    )
+                    if v_ok:
+                        verified_file = downloaded_file
+                        file_meta = meta
+                    else:
+                        failure_reasons.append(f"SpotiFLAC verification failed: {v_err}")
+                else:
+                    failure_reasons.append(f"SpotiFLAC failed: {err}")
         elif not enable_spotiflac and not verified_file:
             logger.info("[QUEUE] SpotiFLAC disabled in settings, skipping for '%s - %s'", artist_name, track_title)
 
@@ -638,7 +650,10 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 # an explicit unlink here is what made the folder watcher see a
                 # deletion of a DB-referenced file and mark the track missing.
                 if verified_file.resolve() != final_dest.resolve():
-                    shutil.move(str(verified_file), str(final_dest))
+                    try:
+                        shutil.move(str(verified_file), str(final_dest))
+                    except shutil.SameFileError:
+                        logger.info("[QUEUE] Work file and destination are the same file for '%s - %s'; already in place", artist_name, track_title)
 
                 # Embed clean metadata tags with album artist and optional artwork to guarantee seamless Navidrome indexing
                 _tag_audio_file(
@@ -1100,7 +1115,10 @@ def download_manual_match_track(
             # Move into place (overwrites an existing file on POSIX; no unlink needed —
             # an explicit unlink made the folder watcher mark the track missing).
             if downloaded_file.resolve() != final_dest.resolve():
-                shutil.move(str(downloaded_file), str(final_dest))
+                try:
+                    shutil.move(str(downloaded_file), str(final_dest))
+                except shutil.SameFileError:
+                    logger.info("[QUEUE] Work file and destination are the same file for '%s - %s'; already in place", artist_name, track_title)
 
             # Embed uniform tags
             _tag_audio_file(

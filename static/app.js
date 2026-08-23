@@ -1040,6 +1040,88 @@ async function importArtistFolder(folderName, deezerId, btnEl) {
   }
 }
 
+// ----- Artist Discography Filters Modal -----
+let _artistFiltersId = null;
+
+async function openArtistFiltersModal(artistId) {
+  try {
+    const resp = await fetch(`/api/artist/${artistId}`);
+    if (!resp.ok) {
+      showToast('Could not load artist preferences', 'error');
+      return;
+    }
+    const a = await resp.json();
+    _artistFiltersId = artistId;
+    document.getElementById('artistFiltersName').textContent = a.name;
+    document.getElementById('artistFilterRemixes').checked = a.filter_remixes !== false;
+    document.getElementById('artistFilterLofi').checked = a.filter_lofi !== false;
+    document.getElementById('artistFilterLive').checked = a.filter_live !== false;
+    document.getElementById('artistFilterCompilations').checked = a.filter_compilations !== false;
+    document.getElementById('artistIncAlbums').checked = a.include_albums !== false;
+    document.getElementById('artistIncSingles').checked = a.include_singles !== false;
+    document.getElementById('artistIncCompilations').checked = a.include_compilations === true;
+    document.getElementById('artistOptMonitored').checked = a.monitored !== false;
+    document.getElementById('artistOptAutoDownload').checked = a.auto_download === true;
+    const modal = document.getElementById('artistFiltersModal');
+    if (modal) modal.classList.remove('d-none');
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
+  }
+}
+
+function closeArtistFiltersModal() {
+  const modal = document.getElementById('artistFiltersModal');
+  if (modal) modal.classList.add('d-none');
+  _artistFiltersId = null;
+}
+
+async function saveArtistFilters() {
+  if (!_artistFiltersId) return;
+  const artistId = _artistFiltersId;
+  const btn = document.getElementById('artistFiltersSaveBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Saving...';
+  }
+  const payload = {
+    filter_remixes: document.getElementById('artistFilterRemixes').checked,
+    filter_lofi: document.getElementById('artistFilterLofi').checked,
+    filter_live: document.getElementById('artistFilterLive').checked,
+    filter_compilations: document.getElementById('artistFilterCompilations').checked,
+    include_albums: document.getElementById('artistIncAlbums').checked,
+    include_singles: document.getElementById('artistIncSingles').checked,
+    include_compilations: document.getElementById('artistIncCompilations').checked,
+    monitored: document.getElementById('artistOptMonitored').checked,
+    auto_download: document.getElementById('artistOptAutoDownload').checked,
+  };
+  try {
+    const resp = await fetch(`/api/artist/${artistId}/monitor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showToast(data.error || 'Failed to save filters', 'error');
+    } else {
+      showToast('Filters saved. Re-syncing discography...', 'info');
+      // Re-sync so excluded/included releases take effect immediately
+      await fetch(`/api/artist/${artistId}/sync`, { method: 'POST' });
+    }
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
+  } finally {
+    closeArtistFiltersModal();
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-check me-1"></i>Save & Re-sync';
+    }
+    if (window._currentArtistId === artistId) {
+      loadArtistDetailPage(artistId);
+    }
+  }
+}
+
 // ----- Queue & Activity Page (/queue) -----
 async function loadQueuePage() {
   const activeContainer = document.getElementById('queueActiveList');
