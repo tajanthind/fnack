@@ -3,6 +3,7 @@
 import logging
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Optional, Tuple
@@ -13,6 +14,31 @@ AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
 DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/refs/heads/main/registry.json"
 
 _initialized = False
+_init_lock = threading.Lock()
+
+# Thread-safe rate limiter and concurrency lock
+_spotiflac_lock = threading.Lock()
+_last_spotiflac_time = 0.0
+_DEFAULT_DELAY = 1.5  # Seconds between SpotiFLAC process invocations
+
+
+def set_spotiflac_pacing_delay(seconds: float) -> None:
+    """Configure the pacing delay between consecutive SpotiFLAC downloads."""
+    global _DEFAULT_DELAY
+    _DEFAULT_DELAY = max(0.5, float(seconds))
+
+
+def _pace_spotiflac_call(delay: Optional[float] = None) -> None:
+    """Thread-safe rate limiter to avoid 429 rate limits from upstream lossless providers."""
+    global _last_spotiflac_time
+    wait_time = delay if delay is not None else _DEFAULT_DELAY
+    now = time.time()
+    elapsed = now - _last_spotiflac_time
+    if elapsed < wait_time:
+        sleep_amount = wait_time - elapsed
+        logger.debug("[SPOTIFLAC] Rate limiter pacing: sleeping %.2fs", sleep_amount)
+        time.sleep(sleep_amount)
+    _last_spotiflac_time = time.time()
 
 
 def ensure_xvfb() -> None:
@@ -34,31 +60,32 @@ def ensure_xvfb() -> None:
 def ensure_spotiflac_extensions() -> None:
     """Ensure SpotiFLAC extension registry and zero-auth providers are installed and active."""
     global _initialized
-    ensure_xvfb()
-    if _initialized:
-        return
-    try:
-        os.environ["SPOTIFLAC_REGISTRIES"] = DEFAULT_REGISTRY_URL
-        from SpotiFLAC.extensions.manager import ExtensionManager
-        from SpotiFLAC.extensions.registry_config import add_registry
+    with _init_lock:
+        ensure_xvfb()
+        if _initialized:
+            return
+        try:
+            os.environ["SPOTIFLAC_REGISTRIES"] = DEFAULT_REGISTRY_URL
+            from SpotiFLAC.extensions.manager import ExtensionManager
+            from SpotiFLAC.extensions.registry_config import add_registry
 
-        add_registry(DEFAULT_REGISTRY_URL)
-        mgr = ExtensionManager()
-        installed = mgr.list_installed()
-        if len(installed) < 3:
-            logger.info("[SPOTIFLAC] Fetching and installing lossless extension providers...")
-            entries = mgr.fetch_registry(DEFAULT_REGISTRY_URL)
-            for e in entries:
-                try:
-                    ext_id = getattr(e, "name", None) or getattr(e, "id", None) or str(e)
-                    mgr.install(ext_id)
-                except Exception as ie:
-                    logger.debug("[SPOTIFLAC] Extension install %s: %s", getattr(e, "name", e), ie)
+            add_registry(DEFAULT_REGISTRY_URL)
+            mgr = ExtensionManager()
             installed = mgr.list_installed()
-            logger.info("[SPOTIFLAC] Active lossless providers: %s", [x.name for x in installed])
-        _initialized = True
-    except Exception as e:
-        logger.warning("[SPOTIFLAC] Extension auto-init note: %s", e)
+            if len(installed) < 3:
+                logger.info("[SPOTIFLAC] Fetching and installing lossless extension providers...")
+                entries = mgr.fetch_registry(DEFAULT_REGISTRY_URL)
+                for e in entries:
+                    try:
+                        ext_id = getattr(e, "name", None) or getattr(e, "id", None) or str(e)
+                        mgr.install(ext_id)
+                    except Exception as ie:
+                        logger.debug("[SPOTIFLAC] Extension install %s: %s", getattr(e, "name", e), ie)
+                installed = mgr.list_installed()
+                logger.info("[SPOTIFLAC] Active lossless providers: %s", [x.name for x in installed])
+            _initialized = True
+        except Exception as e:
+            logger.warning("[SPOTIFLAC] Extension auto-init note: %s", e)
 
 
 def download_track_spotiflac(
@@ -67,9 +94,12 @@ def download_track_spotiflac(
     quality: str = "LOSSLESS",
     services: Optional[list[str]] = None,
     timeout_seconds: int = 180,
+    rate_limit_delay: Optional[float] = None,
+    max_retries: int = 2,
 ) -> Tuple[bool, Optional[Path], Optional[str]]:
     """
     Download a single track using SpotiFLAC (zero-auth lossless FLAC).
+    Thread-safe rate-limited execution with automatic backoff retry.
     Returns (success, output_file_path, error_message).
     """
     ensure_spotiflac_extensions()
@@ -93,8 +123,6 @@ def download_track_spotiflac(
         "{track}. {title}",
     ]
 
-    logger.info("[SPOTIFLAC] Running: %s", " ".join(cmd))
-
     proc_env = {
         **os.environ,
         "SPOTIFLAC_REGISTRIES": DEFAULT_REGISTRY_URL,
@@ -102,45 +130,64 @@ def download_track_spotiflac(
         "DISPLAY": os.environ.get("DISPLAY", ":99"),
     }
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-            env=proc_env,
-        )
+    last_error = ""
 
-        stdout_lines = []
-        try:
-            out, _ = proc.communicate(timeout=timeout_seconds)
-            stdout_lines.append(out or "")
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            logger.warning("[SPOTIFLAC] Process timed out after %ds for %s", timeout_seconds, spotify_url)
-            return False, None, f"SpotiFLAC timed out after {timeout_seconds}s"
+    for attempt in range(1, max_retries + 1):
+        # Serialize SpotiFLAC process executions with rate limiting lock and pacing delay
+        with _spotiflac_lock:
+            _pace_spotiflac_call(rate_limit_delay)
+            logger.info("[SPOTIFLAC] (Attempt %d/%d) Running: %s", attempt, max_retries, " ".join(cmd))
 
-        full_output = "\n".join(stdout_lines)
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                    env=proc_env,
+                )
 
-        # Find produced audio file in output_dir
-        audio_files = [f for f in output_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
+                stdout_lines = []
+                try:
+                    out, _ = proc.communicate(timeout=timeout_seconds)
+                    stdout_lines.append(out or "")
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    logger.warning("[SPOTIFLAC] Process timed out after %ds for %s", timeout_seconds, spotify_url)
+                    last_error = f"SpotiFLAC timed out after {timeout_seconds}s"
+                    continue
 
-        if proc.returncode == 0 and audio_files:
-            latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
-            logger.info("[SPOTIFLAC] Successfully downloaded: %s (%d bytes)", latest_file.name, latest_file.stat().st_size)
-            return True, latest_file, None
+                full_output = "\n".join(stdout_lines)
 
-        if audio_files:
-            latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
-            logger.info("[SPOTIFLAC] Output file found despite non-zero exit: %s", latest_file.name)
-            return True, latest_file, None
+                # Find produced audio file in output_dir
+                audio_files = [f for f in output_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
 
-        err_snippet = full_output[-500:].strip() if full_output else "No output"
-        logger.warning("[SPOTIFLAC] Download failed for %s. Log snippet: %s", spotify_url, err_snippet)
-        return False, None, f"SpotiFLAC produced no audio file: {err_snippet}"
+                if proc.returncode == 0 and audio_files:
+                    latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
+                    logger.info("[SPOTIFLAC] Successfully downloaded: %s (%d bytes)", latest_file.name, latest_file.stat().st_size)
+                    return True, latest_file, None
 
-    except Exception as e:
-        logger.exception("[SPOTIFLAC] Execution error for %s: %s", spotify_url, e)
-        return False, None, str(e)
+                if audio_files:
+                    latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
+                    logger.info("[SPOTIFLAC] Output file found despite non-zero exit: %s", latest_file.name)
+                    return True, latest_file, None
+
+                err_snippet = full_output[-500:].strip() if full_output else "No output"
+                last_error = f"SpotiFLAC produced no audio file: {err_snippet}"
+
+                # Check if rate limit / 429 error occurred in output
+                if any(w in full_output.lower() for w in ("429", "rate limit", "too many requests", "throttle")):
+                    logger.warning("[SPOTIFLAC] Rate limit detected from upstream provider on attempt %d. Backing off...", attempt)
+                    time.sleep(3.0 * attempt)
+
+            except Exception as e:
+                logger.exception("[SPOTIFLAC] Execution error for %s: %s", spotify_url, e)
+                last_error = str(e)
+
+        if attempt < max_retries:
+            time.sleep(2.0 * attempt)
+
+    logger.warning("[SPOTIFLAC] All %d attempts failed for %s. Last error: %s", max_retries, spotify_url, last_error)
+    return False, None, last_error

@@ -49,7 +49,11 @@
       </div>
 
       <div class="d-flex align-items-center gap-2">
-        <a href="/settings" class="btn btn-outline-secondary btn-sm rounded-circle" style="width:36px; height:36px; display:inline-flex; align-items:center; justify-content:center;">
+        <a href="/" class="btn btn-outline-secondary btn-sm d-md-none rounded-pill px-2 d-inline-flex align-items-center gap-1">
+          <i class="fas fa-arrow-left"></i>
+          <span>Library</span>
+        </a>
+        <a href="/settings" class="btn btn-outline-secondary btn-sm rounded-circle d-none d-sm-inline-flex align-items-center justify-content-center" style="width:36px; height:36px;" title="Settings">
           <i class="fas fa-cog"></i>
         </a>
       </div>
@@ -66,6 +70,37 @@
 
   <!-- Toast Notification Container -->
   <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer" style="z-index: 2100;"></div>
+
+  <!-- Manual Match / Fix Song Modal -->
+  <div class="modal-overlay d-none" id="manualMatchModal">
+    <div class="modal-dialog-box">
+      <div class="modal-header d-flex align-items-center justify-content-between">
+        <h5 class="modal-title m-0 fw-bold"><i class="fas fa-link text-danger me-2"></i>Manual Match / Fix Song</h5>
+        <button type="button" class="btn-close btn-close-white" onclick="hideManualMatchModal()"></button>
+      </div>
+      <div class="modal-body">
+        <div class="p-3 bg-dark rounded mb-3">
+          <div class="fw-bold text-white fs-6" id="manualMatchTrackTitle">Song Title</div>
+          <div class="text-secondary small" id="manualMatchTrackArtist">Artist — Album</div>
+        </div>
+        <label for="manualMatchUrlInput" class="form-label small fw-bold text-secondary text-uppercase mb-1">Target Song URL / Search Query</label>
+        <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary mb-2" id="manualMatchUrlInput" placeholder="Paste Spotify, YouTube, YouTube Music, or Deezer link...">
+        <div class="small text-secondary mb-3">
+          <div>Supported sources:</div>
+          <ul class="mb-0 ps-3 mt-1" style="font-size: 0.82rem;">
+            <li><strong>Spotify:</strong> <code>https://open.spotify.com/track/...</code> (FLAC via SpotiFLAC)</li>
+            <li><strong>YouTube Music:</strong> <code>https://music.youtube.com/watch?v=...</code> (Official Topic stream)</li>
+            <li><strong>YouTube:</strong> <code>https://youtube.com/watch?v=...</code></li>
+            <li><strong>Deezer:</strong> <code>https://www.deezer.com/track/...</code></li>
+          </ul>
+        </div>
+      </div>
+      <div class="modal-footer d-flex justify-content-end gap-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="hideManualMatchModal()">Cancel</button>
+        <button type="button" class="btn btn-brand btn-sm" id="manualMatchSubmitBtn"><i class="fas fa-download me-1"></i>Fetch & Replace</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Add Artist Filter Modal (Global) -->
   <div class="modal-overlay d-none" id="addArtistModal">
@@ -134,6 +169,8 @@
         <button type="button" class="btn btn-brand btn-sm" id="confirmModalOkBtn">Confirm</button>
       </div>
     </div>
+  </div>
+
   <!-- Mobile Bottom Navigation Bar -->
   <div class="mobile-bottom-nav">
     <a href="/" class="mobile-nav-link active"><i class="fas fa-th-large"></i><span>Library</span></a>

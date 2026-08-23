@@ -9,7 +9,7 @@ import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional, Set
+from typing import Optional, Set, Tuple
 import gevent
 from flask import Flask
 from flask_socketio import SocketIO
@@ -398,6 +398,9 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
         enable_spotiflac = _get_setting(app, "enable_spotiflac", "true").lower() != "false"
         enable_ytdlp = _get_setting(app, "enable_ytdlp", "true").lower() != "false"
+        spotiflac_delay = float(_get_setting(app, "spotiflac_delay", "1.5"))
+        cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
+        prefer_yt_music = _get_setting(app, "youtube_source", "youtube_music").lower() == "youtube_music"
 
         # Auto-resolve ISRC from Deezer if missing
         if not isrc and track_deezer_id:
@@ -530,10 +533,15 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         else:
             spotify_url = None
 
-        # Step 2: Primary Downloader -> SpotiFLAC
+        # Step 2: Primary Downloader -> SpotiFLAC with rate limiter pacing
         if not verified_file and enable_spotiflac and spotify_url and job_id not in cancel_requested_jobs:
             socketio.emit("download_progress", {"job_id": job_id, "track_id": track_id, "progress": 35.0, "status": "downloading"})
-            ok, downloaded_file, err = download_track_spotiflac(spotify_url, tmp_work_dir, quality=quality_setting)
+            ok, downloaded_file, err = download_track_spotiflac(
+                spotify_url,
+                tmp_work_dir,
+                quality=quality_setting,
+                rate_limit_delay=spotiflac_delay,
+            )
             if ok and downloaded_file:
                 # Step 3: Verify audio file with strict duration checking
                 v_ok, v_err, meta = verify_audio_file(
@@ -551,7 +559,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         elif not enable_spotiflac and not verified_file:
             logger.info("[QUEUE] SpotiFLAC disabled in settings, skipping for '%s - %s'", artist_name, track_title)
 
-        # Step 4: Fallback Downloader -> yt-dlp with intelligent candidate selection & YouTube Music Topic prioritization
+        # Step 4: Fallback Downloader -> yt-dlp with candidate scoring, cookies.txt & YouTube Music prioritization
         if not verified_file and enable_ytdlp and job_id not in cancel_requested_jobs:
             socketio.emit("download_progress", {"job_id": job_id, "track_id": track_id, "progress": 60.0, "status": "downloading"})
             logger.info("[QUEUE] Attempting yt-dlp candidate search for '%s - %s'", artist_name, track_title)
@@ -563,6 +571,8 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 artist_name=artist_name,
                 track_title=track_title,
                 expected_duration=expected_duration,
+                cookies_path=cookies_path,
+                prefer_youtube_music=prefer_yt_music,
             )
             if ok and downloaded_file:
                 v_ok, v_err, meta = verify_audio_file(
@@ -796,3 +806,274 @@ def start_queue_worker(app: Flask, socketio: SocketIO):
         except Exception:
             logger.exception("[QUEUE] Queue worker loop encountered error")
             gevent.sleep(4)
+
+
+def download_manual_match_track(
+    app: Flask,
+    socketio: SocketIO,
+    track_id: int,
+    custom_url: str,
+) -> Tuple[bool, str]:
+    """
+    Manually download, tag, and organize a track using a user-supplied Spotify, YouTube, YouTube Music, or Deezer URL.
+    Overwrites/replaces any existing audio file for this track and updates database metadata.
+    """
+    with app.app_context():
+        track = db.session.get(Track, track_id)
+        if not track:
+            return False, "Track not found in database"
+
+        album = track.album
+        artist = album.artist if album else None
+        artist_name = artist.name if artist else "Unknown Artist"
+        album_name = album.name if album else "Unknown Album"
+        album_cover_url = album.cover_url if album else None
+        track_title = track.title
+        track_num = track.track_number or 0
+        disc_num = track.disc_number or 1
+        expected_duration = track.duration
+
+        quality_setting = _get_setting(app, "spotiflac_quality", "LOSSLESS")
+        fallback_format = _get_setting(app, "ytdlp_format") or _get_setting(app, "spotdl_format", "flac")
+        save_cover_setting = _get_setting(app, "save_cover_art", "true").lower() != "false"
+        cover_filename_setting = _get_setting(app, "cover_art_filename", "cover.jpg")
+        embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
+        spotiflac_delay = float(_get_setting(app, "spotiflac_delay", "1.5"))
+        cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
+
+        # Mark track as downloading
+        track.status = "downloading"
+        track.progress = 15.0
+        track.error_message = None
+        db.session.commit()
+
+        socketio.emit("download_progress", {
+            "track_id": track_id,
+            "album_id": album.id if album else 0,
+            "artist_id": artist.id if artist else 0,
+            "status": "downloading",
+            "progress": 15.0,
+            "title": track_title,
+            "artist_name": artist_name,
+        })
+
+    music_dir = Path(_get_setting(app, "music_path", "/music"))
+    dest_dir = music_dir / _sanitize(artist_name) / _sanitize(album_name)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    cover_bytes = _save_album_cover(dest_dir, album_cover_url, save_cover=save_cover_setting, cover_filename=cover_filename_setting)
+
+    tmp_work_dir = DOWNLOADS_DIR / "work" / f"manual_{track_id}_{int(time.time())}"
+    tmp_work_dir.mkdir(parents=True, exist_ok=True)
+
+    target_input = custom_url.strip()
+    downloaded_file: Optional[Path] = None
+    last_err: Optional[str] = None
+    file_meta: dict = {}
+
+    try:
+        # 1. Spotify URL
+        if "open.spotify.com/track/" in target_input or target_input.startswith("spotify:track:"):
+            socketio.emit("download_progress", {"track_id": track_id, "progress": 35.0, "status": "downloading"})
+            ok, downloaded_file, last_err = download_track_spotiflac(
+                target_input,
+                tmp_work_dir,
+                quality=quality_setting,
+                rate_limit_delay=spotiflac_delay,
+            )
+            if not ok or not downloaded_file:
+                # Fallback to yt-dlp
+                socketio.emit("download_progress", {"track_id": track_id, "progress": 60.0, "status": "downloading"})
+                ok, downloaded_file, last_err = download_track_ytdlp(
+                    f"{artist_name} - {track_title}",
+                    tmp_work_dir,
+                    output_format=fallback_format,
+                    artist_name=artist_name,
+                    track_title=track_title,
+                    expected_duration=expected_duration,
+                    cookies_path=cookies_path,
+                )
+
+        # 2. YouTube / YouTube Music URL
+        elif "youtube.com" in target_input or "youtu.be" in target_input:
+            socketio.emit("download_progress", {"track_id": track_id, "progress": 40.0, "status": "downloading"})
+            ok, downloaded_file, last_err = download_track_ytdlp(
+                target_input,
+                tmp_work_dir,
+                output_format=fallback_format,
+                cookies_path=cookies_path,
+            )
+
+        # 3. Deezer URL
+        elif "deezer.com/track/" in target_input:
+            m = re.search(r"deezer\.com/track/(\d+)", target_input)
+            if m:
+                d_id = int(m.group(1))
+                t_info = get_track_info(d_id)
+                spot_url = resolve_spotify_url(t_info.get("title") or track_title, t_info.get("artist_name") or artist_name, isrc=t_info.get("isrc"))
+                if spot_url:
+                    ok, downloaded_file, last_err = download_track_spotiflac(
+                        spot_url,
+                        tmp_work_dir,
+                        quality=quality_setting,
+                        rate_limit_delay=spotiflac_delay,
+                    )
+                if not downloaded_file:
+                    ok, downloaded_file, last_err = download_track_ytdlp(
+                        f"{artist_name} - {track_title}",
+                        tmp_work_dir,
+                        output_format=fallback_format,
+                        cookies_path=cookies_path,
+                    )
+            else:
+                ok, downloaded_file, last_err = download_track_ytdlp(
+                    target_input,
+                    tmp_work_dir,
+                    output_format=fallback_format,
+                    cookies_path=cookies_path,
+                )
+
+        # 4. Raw Query / Other URL
+        else:
+            socketio.emit("download_progress", {"track_id": track_id, "progress": 40.0, "status": "downloading"})
+            ok, downloaded_file, last_err = download_track_ytdlp(
+                target_input,
+                tmp_work_dir,
+                output_format=fallback_format,
+                cookies_path=cookies_path,
+            )
+
+        if not downloaded_file or not downloaded_file.exists():
+            err_msg = last_err or "Failed to download audio stream from provided URL"
+            with app.app_context():
+                t = db.session.get(Track, track_id)
+                if t:
+                    t.status = "failed"
+                    t.progress = 0.0
+                    t.error_message = err_msg
+                    db.session.commit()
+            socketio.emit("download_progress", {"track_id": track_id, "status": "failed", "error_message": err_msg})
+            return False, err_msg
+
+        # Verify audio stream integrity without track duration testing for manually matched songs
+        v_ok, v_err, file_meta = verify_audio_file(
+            downloaded_file,
+            expected_duration_seconds=None,
+            delete_on_failure=False,
+        )
+
+        with app.app_context():
+            track_rec = db.session.get(Track, track_id)
+            album_rec = track_rec.album if track_rec else None
+
+            album_year = album_rec.year if album_rec else None
+            total_tracks_val = album_rec.tracks.count() if album_rec else None
+
+            ext = downloaded_file.suffix
+            disc_prefix = f"{disc_num}-" if (disc_num and disc_num > 1) else ""
+            track_num_prefix = f"{disc_prefix}{track_num:02d}. " if track_num else ""
+            final_filename = f"{track_num_prefix}{_sanitize(track_title)}{ext}"
+            final_dest = dest_dir / final_filename
+
+            # Clean up old audio files for this track slot
+            try:
+                for old_f in dest_dir.iterdir():
+                    if old_f.is_file() and old_f.suffix.lower() in AUDIO_EXTENSIONS:
+                        if old_f.resolve() != final_dest.resolve():
+                            if track_num and (old_f.name.startswith(f"{track_num:02d}. ") or old_f.name.startswith(f"{disc_prefix}{track_num:02d}. ")):
+                                try:
+                                    old_f.unlink()
+                                except OSError:
+                                    pass
+            except Exception:
+                pass
+
+            if downloaded_file.resolve() != final_dest.resolve():
+                if final_dest.exists():
+                    try:
+                        final_dest.unlink()
+                    except OSError:
+                        pass
+                shutil.move(str(downloaded_file), str(final_dest))
+
+            # Embed uniform tags
+            _tag_audio_file(
+                final_dest,
+                artist=artist_name,
+                album=album_name,
+                title=track_title,
+                track_num=track_num,
+                year=album_year,
+                album_artist=artist_name,
+                disc_num=disc_num,
+                total_tracks=total_tracks_val,
+                cover_bytes=cover_bytes if embed_cover_setting else None,
+            )
+
+            rel_path = str(final_dest.relative_to(music_dir))
+
+            if track_rec:
+                track_rec.is_downloaded = True
+                track_rec.status = "completed"
+                track_rec.progress = 100.0
+                track_rec.local_path = str(final_dest)
+                track_rec.file_path = rel_path
+                track_rec.file_format = ext.lstrip(".")
+                track_rec.size_bytes = file_meta.get("size_bytes", final_dest.stat().st_size)
+                track_rec.duration = file_meta.get("duration") or expected_duration
+                track_rec.bitrate = file_meta.get("bitrate")
+                track_rec.error_message = None
+
+            # Mark any active jobs completed
+            active_job = DownloadJob.query.filter_by(track_id=track_id).first()
+            if active_job:
+                active_job.status = "completed"
+                active_job.progress = 100.0
+                active_job.error_message = None
+
+            if album_rec:
+                album_tracks = album_rec.tracks.all()
+                downloaded_count = sum(1 for t in album_tracks if t.is_downloaded)
+                album_rec.is_downloaded = downloaded_count == len(album_tracks)
+                album_rec.size_bytes = sum(t.size_bytes or 0 for t in album_tracks)
+                album_rec.local_path = str(dest_dir)
+
+            db.session.commit()
+
+        # Trigger Navidrome auto-scan
+        try:
+            trigger_navidrome_scan(app)
+        except Exception:
+            pass
+
+        socketio.emit("download_progress", {
+            "track_id": track_id,
+            "album_id": album.id if album else 0,
+            "artist_id": artist.id if artist else 0,
+            "status": "completed",
+            "progress": 100.0,
+            "title": track_title,
+            "local_path": str(final_dest),
+        })
+        socketio.emit("artist_updated", {"artist_id": artist.id if artist else 0})
+
+        logger.info("[QUEUE] Manual match succeeded for '%s - %s' -> %s", artist_name, track_title, final_dest)
+        return True, f"Successfully downloaded and tagged '{track_title}' into library"
+
+    except Exception as e:
+        logger.exception("[QUEUE] Manual match failed for track %d: %s", track_id, e)
+        with app.app_context():
+            t = db.session.get(Track, track_id)
+            if t:
+                t.status = "failed"
+                t.progress = 0.0
+                t.error_message = str(e)
+                db.session.commit()
+        return False, str(e)
+
+    finally:
+        try:
+            if tmp_work_dir.exists():
+                shutil.rmtree(str(tmp_work_dir))
+        except OSError:
+            pass

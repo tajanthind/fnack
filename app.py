@@ -40,11 +40,13 @@ from services.navidrome_service import test_navidrome_connection, trigger_navidr
 from services.watcher_service import start_folder_watcher
 from services.queue_service import (
     cancel_job,
+    download_manual_match_track,
     queue_album,
     queue_artist_missing,
     queue_track,
     start_queue_worker,
 )
+from services.ytdlp_service import get_cookies_path, get_cookies_status
 
 from sqlalchemy import case, event, func
 from sqlalchemy.engine import Engine
@@ -227,6 +229,46 @@ def api_artists():
             "percent_downloaded": round((dl_t / tot_t * 100), 1) if tot_t else 0,
         })
     return jsonify(out)
+
+
+@app.route("/api/stats")
+def api_stats():
+    """Global catalogue statistics (total artists, downloaded tracks, failed songs, catalogue size in GB/TB)."""
+    total_artists = Artist.query.count()
+    monitored_artists = Artist.query.filter_by(monitored=True).count()
+
+    res = db.session.query(
+        func.count(Track.id),
+        func.sum(case((Track.is_downloaded == True, 1), else_=0)),
+        func.sum(case(((Track.status.in_(["failed", "error"])) | ((Track.is_downloaded == False) & (Track.error_message.isnot(None)) & (Track.error_message != "")), 1), else_=0)),
+        func.sum(case((Track.is_downloaded == True, Track.size_bytes), else_=0)),
+    ).first()
+
+    total_tracks = res[0] or 0
+    downloaded_tracks = int(res[1] or 0)
+    failed_tracks = int(res[2] or 0)
+    total_size_bytes = int(res[3] or 0)
+    missing_tracks = max(0, total_tracks - downloaded_tracks - failed_tracks)
+
+    if total_size_bytes >= 1024 * 1024 * 1024 * 1024:
+        size_formatted = f"{total_size_bytes / (1024 ** 4):.2f} TB"
+    elif total_size_bytes >= 1024 * 1024 * 1024:
+        size_formatted = f"{total_size_bytes / (1024 ** 3):.2f} GB"
+    elif total_size_bytes >= 1024 * 1024:
+        size_formatted = f"{total_size_bytes / (1024 ** 2):.1f} MB"
+    else:
+        size_formatted = f"{total_size_bytes // 1024} KB" if total_size_bytes else "0 MB"
+
+    return jsonify({
+        "total_artists": total_artists,
+        "monitored_artists": monitored_artists,
+        "total_tracks": total_tracks,
+        "downloaded_tracks": downloaded_tracks,
+        "failed_tracks": failed_tracks,
+        "missing_tracks": missing_tracks,
+        "total_size_bytes": total_size_bytes,
+        "total_size_formatted": size_formatted,
+    })
 
 
 def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, options: dict):
@@ -761,6 +803,26 @@ def api_track_cancel(track_id):
     return jsonify({"message": "Download cancelled."})
 
 
+@app.route("/api/track/<int:track_id>/manual-match", methods=["POST"])
+def api_track_manual_match(track_id):
+    """Manually match and download a track using a user-provided Spotify, YouTube, YouTube Music, or Deezer URL."""
+    data = request.get_json(silent=True) or {}
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "Please provide a valid Spotify, YouTube, YouTube Music, or Deezer URL."}), 400
+
+    track = db.session.get(Track, track_id)
+    if not track:
+        return jsonify({"error": "Track not found"}), 404
+
+    # Trigger manual match download in background task
+    socketio.start_background_task(download_manual_match_track, app, socketio, track_id, url)
+    return jsonify({
+        "message": f"Downloading audio from provided URL for '{track.title}'...",
+        "track_id": track_id,
+    }), 202
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  Queue & Activity API
 # ══════════════════════════════════════════════════════════════════════
@@ -796,6 +858,8 @@ def api_get_queue():
 
 @app.route("/api/queue/retry-failed", methods=["POST"])
 def api_retry_all_failed():
+    """Global retry: Re-queues all failed jobs and tracks in the entire library."""
+    # 1. Re-queue failed download jobs
     failed_jobs = DownloadJob.query.filter(DownloadJob.status.in_(["failed", "cancelled", "error"])).all()
     for j in failed_jobs:
         j.status = "queued"
@@ -804,8 +868,40 @@ def api_retry_all_failed():
         if j.track:
             j.track.status = "queued"
             j.track.error_message = None
+
+    # 2. Reset any tracks marked failed without an active job
+    failed_tracks = Track.query.filter(
+        (Track.status.in_(["failed", "error"])) |
+        ((Track.is_downloaded == False) & (Track.error_message.isnot(None)) & (Track.error_message != ""))
+    ).all()
+
+    requeued_count = len(failed_jobs)
+    for t in failed_tracks:
+        t.status = "queued"
+        t.error_message = None
+        job = DownloadJob.query.filter_by(track_id=t.id).first()
+        if job:
+            job.status = "queued"
+            job.progress = 0.0
+            job.error_message = None
+        else:
+            album = t.album
+            artist = album.artist if album else None
+            if album and artist:
+                db.session.add(DownloadJob(
+                    track_id=t.id,
+                    album_id=album.id,
+                    artist_id=artist.id,
+                    item_type="track",
+                    album_name=album.name,
+                    status="queued",
+                    source="retry",
+                ))
+                requeued_count += 1
+
     db.session.commit()
-    return jsonify({"message": f"Re-queued {len(failed_jobs)} failed jobs."})
+    socketio.emit("toast", {"message": f"Re-queued {requeued_count} failed tracks.", "type": "info"})
+    return jsonify({"message": f"Re-queued {requeued_count} failed tracks.", "count": requeued_count})
 
 
 @app.route("/api/jobs/<int:job_id>/cancel", methods=["POST"])
@@ -889,6 +985,58 @@ def api_navidrome_scan():
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Cookies Management API
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/api/cookies/status", methods=["GET"])
+def api_cookies_status():
+    custom_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
+    return jsonify(get_cookies_status(custom_path))
+
+
+@app.route("/api/cookies/upload", methods=["POST"])
+def api_cookies_upload():
+    """Upload or paste a cookies.txt file for yt-dlp authentication."""
+    custom_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
+    dest = Path(custom_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if "file" in request.files:
+        f = request.files["file"]
+        if f.filename == "":
+            return jsonify({"error": "No file selected"}), 400
+        f.save(str(dest))
+    else:
+        data = request.get_json(silent=True) or {}
+        content = data.get("content", "")
+        if not content.strip():
+            return jsonify({"error": "No cookies content provided"}), 400
+        dest.write_text(content.strip(), encoding="utf-8")
+
+    st = get_cookies_status(str(dest))
+    return jsonify({
+        "message": f"cookies.txt saved successfully ({st.get('cookie_count', 0)} cookies detected).",
+        "status": st,
+    })
+
+
+@app.route("/api/cookies/delete", methods=["POST", "DELETE"])
+def api_cookies_delete():
+    """Delete the active cookies.txt file."""
+    custom_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
+    cp = get_cookies_path(custom_path)
+    if cp and cp.exists():
+        try:
+            cp.unlink()
+        except OSError as e:
+            return jsonify({"error": f"Failed to delete cookies file: {e}"}), 500
+    return jsonify({
+        "message": "cookies.txt file deleted.",
+        "status": get_cookies_status(custom_path),
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  Settings API
 # ══════════════════════════════════════════════════════════════════════
 
@@ -901,6 +1049,12 @@ def api_settings():
             _set_setting("max_concurrent", str(v))
         if "spotiflac_quality" in data:
             _set_setting("spotiflac_quality", data["spotiflac_quality"])
+        if "spotiflac_delay" in data:
+            _set_setting("spotiflac_delay", str(max(0.5, float(data["spotiflac_delay"]))))
+        if "youtube_source" in data:
+            _set_setting("youtube_source", str(data["youtube_source"]).strip())
+        if "youtube_cookies_path" in data:
+            _set_setting("youtube_cookies_path", str(data["youtube_cookies_path"]).strip())
         if "ytdlp_format" in data:
             _set_setting("ytdlp_format", data["ytdlp_format"])
             _set_setting("spotdl_format", data["ytdlp_format"])
@@ -942,12 +1096,18 @@ def api_settings():
         return jsonify({"message": "Settings updated successfully."})
 
     fallback_fmt = _get_setting("ytdlp_format") or _get_setting("spotdl_format", "opus")
+    cookies_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
+
     return jsonify({
         "version": __version__,
         "max_concurrent": int(_get_setting("max_concurrent", str(app.config["MAX_CONCURRENT_DEFAULT"]))),
         "api_key": get_api_key(app),
         "theme": _get_setting("theme", "onyx-dark"),
         "spotiflac_quality": _get_setting("spotiflac_quality", "LOSSLESS"),
+        "spotiflac_delay": float(_get_setting("spotiflac_delay", "1.5")),
+        "youtube_source": _get_setting("youtube_source", "youtube_music"),
+        "youtube_cookies_path": cookies_path,
+        "cookies_status": get_cookies_status(cookies_path),
         "ytdlp_format": fallback_fmt,
         "spotdl_format": fallback_fmt,
         "spotdl_source": _get_setting("spotdl_source", "youtube"),
@@ -1100,6 +1260,9 @@ with app.app_context():
     default_settings = [
         ("max_concurrent", str(app.config["MAX_CONCURRENT_DEFAULT"])),
         ("spotiflac_quality", "LOSSLESS"),
+        ("spotiflac_delay", "1.5"),
+        ("youtube_source", "youtube_music"),
+        ("youtube_cookies_path", "/config/cookies.txt"),
         ("spotdl_format", "opus"),
         ("ytdlp_format", "opus"),
         ("spotdl_source", "youtube"),

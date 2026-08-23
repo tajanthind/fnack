@@ -258,10 +258,17 @@ async function loadDashboardArtists() {
   if (!grid) return;
 
   try {
-    const resp = await fetch('/api/artists');
-    const artists = await resp.json();
+    const [respArtists, respStats] = await Promise.all([
+      fetch('/api/artists'),
+      fetch('/api/stats'),
+    ]);
+    const artists = await respArtists.json();
     renderDashboardArtists(artists);
-    updateDashboardStats(artists);
+
+    if (respStats.ok) {
+      const stats = await respStats.json();
+      updateDashboardStats(stats, artists);
+    }
   } catch (err) {
     console.error('Failed to load artists:', err);
   }
@@ -319,22 +326,50 @@ function renderDashboardArtists(artists) {
   grid.innerHTML = html;
 }
 
-function updateDashboardStats(artists) {
-  let totalTracks = 0, downloadedTracks = 0, monitored = 0;
-  for (const a of artists) {
-    totalTracks += a.total_tracks || 0;
-    downloadedTracks += a.downloaded_tracks || 0;
-    if (a.monitored) monitored++;
-  }
+function updateDashboardStats(stats, artists = []) {
   const elArtists = document.getElementById('statTotalArtists');
   const elTracks = document.getElementById('statDownloadedTracks');
-  const elMissing = document.getElementById('statMissingTracks');
-  const elMonitored = document.getElementById('statMonitoredArtists');
+  const elFailed = document.getElementById('statFailedTracks');
+  const elSize = document.getElementById('statCatalogueSize');
+  const elFailedBadge = document.getElementById('failedBadgeHome');
+  const elMobileSize = document.getElementById('mobileMenuSize');
+  const elMobileFailed = document.getElementById('mobileMenuFailed');
 
-  if (elArtists) elArtists.textContent = artists.length;
-  if (elTracks) elTracks.textContent = downloadedTracks;
-  if (elMissing) elMissing.textContent = totalTracks - downloadedTracks;
-  if (elMonitored) elMonitored.textContent = monitored;
+  if (stats) {
+    if (elArtists) elArtists.textContent = stats.total_artists ?? artists.length;
+    if (elTracks) elTracks.textContent = stats.downloaded_tracks ?? 0;
+    if (elFailed) elFailed.textContent = stats.failed_tracks ?? 0;
+    if (elSize) elSize.textContent = stats.total_size_formatted || '0 MB';
+    if (elFailedBadge) elFailedBadge.textContent = stats.failed_tracks ?? 0;
+    if (elMobileSize) elMobileSize.textContent = stats.total_size_formatted || '0 MB';
+    if (elMobileFailed) elMobileFailed.textContent = stats.failed_tracks ?? 0;
+  }
+}
+
+async function retryAllFailedFromHome() {
+  const btn = document.getElementById('globalRetryFailedBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Retrying...';
+  }
+  try {
+    const resp = await fetch('/api/queue/retry-failed', { method: 'POST' });
+    const data = await resp.json();
+    if (resp.ok) {
+      showToast(data.message || 'Re-queued failed tracks', 'success');
+      loadDashboardArtists();
+    } else {
+      showToast(data.error || 'Failed to retry failed tracks', 'error');
+    }
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-redo me-1"></i><span>Retry All Failed (<span id="failedBadgeHome">0</span>)</span>';
+      loadDashboardArtists();
+    }
+  }
 }
 
 // ----- Dedicated Artist Detail Page -----
@@ -358,6 +393,9 @@ async function loadArtistDetailPage(artistId) {
 function renderArtistDetailPage(artist) {
   const container = document.getElementById('artistPageContainer');
   if (!container) return;
+
+  window._currentArtistId = artist.id;
+  window._currentArtistName = artist.name;
 
   // Split albums by type
   const studioAlbums = artist.albums.filter(a => a.record_type === 'album');
@@ -469,11 +507,11 @@ function renderAlbumAccordionCard(album, collapseId) {
                 <th style="width: 130px;" class="d-none-mobile">ISRC</th>
                 <th style="width: 120px;">Status</th>
                 <th style="width: 140px;" class="d-none-mobile">File Details</th>
-                <th style="width: 120px;" class="text-end">Actions</th>
+                <th style="width: 150px;" class="text-end">Actions</th>
               </tr>
             </thead>
             <tbody>
-              ${album.tracks.map(t => renderTrackRow(t)).join('')}
+              ${album.tracks.map(t => renderTrackRow(t, album.name)).join('')}
             </tbody>
           </table>
         </div>
@@ -481,10 +519,13 @@ function renderAlbumAccordionCard(album, collapseId) {
     </div>`;
 }
 
-function renderTrackRow(track) {
+function renderTrackRow(track, albumName = '') {
   const isDownloading = track.status === 'downloading';
   const isQueued = track.status === 'queued';
   const isMonitored = track.monitored !== false;
+  const safeTitle = (track.title || '').replace(/'/g, "\\'");
+  const safeAlbum = (albumName || '').replace(/'/g, "\\'");
+  const safeArtist = (window._currentArtistName || '').replace(/'/g, "\\'");
 
   return `
     <tr id="track_row_${track.id}" class="${!isMonitored ? 'track-disabled' : ''}">
@@ -510,6 +551,10 @@ function renderTrackRow(track) {
       </td>
       <td class="text-end">
         <div class="d-inline-flex gap-1">
+          <!-- Manual Match Button -->
+          <button class="btn btn-sm btn-outline-secondary btn-icon" title="Manual Match / Fix Song with Custom URL" onclick="openManualMatchModal(${track.id}, '${safeTitle}', '${safeArtist}', '${safeAlbum}')">
+            <i class="fas fa-search"></i>
+          </button>
           <button class="btn btn-sm ${isMonitored ? 'btn-outline-secondary' : 'btn-outline-warning'} btn-icon" title="${isMonitored ? 'Disable / Don\'t download this song' : 'Enable / Monitor this song'}" onclick="toggleTrackMonitor(${track.id})">
             <i class="fas ${isMonitored ? 'fa-eye' : 'fa-eye-slash text-warning'}"></i>
           </button>
@@ -536,6 +581,72 @@ function renderTrackRow(track) {
         </div>
       </td>
     </tr>`;
+}
+
+// ----- Manual Match / Fix Song Modal Handlers -----
+let _currentManualMatchTrackId = null;
+
+function openManualMatchModal(trackId, title, artistName, albumName) {
+  _currentManualMatchTrackId = trackId;
+  const modal = document.getElementById('manualMatchModal');
+  if (!modal) return;
+  document.getElementById('manualMatchTrackTitle').textContent = title || 'Song';
+  document.getElementById('manualMatchTrackArtist').textContent = artistName ? `${artistName}${albumName ? ` — ${albumName}` : ''}` : '';
+  const input = document.getElementById('manualMatchUrlInput');
+  input.value = '';
+  modal.classList.remove('d-none');
+  setTimeout(() => input.focus(), 50);
+
+  const submitBtn = document.getElementById('manualMatchSubmitBtn');
+  if (submitBtn) {
+    submitBtn.onclick = submitManualMatch;
+  }
+}
+
+function hideManualMatchModal() {
+  const modal = document.getElementById('manualMatchModal');
+  if (modal) modal.classList.add('d-none');
+  _currentManualMatchTrackId = null;
+}
+
+async function submitManualMatch() {
+  if (!_currentManualMatchTrackId) return;
+  const input = document.getElementById('manualMatchUrlInput');
+  const url = input.value.trim();
+  if (!url) {
+    showToast('Please enter a Spotify, YouTube, YouTube Music, or Deezer URL', 'error');
+    return;
+  }
+
+  const submitBtn = document.getElementById('manualMatchSubmitBtn');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Fetching...';
+  }
+
+  try {
+    const resp = await fetch(`/api/track/${_currentManualMatchTrackId}/manual-match`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      showToast(data.message || 'Download initiated!', 'info');
+      hideManualMatchModal();
+      const artistId = window._currentArtistId;
+      if (artistId) loadArtistDetailPage(artistId);
+    } else {
+      showToast(data.error || 'Failed to initiate download', 'error');
+    }
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<i class="fas fa-download me-1"></i>Fetch & Replace';
+    }
+  }
 }
 
 // ----- Track & Album Action Handlers -----

@@ -49,17 +49,51 @@
       </div>
 
       <div class="d-flex align-items-center gap-2">
-        <a href="/settings" class="btn btn-outline-secondary btn-sm rounded-circle" style="width:36px; height:36px; display:inline-flex; align-items:center; justify-content:center;">
+        <a href="/settings" class="btn btn-outline-secondary btn-sm rounded-circle d-none d-sm-inline-flex align-items-center justify-content-center" style="width:36px; height:36px;" title="Settings">
           <i class="fas fa-cog"></i>
         </a>
+        <button class="btn btn-outline-secondary btn-sm d-md-none rounded-circle d-inline-flex align-items-center justify-content-center" style="width:36px; height:36px;" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileNavMenu" aria-label="Menu">
+          <i class="fas fa-bars"></i>
+        </button>
       </div>
     </div>
   </nav>
 
+  <!-- Mobile Offcanvas Menu -->
+  <div class="offcanvas offcanvas-start bg-dark text-white" tabindex="-1" id="mobileNavMenu">
+    <div class="offcanvas-header border-bottom border-secondary border-opacity-25">
+      <div class="d-flex align-items-center gap-2">
+        <i class="fas fa-compact-disc text-danger fs-4"></i>
+        <h5 class="offcanvas-title fw-bold m-0">fnack</h5>
+        <span class="badge bg-secondary font-monospace" style="font-size: 0.7rem;">v{{ app_version }}</span>
+      </div>
+      <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column justify-content-between p-3">
+      <div class="d-flex flex-column gap-2">
+        <a href="/" class="btn btn-dark text-start py-2 px-3 fw-semibold border border-secondary border-opacity-25"><i class="fas fa-th-large text-danger me-2"></i>Library Catalogue</a>
+        <a href="/import" class="btn btn-dark text-start py-2 px-3 fw-semibold border border-secondary border-opacity-25"><i class="fas fa-file-import text-warning me-2"></i>Import /music Folder</a>
+        <a href="/queue" class="btn btn-dark text-start py-2 px-3 fw-semibold border border-secondary border-opacity-25"><i class="fas fa-tasks text-info me-2"></i>Download Activity & Queue</a>
+        <a href="/settings" class="btn btn-dark text-start py-2 px-3 fw-semibold border border-secondary border-opacity-25"><i class="fas fa-cog text-secondary me-2"></i>Settings & Configuration</a>
+      </div>
+      <div class="p-3 bg-dark-card rounded border border-secondary border-opacity-25">
+        <div class="small text-secondary mb-1">Catalogue Summary:</div>
+        <div class="d-flex justify-content-between small fw-bold mb-1">
+          <span>Total Size:</span>
+          <span class="text-info" id="mobileMenuSize">0 MB</span>
+        </div>
+        <div class="d-flex justify-content-between small fw-bold">
+          <span>Failed Songs:</span>
+          <span class="text-danger" id="mobileMenuFailed">0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Main Container -->
   <div class="container-fluid px-4 py-4">
 
-    <!-- Stats Bar -->
+    <!-- Stats Bar (Artists Managed, Tracks Downloaded, Total Failed Songs, Total Catalogue Size) -->
     <div class="row g-3 mb-4">
       <div class="col-6 col-md-3">
         <div class="stat-card">
@@ -75,22 +109,30 @@
       </div>
       <div class="col-6 col-md-3">
         <div class="stat-card">
-          <div class="stat-value text-warning" id="statMissingTracks">0</div>
-          <div class="stat-label">Missing Tracks</div>
+          <div class="stat-value text-danger" id="statFailedTracks">0</div>
+          <div class="stat-label">Total Failed Songs</div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <div class="stat-card">
-          <div class="stat-value text-info" id="statMonitoredArtists">0</div>
-          <div class="stat-label">Monitored Artists</div>
+          <div class="stat-value text-info" id="statCatalogueSize">0 MB</div>
+          <div class="stat-label">Catalogue Size</div>
         </div>
       </div>
     </div>
 
-    <!-- Artists Grid Section -->
-    <div class="d-flex align-items-center justify-content-between mb-3">
-      <h5 class="fw-bold m-0"><i class="fas fa-music text-danger me-2"></i>Artists</h5>
-      <span class="text-secondary small">Click an artist to view full discography & tracks</span>
+    <!-- Artists Grid Header & Global Actions -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+      <div>
+        <h5 class="fw-bold m-0"><i class="fas fa-music text-danger me-2"></i>Artists</h5>
+        <span class="text-secondary small">Click an artist to view full discography & tracks</span>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-warning btn-sm fw-bold d-flex align-items-center gap-2" id="globalRetryFailedBtn" onclick="retryAllFailedFromHome()">
+          <i class="fas fa-redo"></i>
+          <span>Retry All Failed (<span id="failedBadgeHome">0</span>)</span>
+        </button>
+      </div>
     </div>
 
     <div id="artistsDashboardGrid" class="row g-4">
@@ -191,6 +233,8 @@
         <button type="button" class="btn btn-brand btn-sm" id="confirmModalOkBtn">Confirm</button>
       </div>
     </div>
+  </div>
+
   <!-- Mobile Bottom Navigation Bar -->
   <div class="mobile-bottom-nav">
     <a href="/" class="mobile-nav-link active"><i class="fas fa-th-large"></i><span>Library</span></a>

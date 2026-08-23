@@ -199,10 +199,10 @@
     <!-- Download Engine Settings -->
     <div class="card bg-dark-card border-0 shadow-sm mb-4">
       <div class="card-body p-4">
-        <h5 class="fw-bold mb-3"><i class="fas fa-bolt text-warning me-2"></i>Download Engines</h5>
+        <h5 class="fw-bold mb-3"><i class="fas fa-bolt text-warning me-2"></i>Download Engines & Rate Limiting</h5>
 
         <!-- SpotiFLAC (Primary) -->
-        <div class="p-3 bg-dark rounded mb-3">
+        <div class="p-3 bg-dark rounded mb-4">
           <div class="d-flex align-items-center justify-content-between mb-2">
             <div class="d-flex align-items-center gap-2">
               <div class="form-check form-switch m-0">
@@ -213,7 +213,8 @@
             <span class="badge bg-success-subtle text-success">Zero Auth Required</span>
           </div>
           <p class="text-secondary small mb-3">Fetches true lossless FLAC streams from Tidal, Qobuz, SoundCloud, and Deezer without account credentials.</p>
-          <div class="row g-3">
+          
+          <div class="row g-3 mb-3">
             <div class="col-md-6">
               <label class="form-label small text-secondary">Preferred Audio Quality</label>
               <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setSpotiflacQuality">
@@ -222,11 +223,19 @@
                 <option value="LOW">LOW (160kbps)</option>
               </select>
             </div>
+            <div class="col-md-6">
+              <div class="d-flex align-items-center justify-content-between">
+                <label class="form-label small text-secondary m-0">Rate Limit Pacing Delay</label>
+                <span class="badge bg-danger" id="spotiflacDelayBadge">1.5s</span>
+              </div>
+              <input type="range" class="form-range settings-input mt-2" id="setSpotiflacDelay" min="0.5" max="5.0" step="0.5" value="1.5">
+              <div class="form-text text-secondary small">Delay between SpotiFLAC processes to prevent 429 rate-limiting from upstream lossless providers when adding multiple artists.</div>
+            </div>
           </div>
         </div>
 
         <!-- yt-dlp (Fallback) -->
-        <div class="p-3 bg-dark rounded">
+        <div class="p-3 bg-dark rounded mb-4">
           <div class="d-flex align-items-center justify-content-between mb-2">
             <div class="d-flex align-items-center gap-2">
               <div class="form-check form-switch m-0">
@@ -236,9 +245,17 @@
             </div>
             <span class="badge bg-secondary-subtle text-secondary">Secondary Fallback</span>
           </div>
-          <p class="text-secondary small mb-3">Direct YouTube / YouTube Music audio extraction with candidate scoring & Topic channel prioritization.</p>
-          <div class="row g-3">
-            <div class="col-md-8">
+          <p class="text-secondary small mb-3">Direct YouTube & YouTube Music audio extraction with candidate scoring & Topic channel prioritization.</p>
+          
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary">YouTube Audio Source</label>
+              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setYoutubeSource">
+                <option value="youtube_music" selected>YouTube Music (Official Topic Releases — No Video Dialogue/Skits)</option>
+                <option value="youtube">Standard YouTube Search</option>
+              </select>
+            </div>
+            <div class="col-md-6">
               <label class="form-label small text-secondary">Output Format</label>
               <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setYtdlpFormat">
                 <option value="opus" selected>Opus (Native YouTube 160kbps — Zero Transcoding / Recommended)</option>
@@ -246,9 +263,73 @@
                 <option value="flac">FLAC (Transcoded Container)</option>
                 <option value="mp3">MP3 (Transcoded 320kbps)</option>
               </select>
-              <div class="form-text text-secondary small">
-                <strong>Opus</strong> is YouTube's highest quality native audio stream (~160kbps Opus). Selecting Opus or M4A downloads and remuxes the original stream with <em>zero transcoding</em>.
-              </div>
+            </div>
+          </div>
+          <div class="form-text text-secondary small">
+            <strong>YouTube Music Topic</strong> streams are official record label master audio tracks, free of music video intros, outros, and dialogue skits.
+          </div>
+        </div>
+
+        <!-- YouTube cookies.txt Authentication Manager -->
+        <div class="p-3 bg-dark rounded">
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+            <div class="d-flex align-items-center gap-2">
+              <i class="fas fa-cookie-bite text-warning fs-5"></i>
+              <h6 class="fw-bold m-0 text-white">YouTube Cookies (cookies.txt)</h6>
+            </div>
+            <div id="cookieStatusBadgeContainer">
+              <span class="badge bg-secondary" id="cookieStatusBadge"><i class="fas fa-circle-notch fa-spin me-1"></i>Checking...</span>
+            </div>
+          </div>
+          <p class="text-secondary small mb-3">Provide a <code>cookies.txt</code> file so yt-dlp can authenticate with YouTube and bypass sign-in or bot detection restrictions.</p>
+
+          <div class="mb-3">
+            <label class="form-label small text-secondary fw-bold">Cookies File Path</label>
+            <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="setYoutubeCookiesPath" value="/config/cookies.txt">
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-md-8">
+              <label class="form-label small text-secondary">Upload cookies.txt File</label>
+              <input type="file" class="form-control form-control-sm bg-dark text-white border-secondary" id="cookieFileInput" accept=".txt">
+            </div>
+            <div class="col-md-4 d-flex align-items-end gap-2">
+              <button type="button" class="btn btn-outline-info btn-sm w-100" onclick="uploadCookieFile()">
+                <i class="fas fa-upload me-1"></i>Upload File
+              </button>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small text-secondary">Or Paste cookies.txt Content Below</label>
+            <textarea class="form-control form-control-sm bg-dark text-white border-secondary font-monospace" id="cookiePasteInput" rows="3" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	TRUE	..."></textarea>
+          </div>
+
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 pt-2 border-top border-secondary border-opacity-25">
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-brand btn-sm" onclick="savePastedCookies()">
+                <i class="fas fa-save me-1"></i>Save Pasted Content
+              </button>
+              <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteCookieFile()">
+                <i class="fas fa-trash-alt me-1"></i>Delete Cookies
+              </button>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#cookieHelpBox">
+              <i class="fas fa-question-circle me-1"></i>How to Export cookies.txt
+            </button>
+          </div>
+
+          <!-- Step by step cookies guide collapsible -->
+          <div class="collapse mt-3" id="cookieHelpBox">
+            <div class="p-3 bg-dark-card rounded border border-secondary border-opacity-25 small text-secondary">
+              <h6 class="fw-bold text-white mb-2"><i class="fas fa-info-circle text-info me-1"></i>Step-by-Step: Exporting YouTube cookies.txt</h6>
+              <ol class="mb-2 ps-3">
+                <li>Install a cookie export extension such as <strong>Get cookies.txt LOCALLY</strong> (available for Chrome/Firefox/Brave).</li>
+                <li>Log in to <a href="https://www.youtube.com" target="_blank" class="text-info">youtube.com</a> in your browser.</li>
+                <li>Click the extension icon on the YouTube tab.</li>
+                <li>Click <strong>Export</strong> or <strong>Export As cookies.txt</strong> to save the file.</li>
+                <li>Upload the file above, or place it at <code>/config/cookies.txt</code> in your Docker container mount!</li>
+              </ol>
             </div>
           </div>
         </div>
@@ -515,6 +596,14 @@
         document.getElementById('concurrentRange').value = s.max_concurrent || 3;
         document.getElementById('concurrentBadge').textContent = s.max_concurrent || 3;
         document.getElementById('setSpotiflacQuality').value = s.spotiflac_quality || 'LOSSLESS';
+        
+        const spotDelay = s.spotiflac_delay || 1.5;
+        document.getElementById('setSpotiflacDelay').value = spotDelay;
+        document.getElementById('spotiflacDelayBadge').textContent = spotDelay + 's';
+
+        document.getElementById('setYoutubeSource').value = s.youtube_source || 'youtube_music';
+        document.getElementById('setYoutubeCookiesPath').value = s.youtube_cookies_path || '/config/cookies.txt';
+
         document.getElementById('setYtdlpFormat').value = s.ytdlp_format || s.spotdl_format || 'flac';
         document.getElementById('syncIntervalInput').value = s.discography_interval_hours || 6;
         document.getElementById('musicPathInput').value = s.music_path || '/music';
@@ -533,9 +622,103 @@
         document.getElementById('setNavidromeToken').value = s.navidrome_token || '';
         document.getElementById('setNavidromeAutoScan').checked = s.navidrome_auto_scan !== false;
 
+        updateCookieStatusUI(s.cookies_status);
         setDirty(false);
       } catch (err) {
         console.error('Failed to load settings:', err);
+      }
+    }
+
+    function updateCookieStatusUI(st) {
+      const badge = document.getElementById('cookieStatusBadge');
+      if (!badge) return;
+      if (st && st.configured && st.exists) {
+        badge.className = 'badge bg-success';
+        badge.innerHTML = `<i class="fas fa-check-circle me-1"></i>Active (${st.cookie_count || 0} cookies loaded)`;
+      } else {
+        badge.className = 'badge bg-secondary';
+        badge.innerHTML = `<i class="fas fa-exclamation-circle me-1"></i>No Cookies Loaded`;
+      }
+    }
+
+    async function refreshCookieStatus() {
+      try {
+        const resp = await fetch('/api/cookies/status');
+        const st = await resp.json();
+        updateCookieStatusUI(st);
+      } catch (err) {
+        console.error('Failed to get cookie status:', err);
+      }
+    }
+
+    async function uploadCookieFile() {
+      const fileInput = document.getElementById('cookieFileInput');
+      if (!fileInput.files || !fileInput.files[0]) {
+        showToast('Please select a cookies.txt file to upload', 'error');
+        return;
+      }
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+
+      try {
+        showToast('Uploading cookies.txt...', 'info');
+        const resp = await fetch('/api/cookies/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          showToast(data.message || 'Cookies uploaded successfully!', 'success');
+          updateCookieStatusUI(data.status);
+          fileInput.value = '';
+        } else {
+          showToast(data.error || 'Failed to upload cookies', 'error');
+        }
+      } catch (err) {
+        showToast('Error uploading cookies: ' + err.message, 'error');
+      }
+    }
+
+    async function savePastedCookies() {
+      const text = document.getElementById('cookiePasteInput').value.trim();
+      if (!text) {
+        showToast('Please paste cookies content in the box', 'error');
+        return;
+      }
+
+      try {
+        showToast('Saving cookies...', 'info');
+        const resp = await fetch('/api/cookies/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: text }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          showToast(data.message || 'Cookies saved successfully!', 'success');
+          updateCookieStatusUI(data.status);
+          document.getElementById('cookiePasteInput').value = '';
+        } else {
+          showToast(data.error || 'Failed to save cookies', 'error');
+        }
+      } catch (err) {
+        showToast('Error saving cookies: ' + err.message, 'error');
+      }
+    }
+
+    async function deleteCookieFile() {
+      if (!confirm('Delete active cookies.txt file? YouTube may restrict some streams without authentication.')) return;
+      try {
+        const resp = await fetch('/api/cookies/delete', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok) {
+          showToast('Cookies file deleted', 'info');
+          updateCookieStatusUI(data.status);
+        } else {
+          showToast(data.error || 'Failed to delete cookies', 'error');
+        }
+      } catch (err) {
+        showToast('Error deleting cookies: ' + err.message, 'error');
       }
     }
 
@@ -544,6 +727,9 @@
       const curEnableYtdlp = document.getElementById('setEnableYtdlp').checked;
       const curMaxConc = parseInt(document.getElementById('concurrentRange').value);
       const curSpotQuality = document.getElementById('setSpotiflacQuality').value;
+      const curSpotDelay = parseFloat(document.getElementById('setSpotiflacDelay').value);
+      const curYtSource = document.getElementById('setYoutubeSource').value;
+      const curCookiesPath = document.getElementById('setYoutubeCookiesPath').value.trim();
       const curYtdlp = document.getElementById('setYtdlpFormat').value;
       const curSync = parseInt(document.getElementById('syncIntervalInput').value);
       const curPath = document.getElementById('musicPathInput').value.trim();
@@ -568,6 +754,9 @@
         curEnableYtdlp !== (_initialSettings.enable_ytdlp !== false) ||
         curMaxConc !== (_initialSettings.max_concurrent || 3) ||
         curSpotQuality !== (_initialSettings.spotiflac_quality || 'LOSSLESS') ||
+        curSpotDelay !== (_initialSettings.spotiflac_delay || 1.5) ||
+        curYtSource !== (_initialSettings.youtube_source || 'youtube_music') ||
+        curCookiesPath !== (_initialSettings.youtube_cookies_path || '/config/cookies.txt') ||
         curYtdlp !== (_initialSettings.ytdlp_format || _initialSettings.spotdl_format || 'flac') ||
         curSync !== (_initialSettings.discography_interval_hours || 6) ||
         curPath !== (_initialSettings.music_path || '/music') ||
@@ -614,6 +803,14 @@
       document.getElementById('concurrentRange').value = _initialSettings.max_concurrent || 3;
       document.getElementById('concurrentBadge').textContent = _initialSettings.max_concurrent || 3;
       document.getElementById('setSpotiflacQuality').value = _initialSettings.spotiflac_quality || 'LOSSLESS';
+      
+      const spotDelay = _initialSettings.spotiflac_delay || 1.5;
+      document.getElementById('setSpotiflacDelay').value = spotDelay;
+      document.getElementById('spotiflacDelayBadge').textContent = spotDelay + 's';
+
+      document.getElementById('setYoutubeSource').value = _initialSettings.youtube_source || 'youtube_music';
+      document.getElementById('setYoutubeCookiesPath').value = _initialSettings.youtube_cookies_path || '/config/cookies.txt';
+
       document.getElementById('setYtdlpFormat').value = _initialSettings.ytdlp_format || _initialSettings.spotdl_format || 'flac';
       document.getElementById('syncIntervalInput').value = _initialSettings.discography_interval_hours || 6;
       document.getElementById('musicPathInput').value = _initialSettings.music_path || '/music';
@@ -641,6 +838,9 @@
         if (el.id === 'concurrentRange') {
           document.getElementById('concurrentBadge').textContent = el.value;
         }
+        if (el.id === 'setSpotiflacDelay') {
+          document.getElementById('spotiflacDelayBadge').textContent = el.value + 's';
+        }
         checkDirty();
       });
       el.addEventListener('change', checkDirty);
@@ -667,6 +867,9 @@
         enable_ytdlp: document.getElementById('setEnableYtdlp').checked,
         max_concurrent: parseInt(document.getElementById('concurrentRange').value),
         spotiflac_quality: document.getElementById('setSpotiflacQuality').value,
+        spotiflac_delay: parseFloat(document.getElementById('setSpotiflacDelay').value),
+        youtube_source: document.getElementById('setYoutubeSource').value,
+        youtube_cookies_path: document.getElementById('setYoutubeCookiesPath').value.trim(),
         ytdlp_format: document.getElementById('setYtdlpFormat').value,
         discography_interval_hours: parseInt(document.getElementById('syncIntervalInput').value),
         music_path: document.getElementById('musicPathInput').value.trim(),
