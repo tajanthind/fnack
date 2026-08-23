@@ -171,8 +171,51 @@ docker compose up -d --build
 | SpotiFLAC fails on one track | Expected: some tracks are region-locked or unavailable. fnack falls back to yt-dlp, then marks the track failed — retry later |
 | "Sign in to confirm you're not a bot" | Datacenter IP YouTube block. Upload `cookies.txt` (Settings → YouTube Cookies) or wait; the Android-client auto-retry already helps |
 | Wrong song downloaded | Raise matching strictness in Settings (Strict ±4s) or use Manual Match with the exact URL |
+| Tracks show "missing" but the files exist | Older databases (pre v0.2.04) can have DB/FS drift caused by a fixed watcher race. Run the one-time repair below |
 | Downloads not starting | Settings → check `enable_spotiflac` / `enable_ytdlp`; `docker logs fnack` for queue activity |
 | Xvfb / display errors | Ensure `DISPLAY=:99` and the container can start Xvfb (auto-handled by entrypoint) |
+
+### One-time library repair (DB/FS drift)
+
+If tracks are marked *missing* while their audio files are still on disk (a
+fixed bug in v0.2.04 previously flipped them when files were replaced), run:
+
+```bash
+docker exec fnack python3 - <<'EOF'
+import os, re, unicodedata
+from models import Track, Album, db
+from app import app
+def norm(s):
+    return re.sub(r'[^a-zA-Z0-9]+', '', unicodedata.normalize('NFKD', str(s or ''))).lower()
+AUDIO = {'.flac','.mp3','.m4a','.opus','.ogg','.wav','.aac'}
+with app.app_context():
+    repaired = 0
+    for t in Track.query.filter(Track.is_downloaded == False).all():
+        album = t.album
+        if not album or not album.local_path or not os.path.isdir(album.local_path):
+            continue
+        d = album.local_path
+        nt, tn = norm(t.title), t.track_number
+        for f in sorted(os.listdir(d)):
+            if not f.lower().endswith(tuple(AUDIO)) or '.tmp' in f:
+                continue
+            if (tn and f.startswith(f'{tn:02d}. ')) or (nt and nt in norm(os.path.splitext(f)[0])):
+                fp = os.path.join(d, f)
+                t.is_downloaded = True; t.status = 'completed'; t.progress = 100.0
+                t.local_path = fp; t.file_path = os.path.relpath(fp, '/music')
+                t.file_format = os.path.splitext(f)[1].lstrip('.')
+                t.size_bytes = os.path.getsize(fp); t.error_message = None
+                repaired += 1
+                break
+    for a in Album.query.all():
+        trs = a.tracks.all()
+        dl = sum(1 for x in trs if x.is_downloaded)
+        a.is_downloaded = dl == len(trs) and len(trs) > 0
+        a.size_bytes = sum(x.size_bytes or 0 for x in trs)
+    db.session.commit()
+    print(f'Repaired {repaired} tracks')
+EOF
+```
 
 ---
 

@@ -6,7 +6,9 @@ synchronizes track library states and Navidrome metadata.
 
 import logging
 import os
+import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional
 from watchdog.events import FileSystemEventHandler, FileSystemMovedEvent
@@ -22,6 +24,13 @@ _observer: Optional[Observer] = None
 _current_watched_path: Optional[str] = None
 
 
+def _normalize(s: str) -> str:
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", str(s))
+    return re.sub(r"[^a-zA-Z0-9]+", "", s).lower()
+
+
 class MusicFolderHandler(FileSystemEventHandler):
     def __init__(self, app, socketio, music_root: Path):
         super().__init__()
@@ -34,6 +43,44 @@ class MusicFolderHandler(FileSystemEventHandler):
         if any(ign in p.name for ign in IGNORE_PATTERNS):
             return False
         return p.suffix.lower() in AUDIO_EXTENSIONS
+
+    def _find_replacement(self, deleted_path: Path, track) -> Optional[Path]:
+        """Return a file that replaced the deleted one for the same track slot.
+
+        fnack's own download pipeline replaces files in place (e.g. an .opus
+        upgraded to a lossless .flac, or a re-download with a better source).
+        The deletion of the old file must not be interpreted as the user
+        removing the track: if a new audio file for the same track number or
+        title now exists in the same directory, treat it as a replacement.
+        """
+        parent = deleted_path.parent
+        if not parent.is_dir():
+            return None
+
+        # In-place replacement: the file already exists again at the deleted path
+        # (re-download / re-sync writing over the same filename). Treat as replacement.
+        if deleted_path.exists() and deleted_path.stat().st_size > 0:
+            return deleted_path
+
+        track_num = track.track_number
+        disc_num = track.disc_number or 1
+        disc_prefix = f"{disc_num}-" if disc_num > 1 else ""
+        norm_title = _normalize(track.title)
+
+        for f in parent.iterdir():
+            if not f.is_file() or not self._is_audio_file(str(f)):
+                continue
+            if f.resolve() == deleted_path.resolve():
+                continue
+            name = f.name
+            if track_num and (
+                name.startswith(f"{track_num:02d}. ")
+                or name.startswith(f"{disc_prefix}{track_num:02d}. ")
+            ):
+                return f
+            if norm_title and norm_title in _normalize(f.stem):
+                return f
+        return None
 
     def on_deleted(self, event):
         if event.is_directory or not self._is_audio_file(event.src_path):
@@ -58,6 +105,24 @@ class MusicFolderHandler(FileSystemEventHandler):
                         pass
 
                 if track:
+                    # If the deletion was actually a file replacement by fnack's own
+                    # pipeline (format upgrade / re-download), re-point the track at the
+                    # new file instead of marking it missing.
+                    replacement = self._find_replacement(Path(deleted_path), track)
+                    if replacement:
+                        track.local_path = str(replacement)
+                        try:
+                            track.file_path = str(replacement.relative_to(self.music_root))
+                        except Exception:
+                            pass
+                        track.file_format = replacement.suffix.lower().lstrip(".")
+                        track.status = "completed"
+                        track.is_downloaded = True
+                        track.size_bytes = replacement.stat().st_size
+                        db.session.commit()
+                        logger.info("[WATCHER] File %s replaced by %s; track %d kept downloaded", deleted_path, replacement.name, track.id)
+                        return
+
                     logger.info("[WATCHER] Marking track %d ('%s') as missing due to file deletion", track.id, track.title)
                     track.is_downloaded = False
                     track.status = "missing"

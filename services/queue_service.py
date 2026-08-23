@@ -512,13 +512,11 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     target_file = dest_dir / final_filename
 
                     if target_file.resolve() != src_file.resolve():
-                        if target_file.exists():
-                            try:
-                                target_file.unlink()
-                            except OSError:
-                                pass
-                        # Always create an independent copy rather than a hardlink so embedded tags
-                        # (Album, Album Artist, Track Number) belong strictly to this album without cross-album tag collisions.
+                        # copy2 overwrites an existing target on POSIX; no explicit unlink
+                        # needed (an unlink here triggered the folder watcher's false
+                        # "missing" marking). Always create an independent copy rather than
+                        # a hardlink so embedded tags (Album, Album Artist, Track Number)
+                        # belong strictly to this album without cross-album tag collisions.
                         shutil.copy2(str(src_file), str(target_file))
                         logger.info("[QUEUE] Copied existing file for '%s - %s' from '%s'", artist_name, track_title, src_file)
 
@@ -624,26 +622,11 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 final_filename = f"{track_num_prefix}{_sanitize(track_title)}{ext}"
                 final_dest = dest_dir / final_filename
 
-                # Clean up any older/superseded files for this exact track position to prevent duplicate tracks in Navidrome
-                try:
-                    for old_f in dest_dir.iterdir():
-                        if old_f.is_file() and old_f.suffix.lower() in AUDIO_EXTENSIONS:
-                            if old_f.resolve() != final_dest.resolve():
-                                if track_num and (old_f.name.startswith(f"{track_num:02d}. ") or old_f.name.startswith(f"{disc_prefix}{track_num:02d}. ")):
-                                    try:
-                                        old_f.unlink()
-                                        logger.info("[QUEUE] Cleaned up older audio file: %s", old_f.name)
-                                    except OSError:
-                                        pass
-                except Exception as ce:
-                    logger.debug("[QUEUE] Duplicate cleanup note: %s", ce)
-
+                # Move the new file into place. shutil.move overwrites an existing
+                # file at the destination on POSIX, so no explicit unlink is needed —
+                # an explicit unlink here is what made the folder watcher see a
+                # deletion of a DB-referenced file and mark the track missing.
                 if verified_file.resolve() != final_dest.resolve():
-                    if final_dest.exists():
-                        try:
-                            final_dest.unlink()
-                        except OSError:
-                            pass
                     shutil.move(str(verified_file), str(final_dest))
 
                 # Embed clean metadata tags with album artist and optional artwork to guarantee seamless Navidrome indexing
@@ -689,6 +672,23 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
 
                 db.session.commit()
                 logger.info("[QUEUE] Download succeeded for '%s - %s' -> %s", artist_name, track_title, final_dest)
+
+                # Clean up superseded files for this exact track position (e.g. an
+                # old .opus replaced by a lossless .flac). This runs AFTER the DB
+                # commit so no track row references the deleted file anymore and the
+                # folder watcher cannot mistake the deletion for a user removal.
+                try:
+                    for old_f in dest_dir.iterdir():
+                        if old_f.is_file() and old_f.suffix.lower() in AUDIO_EXTENSIONS:
+                            if old_f.resolve() != final_dest.resolve():
+                                if track_num and (old_f.name.startswith(f"{track_num:02d}. ") or old_f.name.startswith(f"{disc_prefix}{track_num:02d}. ")):
+                                    try:
+                                        old_f.unlink()
+                                        logger.info("[QUEUE] Cleaned up superseded audio file: %s", old_f.name)
+                                    except OSError:
+                                        pass
+                except Exception as ce:
+                    logger.debug("[QUEUE] Duplicate cleanup note: %s", ce)
 
                 # Trigger Navidrome automatic scan if configured
                 try:
@@ -1053,25 +1053,9 @@ def download_manual_match_track(
             final_filename = f"{track_num_prefix}{_sanitize(track_title)}{ext}"
             final_dest = dest_dir / final_filename
 
-            # Clean up old audio files for this track slot
-            try:
-                for old_f in dest_dir.iterdir():
-                    if old_f.is_file() and old_f.suffix.lower() in AUDIO_EXTENSIONS:
-                        if old_f.resolve() != final_dest.resolve():
-                            if track_num and (old_f.name.startswith(f"{track_num:02d}. ") or old_f.name.startswith(f"{disc_prefix}{track_num:02d}. ")):
-                                try:
-                                    old_f.unlink()
-                                except OSError:
-                                    pass
-            except Exception:
-                pass
-
+            # Move into place (overwrites an existing file on POSIX; no unlink needed —
+            # an explicit unlink made the folder watcher mark the track missing).
             if downloaded_file.resolve() != final_dest.resolve():
-                if final_dest.exists():
-                    try:
-                        final_dest.unlink()
-                    except OSError:
-                        pass
                 shutil.move(str(downloaded_file), str(final_dest))
 
             # Embed uniform tags
@@ -1117,6 +1101,20 @@ def download_manual_match_track(
                 album_rec.local_path = str(dest_dir)
 
             db.session.commit()
+
+        # Clean up superseded files for this track slot AFTER the DB commit so no
+        # track row references the deleted file and the folder watcher stays quiet.
+        try:
+            for old_f in dest_dir.iterdir():
+                if old_f.is_file() and old_f.suffix.lower() in AUDIO_EXTENSIONS:
+                    if old_f.resolve() != final_dest.resolve():
+                        if track_num and (old_f.name.startswith(f"{track_num:02d}. ") or old_f.name.startswith(f"{disc_prefix}{track_num:02d}. ")):
+                            try:
+                                old_f.unlink()
+                            except OSError:
+                                pass
+        except Exception:
+            pass
 
         # Trigger Navidrome auto-scan
         try:
