@@ -40,11 +40,21 @@ config/*.db-shm
 *.db-journal
 *.sqlite3
 
+# Authentication & Cookies
+cookies.txt
+*cookies*.txt
+*.cookies
+cookies/
+config/cookies.txt
+config/*cookies*.txt
+
 # Local storage and runtime state dirs
 downloads/*
 !downloads/.gitkeep
 music/*
 !music/.gitkeep
+config/*
+!config/.gitkeep
 
 # Logs
 *.log

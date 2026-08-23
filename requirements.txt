@@ -13,3 +13,4 @@ pydoll-python
 nest-asyncio
 mutagen
 watchdog
+yt-dlp-ejs

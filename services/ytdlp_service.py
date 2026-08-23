@@ -89,24 +89,25 @@ def _normalize_str(s: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "", s).lower()
 
 
-def find_best_youtube_candidate(
+def find_youtube_candidates(
     artist_name: str,
     track_title: str,
     expected_duration: Optional[float] = None,
     max_duration_delta: float = 12.0,
     prefer_youtube_music: bool = True,
     cookies_path: Optional[str] = None,
-) -> Optional[dict]:
+) -> list[dict]:
     """
-    Search YouTube Music and YouTube for candidates and score them to find the exact audio match.
-    Prioritizes official label Topic channels, clean audio streams, and exact duration matches.
+    Search YouTube Music and YouTube for audio candidates and score them.
+    Prioritizes official YouTube Music Topic tracks and clean audio streams over music videos.
+    Returns sorted list of candidate dictionaries in descending score order.
     """
     clean_art = (artist_name or "").strip()
     clean_tit = (track_title or "").strip()
     norm_art = _normalize_str(clean_art)
     norm_tit = _normalize_str(clean_tit)
 
-    # Queries ordered to prioritize official Topic / YouTube Music audio releases
+    # Queries ordered to prioritize official YouTube Music / Topic releases before general video search
     queries = [
         f'"{clean_art} - Topic" "{clean_tit}"',
         f'"{clean_art}" "{clean_tit}" official audio',
@@ -125,6 +126,12 @@ def find_best_youtube_candidate(
     if resolved_cookie_file:
         ydl_opts["cookiefile"] = str(resolved_cookie_file)
 
+    if Path("/usr/bin/node").exists():
+        ydl_opts["js_runtimes"] = {"node": {"path": "/usr/bin/node"}}
+    elif Path("/usr/local/bin/deno").exists():
+        ydl_opts["js_runtimes"] = {"deno": {"path": "/usr/local/bin/deno"}}
+
+    seen_ids = set()
     candidates = []
 
     for q in queries:
@@ -137,6 +144,10 @@ def find_best_youtube_candidate(
                         continue
 
                     cand_id = item.get("id")
+                    if cand_id in seen_ids:
+                        continue
+                    seen_ids.add(cand_id)
+
                     cand_title = item.get("title", "")
                     cand_uploader = item.get("uploader", "")
                     cand_dur = float(item.get("duration") or 0)
@@ -146,9 +157,9 @@ def find_best_youtube_candidate(
                     # Score candidate
                     score = 0
 
-                    # Topic channel match (Official YouTube Music Audio stream from record label)
+                    # Topic channel match (Official YouTube Music release)
                     if "topic" in cand_uploader.lower() and norm_art in norm_cand_up:
-                        score += 15  # Major boost for official Topic release
+                        score += 15
                     elif "official" in cand_uploader.lower() or "vevo" in cand_uploader.lower():
                         score += 5
 
@@ -158,7 +169,6 @@ def find_best_youtube_candidate(
                     elif any(word.lower() in cand_title.lower() for word in clean_tit.split() if len(word) > 3):
                         score += 3
                     else:
-                        # Video title doesn't even contain the track title words
                         score -= 8
 
                     # Artist match in title or uploader
@@ -167,10 +177,10 @@ def find_best_youtube_candidate(
                     else:
                         score -= 3
 
-                    # Clean audio vs Music Video penalty (Avoid dialogue, skits, and music video extras)
+                    # Clean audio vs Music Video penalty
                     for vid_word in VIDEO_EXTRANEOUS_WORDS:
                         if vid_word in cand_title.lower() and vid_word not in clean_tit.lower():
-                            score -= 6  # Penalize music videos when looking for audio
+                            score -= 6
 
                     if "audio" in cand_title.lower() and "video" not in cand_title.lower():
                         score += 4
@@ -185,10 +195,9 @@ def find_best_youtube_candidate(
                         elif dur_delta <= max_duration_delta:
                             score += 2
                         else:
-                            # Heavy penalty for big duration discrepancy
                             score -= 15
 
-                    # Variant penalty if not in expected title
+                    # Variant penalty
                     for v in VARIANT_WORDS:
                         if v in cand_title.lower() and v not in clean_tit.lower():
                             score -= 8
@@ -202,29 +211,31 @@ def find_best_youtube_candidate(
                         "duration": cand_dur,
                     })
 
-            if candidates and any(c["score"] >= 22 for c in candidates):
-                break  # Found high-confidence Topic / Official audio candidate early
         except Exception as e:
             logger.debug("[YT-DLP] Search candidate query '%s' failed: %s", q, e)
 
-    if not candidates:
-        return None
-
     candidates.sort(key=lambda c: c["score"], reverse=True)
-    best = candidates[0]
+    return [c for c in candidates if c["score"] >= 0]
 
-    if best["score"] < 5:
-        logger.warning(
-            "[YT-DLP] No confident YouTube match for '%s - %s' (best score %d: '%s' by '%s')",
-            clean_art, clean_tit, best["score"], best["title"], best["uploader"]
-        )
-        return None
 
-    logger.info(
-        "[YT-DLP] Selected best match for '%s - %s': '%s' [%.0fs] by '%s' (score %d, id %s)",
-        clean_art, clean_tit, best["title"], best["duration"], best["uploader"], best["score"], best["id"]
+def find_best_youtube_candidate(
+    artist_name: str,
+    track_title: str,
+    expected_duration: Optional[float] = None,
+    max_duration_delta: float = 12.0,
+    prefer_youtube_music: bool = True,
+    cookies_path: Optional[str] = None,
+) -> Optional[dict]:
+    """Find the single highest-scoring YouTube candidate."""
+    candidates = find_youtube_candidates(
+        artist_name=artist_name,
+        track_title=track_title,
+        expected_duration=expected_duration,
+        max_duration_delta=max_duration_delta,
+        prefer_youtube_music=prefer_youtube_music,
+        cookies_path=cookies_path,
     )
-    return best
+    return candidates[0] if candidates else None
 
 
 def download_track_ytdlp(
@@ -239,98 +250,118 @@ def download_track_ytdlp(
     timeout_seconds: int = 180,
 ) -> Tuple[bool, Optional[Path], Optional[str]]:
     """
-    Download a single audio track using yt-dlp with candidate scoring & cookies.txt authentication.
+    Download a single audio track using yt-dlp with candidate scoring, YouTube Music prioritization,
+    automatic multi-candidate fallback, and cookies.txt authentication.
     Returns (success, output_file_path, error_message).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     target = query_or_url.strip()
 
-    # If artist and title are provided, find the verified best YouTube match
+    # Targets to try in order of priority (YouTube Music candidates first, then fallbacks)
+    targets_to_try = []
+
     if artist_name and track_title and not (target.startswith("http://") or target.startswith("https://")):
-        candidate = find_best_youtube_candidate(
-            artist_name,
-            track_title,
+        candidates = find_youtube_candidates(
+            artist_name=artist_name,
+            track_title=track_title,
             expected_duration=expected_duration,
             prefer_youtube_music=prefer_youtube_music,
             cookies_path=cookies_path,
         )
-        if candidate:
-            target = candidate["url"]
+        if candidates:
+            targets_to_try = [c["url"] for c in candidates]
         else:
-            if not target.startswith("ytsearch"):
-                target = f"ytsearch1:{target}"
-    elif not (target.startswith("http://") or target.startswith("https://") or target.startswith("ytsearch")):
-        target = f"ytsearch1:{target}"
+            targets_to_try = [f"ytsearch1:{target}"]
+
+        # Add SoundCloud fallback targets for resilient zero-account audio downloading
+        clean_t = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", "", track_title).strip()
+        targets_to_try.append(f'scsearch2:"{artist_name}" "{clean_t}"')
+        targets_to_try.append(f"scsearch2:{artist_name} {clean_t}")
+    elif not (target.startswith("http://") or target.startswith("https://") or target.startswith("ytsearch") or target.startswith("scsearch")):
+        targets_to_try = [f"ytsearch1:{target}", f"scsearch1:{target}"]
+    else:
+        targets_to_try = [target]
 
     resolved_cookies = get_cookies_path(cookies_path)
+    last_error = ""
 
-    cmd = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
-        "--no-playlist",
-        "-f",
-        "ba/ba*/bestaudio/best",
-        "-x",
-        "--audio-format",
-        output_format,
-        "--audio-quality",
-        "0",
-        "-o",
-        str(output_dir / "%(title)s.%(ext)s"),
-        "--no-warnings",
-    ]
+    for cand_target in targets_to_try:
+        cmd = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--no-playlist",
+            "-f",
+            "ba/ba*/bestaudio/best",
+            "-x",
+            "--audio-format",
+            output_format,
+            "--audio-quality",
+            "0",
+            "-o",
+            str(output_dir / "%(title)s.%(ext)s"),
+            "--no-warnings",
+        ]
 
-    if resolved_cookies:
-        cmd.extend(["--cookies", str(resolved_cookies)])
-        logger.info("[YT-DLP] Using cookies from: %s", resolved_cookies)
+        if resolved_cookies:
+            cmd.extend(["--cookies", str(resolved_cookies)])
 
-    cmd.append(target)
+        if Path("/usr/bin/node").exists():
+            cmd.extend(["--js-runtimes", "node:/usr/bin/node"])
+        elif Path("/usr/local/bin/deno").exists():
+            cmd.extend(["--js-runtimes", "deno:/usr/local/bin/deno"])
 
-    logger.info("[YT-DLP] Executing: %s", target)
+        cmd.append(cand_target)
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-        )
+        logger.info("[YT-DLP] Executing target: %s", cand_target)
 
-        stdout_lines = []
         try:
-            out, _ = proc.communicate(timeout=timeout_seconds)
-            stdout_lines.append(out or "")
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            logger.warning("[YT-DLP] Process timed out after %ds for %s", timeout_seconds, target)
-            return False, None, f"yt-dlp timed out after {timeout_seconds}s"
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+            )
 
-        full_output = "\n".join(stdout_lines).strip()
+            stdout_lines = []
+            try:
+                out, _ = proc.communicate(timeout=timeout_seconds)
+                stdout_lines.append(out or "")
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                logger.warning("[YT-DLP] Process timed out after %ds for %s", timeout_seconds, cand_target)
+                last_error = f"yt-dlp timed out after {timeout_seconds}s"
+                continue
 
-        # Find produced audio file in output_dir
-        audio_files = [f for f in output_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
+            full_output = "\n".join(stdout_lines).strip()
 
-        if proc.returncode == 0 and audio_files:
-            latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
-            logger.info("[YT-DLP] Successfully downloaded: %s (%d bytes)", latest_file.name, latest_file.stat().st_size)
-            return True, latest_file, None
+            # Find produced audio file in output_dir
+            audio_files = [f for f in output_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
 
-        if audio_files:
-            latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
-            logger.info("[YT-DLP] Audio file found despite non-zero code: %s", latest_file.name)
-            return True, latest_file, None
+            if proc.returncode == 0 and audio_files:
+                latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
+                logger.info("[YT-DLP] Successfully downloaded: %s (%d bytes)", latest_file.name, latest_file.stat().st_size)
+                return True, latest_file, None
 
-        # Clean error snippet
-        err_lines = [l for l in full_output.splitlines() if "ERROR:" in l or "WARNING:" in l or "HTTP Error" in l or "Sign in" in l]
-        err_snippet = "\n".join(err_lines[-3:]) if err_lines else (full_output[-300:] if full_output else "No output produced")
-        logger.warning("[YT-DLP] Download failed for '%s': %s", target, err_snippet)
-        return False, None, f"yt-dlp error: {err_snippet}"
+            if audio_files:
+                latest_file = max(audio_files, key=lambda f: f.stat().st_mtime)
+                logger.info("[YT-DLP] Audio file found despite non-zero code: %s", latest_file.name)
+                return True, latest_file, None
 
-    except Exception as e:
-        logger.exception("[YT-DLP] Execution error for %s: %s", target, e)
-        return False, None, str(e)
+            # Clean error snippet
+            err_lines = [l for l in full_output.splitlines() if "ERROR:" in l or "WARNING:" in l or "HTTP Error" in l or "Sign in" in l]
+            err_snippet = "\n".join(err_lines[-3:]) if err_lines else (full_output[-300:] if full_output else "No output produced")
+            last_error = f"yt-dlp error: {err_snippet}"
+            logger.debug("[YT-DLP] Candidate '%s' failed (%s), trying next candidate if available...", cand_target, err_snippet)
+
+        except Exception as e:
+            logger.exception("[YT-DLP] Execution error for %s: %s", cand_target, e)
+            last_error = str(e)
+
+    logger.warning("[YT-DLP] All candidates failed for '%s'. Last error: %s", query_or_url, last_error)
+    return False, None, last_error
+
 
 

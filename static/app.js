@@ -193,43 +193,57 @@ let _pendingAddArtistData = null;
 
 function openAddArtistModal(artistData) {
   _pendingAddArtistData = artistData;
-  document.getElementById('addArtistModalTitle').textContent = `Add "${artistData.name}"`;
-  document.getElementById('addArtistImg').src = artistData.image_url || '';
-  document.getElementById('addArtistName').textContent = artistData.name;
+  const titleEl = document.getElementById('addArtistModalTitle');
+  if (titleEl) titleEl.textContent = `Add "${artistData.name}"`;
+  const imgEl = document.getElementById('addArtistImg');
+  if (imgEl) imgEl.src = artistData.image_url || '';
+  const nameEl = document.getElementById('addArtistName');
+  if (nameEl) nameEl.textContent = artistData.name;
+
+  const setChecked = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = val;
+  };
 
   // Defaults
-  document.getElementById('filterRemixes').checked = true;
-  document.getElementById('filterLofi').checked = true;
-  document.getElementById('filterLive').checked = true;
-  document.getElementById('filterCompilations').checked = true;
-  document.getElementById('incAlbums').checked = true;
-  document.getElementById('incSingles').checked = true;
-  document.getElementById('incCompilations').checked = false;
-  document.getElementById('optMonitored').checked = true;
-  document.getElementById('optAutoDownload').checked = false;
+  setChecked('filterRemixes', true);
+  setChecked('filterLofi', true);
+  setChecked('filterLive', true);
+  setChecked('filterCompilations', true);
+  setChecked('incAlbums', true);
+  setChecked('incSingles', true);
+  setChecked('incCompilations', false);
+  setChecked('optMonitored', true);
+  setChecked('optAutoDownload', false);
 
-  document.getElementById('addArtistModal').classList.remove('d-none');
+  const modalEl = document.getElementById('addArtistModal');
+  if (modalEl) modalEl.classList.remove('d-none');
 }
 
 function hideAddArtistModal() {
-  document.getElementById('addArtistModal').classList.add('d-none');
+  const modalEl = document.getElementById('addArtistModal');
+  if (modalEl) modalEl.classList.add('d-none');
   _pendingAddArtistData = null;
 }
 
 async function confirmAddArtist() {
   if (!_pendingAddArtistData) return;
   const artistData = _pendingAddArtistData;
+  const isChecked = (id, def = true) => {
+    const el = document.getElementById(id);
+    return el ? el.checked : def;
+  };
   const payload = {
     id: artistData.id,
-    filter_remixes: document.getElementById('filterRemixes').checked,
-    filter_lofi: document.getElementById('filterLofi').checked,
-    filter_live: document.getElementById('filterLive').checked,
-    filter_compilations: document.getElementById('filterCompilations').checked,
-    include_albums: document.getElementById('incAlbums').checked,
-    include_singles: document.getElementById('incSingles').checked,
-    include_compilations: document.getElementById('incCompilations').checked,
-    monitored: document.getElementById('optMonitored').checked,
-    auto_download: document.getElementById('optAutoDownload').checked,
+    filter_remixes: isChecked('filterRemixes', true),
+    filter_lofi: isChecked('filterLofi', true),
+    filter_live: isChecked('filterLive', true),
+    filter_compilations: isChecked('filterCompilations', true),
+    include_albums: isChecked('incAlbums', true),
+    include_singles: isChecked('incSingles', true),
+    include_compilations: isChecked('incCompilations', false),
+    monitored: isChecked('optMonitored', true),
+    auto_download: isChecked('optAutoDownload', false),
   };
 
   hideAddArtistModal();
@@ -243,7 +257,9 @@ async function confirmAddArtist() {
     const data = await resp.json();
     if (resp.ok) {
       showToast(data.message, 'success');
-      loadDashboardArtists();
+      if (document.getElementById('artistsDashboardGrid')) {
+        loadDashboardArtists();
+      }
     } else {
       showToast(data.error || 'Failed to add artist', 'error');
     }

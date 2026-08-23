@@ -401,6 +401,8 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         spotiflac_delay = float(_get_setting(app, "spotiflac_delay", "1.5"))
         cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
         prefer_yt_music = _get_setting(app, "youtube_source", "youtube_music").lower() == "youtube_music"
+        spotify_client_id = _get_setting(app, "spotify_client_id", "")
+        spotify_client_secret = _get_setting(app, "spotify_client_secret", "")
 
         # Auto-resolve ISRC from Deezer if missing
         if not isrc and track_deezer_id:
@@ -529,7 +531,15 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
 
         # Step 1: Resolve Spotify link (ISRC-first) if SpotiFLAC is enabled and not already resolved from library
         if not verified_file and enable_spotiflac and job_id not in cancel_requested_jobs:
-            spotify_url = resolve_spotify_url(track_title, artist_name, album_name, isrc=isrc)
+            spotify_url = resolve_spotify_url(
+                track_title,
+                artist_name,
+                album_name,
+                isrc=isrc,
+                track_number=track_num,
+                client_id=spotify_client_id,
+                client_secret=spotify_client_secret,
+            )
         else:
             spotify_url = None
 
@@ -832,6 +842,8 @@ def download_manual_match_track(
         track_num = track.track_number or 0
         disc_num = track.disc_number or 1
         expected_duration = track.duration
+        track_isrc = track.isrc
+        track_deezer_id = track.deezer_id
 
         quality_setting = _get_setting(app, "spotiflac_quality", "LOSSLESS")
         fallback_format = _get_setting(app, "ytdlp_format") or _get_setting(app, "spotdl_format", "flac")
@@ -901,8 +913,32 @@ def download_manual_match_track(
                 target_input,
                 tmp_work_dir,
                 output_format=fallback_format,
+                artist_name=artist_name,
+                track_title=track_title,
+                expected_duration=expected_duration,
                 cookies_path=cookies_path,
             )
+            # Fallback if direct YouTube URL was blocked or failed
+            if not ok or not downloaded_file:
+                socketio.emit("download_progress", {"track_id": track_id, "progress": 60.0, "status": "downloading"})
+                spot_url = resolve_spotify_url(track_title, artist_name, album_name, isrc=track_isrc)
+                if spot_url:
+                    ok, downloaded_file, last_err = download_track_spotiflac(
+                        spot_url,
+                        tmp_work_dir,
+                        quality=quality_setting,
+                        rate_limit_delay=spotiflac_delay,
+                    )
+                if not downloaded_file:
+                    ok, downloaded_file, last_err = download_track_ytdlp(
+                        f"{artist_name} - {track_title}",
+                        tmp_work_dir,
+                        output_format=fallback_format,
+                        artist_name=artist_name,
+                        track_title=track_title,
+                        expected_duration=expected_duration,
+                        cookies_path=cookies_path,
+                    )
 
         # 3. Deezer URL
         elif "deezer.com/track/" in target_input:

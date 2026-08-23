@@ -1093,6 +1093,10 @@ def api_settings():
             _set_setting("navidrome_auto_scan", "true" if data["navidrome_auto_scan"] else "false")
         if "theme" in data:
             _set_setting("theme", str(data["theme"]).strip())
+        if "spotify_client_id" in data:
+            _set_setting("spotify_client_id", str(data["spotify_client_id"]).strip())
+        if "spotify_client_secret" in data:
+            _set_setting("spotify_client_secret", str(data["spotify_client_secret"]).strip())
         return jsonify({"message": "Settings updated successfully."})
 
     fallback_fmt = _get_setting("ytdlp_format") or _get_setting("spotdl_format", "opus")
@@ -1105,6 +1109,8 @@ def api_settings():
         "theme": _get_setting("theme", "onyx-dark"),
         "spotiflac_quality": _get_setting("spotiflac_quality", "LOSSLESS"),
         "spotiflac_delay": float(_get_setting("spotiflac_delay", "1.5")),
+        "spotify_client_id": _get_setting("spotify_client_id", ""),
+        "spotify_client_secret": _get_setting("spotify_client_secret", ""),
         "youtube_source": _get_setting("youtube_source", "youtube_music"),
         "youtube_cookies_path": cookies_path,
         "cookies_status": get_cookies_status(cookies_path),

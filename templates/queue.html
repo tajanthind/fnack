@@ -123,7 +123,7 @@
             <small class="text-secondary">Configure onboarding preferences</small>
           </div>
         </div>
-        <h6 class="fw-bold text-secondary text-uppercase small mb-2">Discography Filters</h6>
+        <h6 class="fw-bold text-secondary text-uppercase small mb-2" style="letter-spacing: 0.5px;">Discography Filters</h6>
         <div class="bg-dark p-3 rounded mb-3">
           <div class="form-check mb-2">
             <input class="form-check-input" type="checkbox" id="filterRemixes" checked>
@@ -142,15 +142,34 @@
             <label class="form-check-label small" for="filterCompilations">Exclude Compilations & Various Artists</label>
           </div>
         </div>
-        <h6 class="fw-bold text-secondary text-uppercase small mb-2">Monitoring & Automation</h6>
+        <h6 class="fw-bold text-secondary text-uppercase small mb-2" style="letter-spacing: 0.5px;">Release Types to Include</h6>
+        <div class="d-flex gap-3 bg-dark p-2 rounded mb-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="incAlbums" checked>
+            <label class="form-check-label small" for="incAlbums">Albums</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="incSingles" checked>
+            <label class="form-check-label small" for="incSingles">Singles & EPs</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="incCompilations">
+            <label class="form-check-label small" for="incCompilations">Compilations</label>
+          </div>
+        </div>
+        <h6 class="fw-bold text-secondary text-uppercase small mb-2" style="letter-spacing: 0.5px;">Monitoring & Automation</h6>
         <div class="bg-dark p-3 rounded">
           <div class="form-check mb-2">
             <input class="form-check-input" type="checkbox" id="optMonitored" checked>
-            <label class="form-check-label small" for="optMonitored"><strong>Monitor for new releases</strong></label>
+            <label class="form-check-label small" for="optMonitored">
+              <strong>Monitor for new releases</strong> (automatically sync future albums)
+            </label>
           </div>
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="optAutoDownload">
-            <label class="form-check-label small" for="optAutoDownload"><strong>Download existing discography now</strong></label>
+            <label class="form-check-label small" for="optAutoDownload">
+              <strong>Download existing discography now</strong> (queue all missing tracks immediately)
+            </label>
           </div>
         </div>
       </div>

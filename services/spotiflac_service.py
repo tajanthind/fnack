@@ -105,6 +105,14 @@ def download_track_spotiflac(
     ensure_spotiflac_extensions()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    active_services = services if (services and len(services) > 0) else [
+        "ext:tidal-web",
+        "ext:qobuz-web",
+        "ext:deezer",
+        "ext:soundcloud",
+        "ext:ytmusic-spotiflac",
+    ]
+
     cmd = [
         "spotiflac",
         spotify_url,
@@ -112,11 +120,7 @@ def download_track_spotiflac(
         "--quality",
         quality,
         "--service",
-        "ext:tidal-web",
-        "ext:qobuz-web",
-        "ext:deezer",
-        "ext:soundcloud",
-        "ext:ytmusic-spotiflac",
+        *active_services,
         "--retries",
         "1",
         "--filename-format",

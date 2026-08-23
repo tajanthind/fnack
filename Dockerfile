@@ -1,7 +1,9 @@
 FROM python:3.11-slim-bookworm
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb procps curl && \
+    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb procps curl unzip && \
+    curl -fsSL https://deno.land/install.sh | sh && \
+    cp /root/.deno/bin/deno /usr/local/bin/deno && \
     rm -rf /var/lib/apt/lists/*
 
 ENV CHROME_PATH=/usr/bin/chromium \
