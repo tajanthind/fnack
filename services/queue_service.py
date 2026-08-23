@@ -16,8 +16,8 @@ from flask_socketio import SocketIO
 
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
 from services.deezer_service import get_track_info
-from services.spotify_service import resolve_spotify_url
-from services.spotiflac_service import download_track_spotiflac
+from services.spotify_service import resolve_spotify_album_url, resolve_spotify_url
+from services.spotiflac_service import download_album_spotiflac, download_track_spotiflac
 from services.ytdlp_service import download_track_ytdlp
 from services.verifier_service import STRICTNESS_DELTAS, verify_audio_file
 from services.navidrome_service import trigger_navidrome_scan
@@ -322,8 +322,12 @@ def queue_track(app: Flask, track_id: int, source: str = "manual") -> Optional[D
 
 
 def queue_album(app: Flask, album_id: int, source: str = "manual") -> list[int]:
-    """Queue all missing/failed tracks in an album, respecting monitoring preferences."""
-    queued_ids = []
+    """Queue all missing/failed tracks in an album.
+
+    In "track" mode (default) each missing song is queued individually.
+    In "album" mode a single album-level SpotiFLAC download job is created
+    that fetches the whole album in one invocation.
+    """
     with app.app_context():
         album = db.session.get(Album, album_id)
         if not album:
@@ -331,6 +335,38 @@ def queue_album(app: Flask, album_id: int, source: str = "manual") -> list[int]:
         if not getattr(album, "monitored", True) and source != "manual":
             logger.info("[QUEUE] Skipping unmonitored album %d: '%s'", album.id, album.name)
             return []
+
+        if _get_setting(app, "spotiflac_mode", "track") == "album":
+            artist = album.artist
+            if not artist:
+                return []
+            # Avoid duplicate album jobs for the same album
+            existing = DownloadJob.query.filter_by(album_id=album.id, item_type="album").filter(
+                DownloadJob.status.in_(["queued", "downloading"])
+            ).first()
+            if existing:
+                db.session.refresh(existing)
+                return [existing.id]
+            job = DownloadJob(
+                track_id=None,
+                album_id=album.id,
+                artist_id=artist.id,
+                item_type="album",
+                album_spotify_id=str(album.deezer_id or ""),
+                album_name=album.name,
+                album_type=album.record_type,
+                album_url="",
+                cover_url=album.cover_url,
+                status="queued",
+                source=source,
+            )
+            db.session.add(job)
+            db.session.commit()
+            db.session.refresh(job)
+            logger.info("[QUEUE] Queued album-level job %d for '%s - %s'", job.id, artist.name, album.name)
+            return [job.id]
+
+        queued_ids = []
         for track in album.tracks.all():
             if not track.is_downloaded and getattr(track, "monitored", True):
                 j = queue_track(app, track.id, source=source)
@@ -340,12 +376,30 @@ def queue_album(app: Flask, album_id: int, source: str = "manual") -> list[int]:
 
 
 def queue_artist_missing(app: Flask, artist_id: int, source: str = "manual") -> int:
-    """Queue all missing tracks for an artist, skipping unmonitored albums and tracks."""
+    """Queue all missing tracks for an artist, skipping unmonitored albums and tracks.
+
+    In "album" mode each album with missing tracks is queued as a single job.
+    """
     count = 0
     with app.app_context():
         artist = db.session.get(Artist, artist_id)
         if not artist or not getattr(artist, "monitored", True):
             return 0
+
+        if _get_setting(app, "spotiflac_mode", "track") == "album":
+            for album in artist.albums.all():
+                if not getattr(album, "monitored", True):
+                    continue
+                has_missing = any(
+                    not t.is_downloaded and getattr(t, "monitored", True)
+                    and t.status not in ("queued", "downloading")
+                    for t in album.tracks.all()
+                )
+                if has_missing:
+                    ids = queue_album(app, album.id, source=source)
+                    count += len(ids)
+            return count
+
         for album in artist.albums.all():
             if not getattr(album, "monitored", True):
                 continue
@@ -759,6 +813,325 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
             cancel_requested_jobs.discard(job_id)
 
 
+def _normalize_name(s: str) -> str:
+    if not s:
+        return ""
+    return re.sub(r"[^a-zA-Z0-9]+", "", unicodedata.normalize("NFKD", str(s))).lower()
+
+
+def _parse_album_filename(filename: str) -> Optional[Tuple[Optional[int], Optional[int], str]]:
+    """Parse '01. Title.ext', '1-01. Title.ext' or '01 - Title.ext' -> (disc, track_num, title)."""
+    stem = Path(filename).stem
+    m = re.match(r"^(\d+)-(\d+)\.\s*(.+)$", stem)
+    if m:
+        return int(m.group(1)), int(m.group(2)), m.group(3).strip()
+    m = re.match(r"^(\d+)\.\s*(.+)$", stem)
+    if m:
+        return None, int(m.group(1)), m.group(2).strip()
+    m = re.match(r"^(\d+)\s*-\s*(.+)$", stem)
+    if m:
+        return None, int(m.group(1)), m.group(2).strip()
+    return None, None, stem.strip()
+
+
+def _match_album_file_to_track(file_path: Path, missing_tracks: list) -> Optional[Track]:
+    """Map a SpotiFLAC-produced album file to its Track row by disc/track number, then by title."""
+    disc, track_num, title = _parse_album_filename(file_path.name)
+    norm_title = _normalize_name(title)
+
+    # 1. Exact disc+track number match
+    if track_num:
+        for t in missing_tracks:
+            t_disc = t.disc_number or 1
+            if t.track_number == track_num and (disc is None or t_disc == disc):
+                return t
+        # 2. Track number match ignoring disc (SpotiFLAC may not encode disc numbers)
+        for t in missing_tracks:
+            if t.track_number == track_num:
+                return t
+
+    # 3. Normalized title match
+    if norm_title:
+        for t in missing_tracks:
+            t_norm = _normalize_name(t.title or "")
+            if t_norm and (t_norm == norm_title or t_norm in norm_title or norm_title in t_norm):
+                return t
+    return None
+
+
+def _process_album_job(app: Flask, socketio: SocketIO, job_id: int):
+    """Worker task for a single album-level SpotiFLAC download job (item_type='album')."""
+    with app.app_context():
+        job = db.session.get(DownloadJob, job_id)
+        if not job or job.status != "downloading":
+            return
+
+        album = db.session.get(Album, job.album_id) if job.album_id else None
+        if not album:
+            job.status = "failed"
+            job.error_message = "No album record attached"
+            db.session.commit()
+            return
+
+        artist = album.artist
+        artist_name = artist.name if artist else "Unknown Artist"
+        album_name = album.name
+        album_cover_url = album.cover_url
+        album_id = album.id
+        artist_id = artist.id if artist else 0
+        tracks = album.tracks.order_by(Track.disc_number, Track.track_number, Track.title).all()
+        missing_tracks = [t for t in tracks if not t.is_downloaded and getattr(t, "monitored", True)]
+
+        if not missing_tracks:
+            job.status = "completed"
+            job.progress = 100.0
+            db.session.commit()
+            return
+
+        quality_setting = _get_setting(app, "spotiflac_quality", "LOSSLESS")
+        spotiflac_delay = float(_get_setting(app, "spotiflac_delay", "1.5"))
+        strictness_setting = _get_setting(app, "matching_strictness", "standard")
+        max_duration_delta = STRICTNESS_DELTAS.get(strictness_setting, 8.0)
+        reject_mismatches = _get_setting(app, "reject_mismatches", "true").lower() != "false"
+        enable_duration_check = _get_setting(app, "enable_duration_check", "true").lower() != "false"
+        save_cover_setting = _get_setting(app, "save_cover_art", "true").lower() != "false"
+        cover_filename_setting = _get_setting(app, "cover_art_filename", "cover.jpg")
+        embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
+        enable_ytdlp = _get_setting(app, "enable_ytdlp", "true").lower() != "false"
+
+    if job_id in cancel_requested_jobs:
+        _handle_album_cancellation(app, socketio, job_id)
+        return
+
+    music_dir = Path(_get_setting(app, "music_path", "/music"))
+    dest_dir = music_dir / _sanitize(artist_name) / _sanitize(album_name)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    cover_bytes = _save_album_cover(dest_dir, album_cover_url, save_cover=save_cover_setting, cover_filename=cover_filename_setting)
+
+    tmp_work_dir = DOWNLOADS_DIR / "work" / f"album_{job_id}_{int(time.time())}"
+    tmp_work_dir.mkdir(parents=True, exist_ok=True)
+
+    socketio.emit("download_progress", {
+        "job_id": job_id,
+        "album_id": album_id,
+        "artist_id": artist_id,
+        "status": "downloading",
+        "progress": 10.0,
+        "title": album_name,
+        "artist_name": artist_name,
+    })
+
+    try:
+        # Step 1: Resolve the Spotify album URL (zero-auth)
+        album_url = resolve_spotify_album_url(artist_name, album_name)
+        if not album_url:
+            err = f"Could not resolve Spotify album URL for '{artist_name} - {album_name}'"
+            logger.warning("[QUEUE] %s", err)
+            _finish_album_job(app, socketio, job_id, album_id, artist_id, album_name, artist_name, err, dest_dir)
+            return
+
+        # Step 2: Download the whole album via SpotiFLAC in a single invocation
+        socketio.emit("download_progress", {"job_id": job_id, "progress": 25.0, "status": "downloading"})
+        ok, produced_files, err = download_album_spotiflac(
+            album_url,
+            tmp_work_dir,
+            quality=quality_setting,
+            rate_limit_delay=spotiflac_delay,
+        )
+        if not ok or not produced_files:
+            _finish_album_job(app, socketio, job_id, album_id, artist_id, album_name, artist_name, err or "SpotiFLAC produced no files", dest_dir)
+            return
+
+        # Step 3: Map produced files to tracks, verify, move, tag, update DB
+        with app.app_context():
+            job = db.session.get(DownloadJob, job_id)
+            album_rec = db.session.get(Album, album_id)
+            track_records = {t.id: t for t in album_rec.tracks.all()} if album_rec else {}
+            still_missing = [t for t in track_records.values() if not t.is_downloaded and getattr(t, "monitored", True)]
+            album_year = album_rec.year if album_rec else None
+            total_tracks_val = len(track_records) if track_records else None
+
+            completed = 0
+            failures = []
+            matched_ids = set()
+
+            for f in produced_files:
+                if job_id in cancel_requested_jobs:
+                    break
+                if not f.is_file():
+                    continue
+
+                track = _match_album_file_to_track(f, still_missing)
+                if track is None:
+                    logger.info("[QUEUE] Album file '%s' did not match any missing track; skipping", f.name)
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+                    continue
+
+                # Duration verification (only when enabled)
+                if enable_duration_check and track.duration and track.duration > 0:
+                    v_ok, v_err, meta = verify_audio_file(
+                        f,
+                        expected_duration_seconds=track.duration,
+                        max_duration_delta=max_duration_delta,
+                        delete_on_failure=reject_mismatches,
+                    )
+                    if not v_ok:
+                        failures.append(f"{track.title}: {v_err}")
+                        continue
+                    file_meta = meta
+                else:
+                    v_ok, v_err, file_meta = verify_audio_file(f, expected_duration_seconds=None, delete_on_failure=False)
+                    if not v_ok:
+                        failures.append(f"{track.title}: {v_err}")
+                        continue
+
+                # Finalize into the library
+                track_num = track.track_number or 0
+                disc_num_val = track.disc_number or 1
+                disc_prefix = f"{disc_num_val}-" if disc_num_val > 1 else ""
+                track_num_prefix = f"{disc_prefix}{track_num:02d}. " if track_num else ""
+                final_filename = f"{track_num_prefix}{_sanitize(track.title)}{f.suffix}"
+                final_dest = dest_dir / final_filename
+
+                if f.resolve() != final_dest.resolve():
+                    shutil.move(str(f), str(final_dest))
+
+                _tag_audio_file(
+                    final_dest,
+                    artist=artist_name,
+                    album=album_name,
+                    title=track.title,
+                    track_num=track_num,
+                    year=album_year,
+                    album_artist=artist_name,
+                    disc_num=disc_num_val,
+                    total_tracks=total_tracks_val,
+                    cover_bytes=cover_bytes if embed_cover_setting else None,
+                )
+
+                track.is_downloaded = True
+                track.status = "completed"
+                track.progress = 100.0
+                track.local_path = str(final_dest)
+                track.file_path = str(final_dest.relative_to(music_dir))
+                track.file_format = final_dest.suffix.lstrip(".")
+                track.size_bytes = file_meta.get("size_bytes", final_dest.stat().st_size)
+                track.duration = file_meta.get("duration") or track.duration
+                track.bitrate = file_meta.get("bitrate")
+                track.error_message = None
+                matched_ids.add(track.id)
+                completed += 1
+
+                logger.info("[QUEUE] Album download: '%s - %s' -> %s", artist_name, track.title, final_dest)
+                socketio.emit("download_progress", {
+                    "job_id": job_id,
+                    "track_id": track.id,
+                    "album_id": album_id,
+                    "artist_id": artist_id,
+                    "status": "completed",
+                    "progress": 100.0,
+                    "title": track.title,
+                    "local_path": str(final_dest),
+                })
+
+            # Update album stats
+            album_tracks = album_rec.tracks.all() if album_rec else []
+            dl_count = sum(1 for t in album_tracks if t.is_downloaded)
+            if album_rec:
+                album_rec.is_downloaded = dl_count == len(album_tracks) and len(album_tracks) > 0
+                album_rec.size_bytes = sum(t.size_bytes or 0 for t in album_tracks)
+                album_rec.local_path = str(dest_dir)
+
+            if job:
+                if completed:
+                    job.status = "completed"
+                    job.progress = 100.0
+                    job.tracks_completed = completed
+                    job.error_message = None
+                elif failures:
+                    job.status = "failed"
+                    job.error_message = " | ".join(failures[:5])
+                else:
+                    job.status = "failed"
+                    job.error_message = "No tracks could be mapped from the album download"
+            db.session.commit()
+
+        if job_id not in cancel_requested_jobs:
+            socketio.emit("artist_updated", {"artist_id": artist_id})
+            try:
+                trigger_navidrome_scan(app)
+            except Exception as ne:
+                logger.debug("[QUEUE] Navidrome auto-scan trigger note: %s", ne)
+
+    except Exception as e:
+        logger.exception("[QUEUE] Unexpected exception during album job %d: %s", job_id, e)
+        with app.app_context():
+            job = db.session.get(DownloadJob, job_id)
+            if job:
+                job.status = "failed"
+                job.error_message = str(e)
+            db.session.commit()
+
+    finally:
+        try:
+            if tmp_work_dir.exists():
+                shutil.rmtree(str(tmp_work_dir))
+        except OSError:
+            pass
+        with _queue_lock:
+            cancel_requested_jobs.discard(job_id)
+
+
+def _finish_album_job(
+    app: Flask,
+    socketio: SocketIO,
+    job_id: int,
+    album_id: int,
+    artist_id: int,
+    album_name: str,
+    artist_name: str,
+    error_message: str,
+    dest_dir: Path,
+):
+    """Mark an album job failed and notify the UI."""
+    with app.app_context():
+        job = db.session.get(DownloadJob, job_id)
+        if job:
+            job.status = "failed"
+            job.progress = 0.0
+            job.error_message = error_message
+            db.session.commit()
+    logger.warning("[QUEUE] Album download failed for '%s - %s': %s", artist_name, album_name, error_message)
+    socketio.emit("download_progress", {
+        "job_id": job_id,
+        "album_id": album_id,
+        "artist_id": artist_id,
+        "status": "failed",
+        "progress": 0.0,
+        "title": album_name,
+        "artist_name": artist_name,
+        "error_message": error_message,
+    })
+
+
+def _handle_album_cancellation(app: Flask, socketio: SocketIO, job_id: int):
+    with app.app_context():
+        job = db.session.get(DownloadJob, job_id)
+        if job:
+            job.status = "cancelled"
+            job.error_message = "Cancelled by user"
+            db.session.commit()
+    socketio.emit("download_progress", {
+        "job_id": job_id,
+        "status": "cancelled",
+        "progress": 0.0,
+    })
+
+
 def _handle_cancellation(app: Flask, socketio: SocketIO, job_id: int, track_id: int, tmp_dir: Optional[Path] = None):
     if tmp_dir and tmp_dir.exists():
         try:
@@ -849,8 +1222,18 @@ def start_queue_worker(app: Flask, socketio: SocketIO):
                         db.session.commit()
 
                         job_id = job.id
-                        future = _executor.submit(_process_track_job, app, socketio, job_id)
-                        _running_futures.add(future)
+                        if job.track:
+                            future = _executor.submit(_process_track_job, app, socketio, job_id)
+                        elif job.item_type == "album":
+                            future = _executor.submit(_process_album_job, app, socketio, job_id)
+                        else:
+                            # No track and not an album job: nothing to process
+                            job.status = "failed"
+                            job.error_message = "Job has no track or album attached"
+                            db.session.commit()
+                            future = None
+                        if future:
+                            _running_futures.add(future)
 
             gevent.sleep(1.5)
         except RuntimeError as e:

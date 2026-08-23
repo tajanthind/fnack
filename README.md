@@ -113,6 +113,7 @@ Access the web interface at `http://<server-ip>:4688`.
 | `youtube_cookies_path` | `/config/cookies.txt` | Path to active Netscape cookies file for YouTube authentication |
 | `music_path` | `/music` | Target directory for organized music library |
 | `spotiflac_quality` | `LOSSLESS` | Lossless audio quality preference (LOSSLESS, HIGH, LOW) |
+| `spotiflac_mode` | `track` | Download mode: `track` (each song individually) or `album` (whole album in one SpotiFLAC run) |
 | `ytdlp_format` | `opus` | Fallback audio format (`opus`, `m4a`, `flac`, `mp3`) |
 | `matching_strictness` | `standard` | Duration tolerance: `strict` (±4s), `standard` (±8s), `lenient` (±15s) |
 | `enable_duration_check` | `true` | Set `false` to skip duration verification and accept any downloaded audio |

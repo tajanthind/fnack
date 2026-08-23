@@ -670,6 +670,8 @@ def api_artist_download_missing(artist_id):
 @app.route("/api/album/<int:album_id>/download", methods=["POST"])
 def api_album_download(album_id):
     job_ids = queue_album(app, album_id, source="manual")
+    if _get_setting("spotiflac_mode", "track") == "album":
+        return jsonify({"message": f"Queued album download (job {job_ids[0]})" if job_ids else "No missing tracks to download.", "job_ids": job_ids})
     return jsonify({"message": f"Queued {len(job_ids)} tracks for album.", "job_ids": job_ids})
 
 
@@ -1054,6 +1056,9 @@ def api_settings():
             _set_setting("spotiflac_quality", data["spotiflac_quality"])
         if "spotiflac_delay" in data:
             _set_setting("spotiflac_delay", str(max(0.5, float(data["spotiflac_delay"]))))
+        if "spotiflac_mode" in data:
+            mode = str(data["spotiflac_mode"]).strip().lower()
+            _set_setting("spotiflac_mode", mode if mode in ("track", "album") else "track")
         if "youtube_source" in data:
             _set_setting("youtube_source", str(data["youtube_source"]).strip())
         if "youtube_cookies_path" in data:
@@ -1114,6 +1119,7 @@ def api_settings():
         "theme": _get_setting("theme", "onyx-dark"),
         "spotiflac_quality": _get_setting("spotiflac_quality", "LOSSLESS"),
         "spotiflac_delay": float(_get_setting("spotiflac_delay", "1.5")),
+        "spotiflac_mode": _get_setting("spotiflac_mode", "track"),
         "spotify_client_id": _get_setting("spotify_client_id", ""),
         "spotify_client_secret": _get_setting("spotify_client_secret", ""),
         "youtube_source": _get_setting("youtube_source", "youtube_music"),
@@ -1273,6 +1279,7 @@ with app.app_context():
         ("max_concurrent", str(app.config["MAX_CONCURRENT_DEFAULT"])),
         ("spotiflac_quality", "LOSSLESS"),
         ("spotiflac_delay", "1.5"),
+        ("spotiflac_mode", "track"),
         ("youtube_source", "youtube_music"),
         ("youtube_cookies_path", "/config/cookies.txt"),
         ("spotdl_format", "opus"),

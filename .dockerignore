@@ -1,3 +1,4 @@
+# Python
 __pycache__
 *.pyc
 *.pyo
@@ -6,17 +7,30 @@ __pycache__
 env/
 venv/
 .venv/
+
+# VCS / IDE
 .git
 .gitignore
 .DS_Store
-config/*.db*
-config/*.db-journal
-config/*.db-wal
-config/*.db-shm
+
+# Authentication & cookies — NEVER bake cookies into the image
+cookies.txt
+*cookies*.txt
+*.cookies
+cookies/
+config/cookies.txt
+config/*cookies*.txt
+
+# Runtime state & local data (DB, settings, cookies live on the host volume)
+config/*
 !config/.gitkeep
 downloads/*
 !downloads/.gitkeep
 music/*
 !music/.gitkeep
+
+# Logs, archives, databases, image exports
 *.log
 *.db*
+*.tar.gz
+*.sqlite3
