@@ -555,10 +555,12 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 rate_limit_delay=spotiflac_delay,
             )
             if ok and downloaded_file:
-                # Step 3: Verify audio file with strict duration checking
+                # Step 3: Verify audio file with strict duration + tag checking
                 v_ok, v_err, meta = verify_audio_file(
                     downloaded_file,
                     expected_duration_seconds=verify_expected_duration,
+                    expected_artist=artist_name,
+                    expected_title=track_title,
                     max_duration_delta=max_duration_delta,
                     delete_on_failure=reject_mismatches,
                 )
@@ -593,6 +595,8 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 v_ok, v_err, meta = verify_audio_file(
                     downloaded_file,
                     expected_duration_seconds=verify_expected_duration,
+                    expected_artist=artist_name,
+                    expected_title=track_title,
                     max_duration_delta=max_duration_delta,
                     delete_on_failure=reject_mismatches,
                 )
@@ -659,7 +663,11 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     track_rec.file_path = rel_path
                     track_rec.file_format = ext.lstrip(".")
                     track_rec.size_bytes = file_meta.get("size_bytes", final_dest.stat().st_size)
-                    track_rec.duration = file_meta.get("duration") or expected_duration
+                    # Keep the official expected duration as the verification baseline;
+                    # never overwrite it with the downloaded file's actual duration
+                    # (that would mask future mismatches). Only fill in if unknown.
+                    if not track_rec.duration:
+                        track_rec.duration = file_meta.get("duration") or expected_duration
                     track_rec.bitrate = file_meta.get("bitrate")
                     track_rec.error_message = None
 
@@ -901,6 +909,9 @@ def download_manual_match_track(
         embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
         spotiflac_delay = float(_get_setting(app, "spotiflac_delay", "1.5"))
         cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
+        enable_duration_check = _get_setting(app, "enable_duration_check", "true").lower() != "false"
+        strictness_setting = _get_setting(app, "matching_strictness", "standard")
+        max_duration_delta = STRICTNESS_DELTAS.get(strictness_setting, 8.0)
 
         # Mark track as downloading
         track.status = "downloading"
@@ -1046,12 +1057,32 @@ def download_manual_match_track(
             socketio.emit("download_progress", {"track_id": track_id, "status": "failed", "error_message": err_msg})
             return False, err_msg
 
-        # Verify audio stream integrity without track duration testing for manually matched songs
+        # Verify the downloaded audio matches this track: embedded tags (artist + title)
+        # are always checked so a wrong song from the provided URL is rejected; duration
+        # is checked only when the duration check setting is enabled.
         v_ok, v_err, file_meta = verify_audio_file(
             downloaded_file,
-            expected_duration_seconds=None,
+            expected_duration_seconds=expected_duration if enable_duration_check else None,
+            expected_artist=artist_name,
+            expected_title=track_title,
+            max_duration_delta=max_duration_delta,
             delete_on_failure=False,
         )
+        if not v_ok:
+            err_msg = (
+                f"Manual match rejected: the audio from that URL is not '{track_title}' "
+                f"by {artist_name} ({v_err}). Check the URL and try again."
+            )
+            logger.warning("[QUEUE] %s", err_msg)
+            with app.app_context():
+                t = db.session.get(Track, track_id)
+                if t:
+                    t.status = "failed"
+                    t.progress = 0.0
+                    t.error_message = err_msg
+                    db.session.commit()
+            socketio.emit("download_progress", {"track_id": track_id, "status": "failed", "error_message": err_msg})
+            return False, err_msg
 
         with app.app_context():
             track_rec = db.session.get(Track, track_id)
@@ -1095,7 +1126,9 @@ def download_manual_match_track(
                 track_rec.file_path = rel_path
                 track_rec.file_format = ext.lstrip(".")
                 track_rec.size_bytes = file_meta.get("size_bytes", final_dest.stat().st_size)
-                track_rec.duration = file_meta.get("duration") or expected_duration
+                # Keep the official expected duration as the verification baseline
+                if not track_rec.duration:
+                    track_rec.duration = file_meta.get("duration") or expected_duration
                 track_rec.bitrate = file_meta.get("bitrate")
                 track_rec.error_message = None
 

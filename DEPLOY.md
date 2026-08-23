@@ -65,10 +65,21 @@ The database, settings, and downloaded music are all persistent across restarts.
    SoundCloud. No login. If YouTube enforces a bot-check, fnack automatically
    retries with the Android player client before giving up.
 
-Every downloaded file is verified (duration match against the official
-release, configurable strictness) and tagged (title, artist, album artist,
-album, track/disc number, year, embedded cover art). Mismatched or corrupted
-downloads are rejected and deleted automatically.
+Every downloaded file is **verified before it is accepted into the library**:
+  1. **Artist-aware source resolution** — every resolved Spotify URL is checked
+     against the expected artist + title (via Spotify's oEmbed endpoint and the
+     track page, multi-artist aware) before SpotiFLAC uses it; confirmed
+     wrong-artist tracks are rejected and the next candidate is tried.
+  2. **Per-candidate yt-dlp verification** — each yt-dlp candidate is checked
+     (embedded artist/title tags + variant words like cover/live/remix, plus
+     duration when enabled) and wrong candidates are skipped for the next one.
+  3. **Final post-download verification** — duration against the official
+     release (configurable strictness, toggleable) and embedded tags
+     (artist + title) must match; mismatched or corrupted downloads are
+     rejected and deleted automatically.
+
+Manual matches (custom URLs) are also tag-verified: if the URL points to a
+different song, the download is rejected with a clear message.
 
 ### Optional: YouTube cookies.txt
 
@@ -176,6 +187,20 @@ docker compose up -d --build
 | Tracks show "missing" but the files exist | Older databases (pre v0.2.04) can have DB/FS drift caused by a fixed watcher race. Run the one-time repair below |
 | Downloads not starting | Settings → check `enable_spotiflac` / `enable_ytdlp`; `docker logs fnack` for queue activity |
 | Xvfb / display errors | Ensure `DISPLAY=:99` and the container can start Xvfb (auto-handled by entrypoint) |
+
+### One-time library re-verification (existing downloads)
+
+fnack now guarantees new downloads match their tracks. To audit files that were
+downloaded **before** these checks existed, run the re-verification tool (it
+fetches the official duration from Deezer, marks confirmed mismatches as failed
+— without deleting files — and repairs the stored expected durations):
+
+```bash
+docker exec fnack python3 /app/scripts/reverify_library.py
+```
+
+Afterwards, mismatched tracks show as failed in the UI; delete and re-download
+them (they will now be verified before being accepted).
 
 ### One-time library repair (DB/FS drift)
 

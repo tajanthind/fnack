@@ -293,12 +293,27 @@ def download_track_ytdlp(
     audio_files = []  # populated per-target; initialized here for safety
 
     def _accept_or_reject(cand_target: str, produced: Path) -> bool:
-        """Verify a produced audio file against the expected duration; delete on mismatch."""
+        """Verify a produced audio file against the expected track; delete on mismatch."""
+        # Duration check (only when the feature is enabled)
         if expected_duration and expected_duration > 0 and check_duration:
             v_ok, v_err, _meta = verify_audio_file(
                 produced,
                 expected_duration_seconds=expected_duration,
+                expected_artist=artist_name,
+                expected_title=track_title,
                 max_duration_delta=max_duration_delta,
+                delete_on_failure=True,
+            )
+            if not v_ok:
+                logger.info("[YT-DLP] Candidate '%s' rejected (%s); trying next candidate...", cand_target, v_err)
+                return False
+        else:
+            # Duration check disabled: still reject a CONFIRMED wrong song via tags
+            v_ok, v_err, _meta = verify_audio_file(
+                produced,
+                expected_duration_seconds=None,
+                expected_artist=artist_name,
+                expected_title=track_title,
                 delete_on_failure=True,
             )
             if not v_ok:

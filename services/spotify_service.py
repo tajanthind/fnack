@@ -106,6 +106,104 @@ def _is_title_match(song_name: str, result_title: str) -> bool:
     return False
 
 
+def _primary_artist(s: str) -> str:
+    """Primary artist name (first part before feat. / & / , / x)."""
+    if not s:
+        return ""
+    s = re.split(
+        r"\s*(?:feat\.?|ft\.?|featuring|feat|&|\bwith\b|\band\b|,| x |\bx\b)\s*",
+        str(s),
+        flags=re.IGNORECASE,
+    )[0]
+    return re.sub(r"[^a-zA-Z0-9]+", "", s).lower()
+
+
+def _artist_list(s: str) -> list:
+    """All artist names in a multi-artist string, normalized ('A, B & C' -> ['a','b','c'])."""
+    if not s:
+        return []
+    parts = re.split(
+        r"\s*(?:feat\.?|ft\.?|featuring|feat|&|\bwith\b|\band\b|,| x |\bx\b)\s*",
+        str(s),
+        flags=re.IGNORECASE,
+    )
+    return [re.sub(r"[^a-zA-Z0-9]+", "", p).lower() for p in parts if p.strip()]
+
+
+def _artists_match(actual_artist: str, expected_artist: str) -> bool:
+    """True when the expected artist appears among the actual track's artists."""
+    exp = _primary_artist(expected_artist)
+    if not exp:
+        return False
+    for a in _artist_list(actual_artist):
+        if a and (exp == a or exp in a or a in exp):
+            return True
+    return False
+
+
+def _verify_spotify_track(
+    spotify_url: str,
+    expected_artist: Optional[str],
+    expected_title: Optional[str],
+) -> Optional[bool]:
+    """
+    Verify a Spotify track URL resolves to the expected artist/title without
+    authentication. Uses the oEmbed endpoint for the clean title and the track
+    page for the artist (og:description 'Artist · Title · Song · Year').
+    Returns True (verified), False (confirmed mismatch), or None (unable to verify).
+    """
+    # 1. Title verification via oEmbed (fast, lightweight)
+    try:
+        resp = requests.get(
+            "https://open.spotify.com/oembed",
+            params={"url": spotify_url},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            timeout=6,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            o_title = str(data.get("title", "") or "").strip()
+            if expected_title and o_title and not _is_title_match(expected_title, o_title):
+                logger.info("[SPOTIFY] Rejected '%s': title is '%s', expected '%s'", spotify_url, o_title, expected_title)
+                return False
+    except Exception as e:
+        logger.debug("[SPOTIFY] oEmbed verify note for %s: %s", spotify_url, e)
+
+    # 2. Artist verification from the track page metadata
+    actual_artist = None
+    try:
+        page = requests.get(
+            spotify_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            timeout=8,
+        )
+        if page.status_code == 200:
+            html = page.text
+            m = re.search(r'property="og:description" content="([^"]+)"', html)
+            if m:
+                desc = m.group(1)
+                parts = [p.strip() for p in desc.split("·")]
+                if parts:
+                    actual_artist = parts[0]
+            if not actual_artist:
+                m = re.search(r"<title>([^<]+)</title>", html, re.IGNORECASE)
+                if m:
+                    m2 = re.search(r"-\s*song and lyrics by\s+([^|]+)", m.group(1), re.IGNORECASE)
+                    if m2:
+                        actual_artist = m2.group(1).strip()
+    except Exception as e:
+        logger.debug("[SPOTIFY] Track page verify note for %s: %s", spotify_url, e)
+
+    if actual_artist and expected_artist:
+        if not _artists_match(actual_artist, expected_artist):
+            logger.info("[SPOTIFY] Rejected '%s': artist is '%s', expected '%s'", spotify_url, actual_artist, expected_artist)
+            return False
+        return True
+
+    # Could not fetch artist metadata; title (oEmbed) was the only check available
+    return None if not actual_artist else True
+
+
 def _search_ddgs_candidates(query: str) -> list[Tuple[str, str]]:
     """Execute search query and return list of (clean_spotify_url, result_title) pairs."""
     _pace_search()
@@ -236,6 +334,10 @@ def find_spotify_track_by_isrc(
         candidates = _search_ddgs_candidates(q)
         for clean_url, res_title in candidates:
             if not song_clean or _is_title_match(song_clean, res_title):
+                # Artist-aware verification: reject confirmed wrong-artist/title tracks
+                verified = _verify_spotify_track(clean_url, artist_clean, song_clean)
+                if verified is False:
+                    continue
                 _url_cache[isrc_clean] = clean_url
                 if artist_clean and song_clean:
                     _url_cache[(_normalize(artist_clean), _normalize(song_clean))] = clean_url
@@ -277,6 +379,9 @@ def find_spotify_track_by_search(
         candidates = _search_ddgs_candidates(q)
         for clean_url, res_title in candidates:
             if _is_title_match(clean_song, res_title):
+                verified = _verify_spotify_track(clean_url, clean_art, clean_song)
+                if verified is False:
+                    continue
                 _url_cache[cache_key] = clean_url
                 logger.info("[SPOTIFY] Zero-auth resolved '%s - %s' -> %s (Title: '%s')", clean_art, clean_song, clean_url, res_title)
                 return clean_url
@@ -289,6 +394,9 @@ def find_spotify_track_by_search(
             if t_norm.startswith("__idx_"):
                 continue
             if _is_title_match(clean_song, t_norm):
+                verified = _verify_spotify_track(t_url, clean_art, clean_song)
+                if verified is False:
+                    continue
                 _url_cache[cache_key] = t_url
                 logger.info("[SPOTIFY] Resolved via album '%s' title match '%s' -> %s", clean_alb, t_norm, t_url)
                 return t_url
@@ -298,6 +406,9 @@ def find_spotify_track_by_search(
             only_title = [k for k in album_tracks if not k.startswith("__idx_")][0]
             if _is_title_match(clean_song, only_title) or _is_title_match(clean_alb, only_title):
                 url = album_tracks["__idx_1__"]
+                verified = _verify_spotify_track(url, clean_art, clean_song)
+                if verified is False:
+                    return None
                 _url_cache[cache_key] = url
                 logger.info("[SPOTIFY] Resolved single '%s' -> %s", clean_alb, url)
                 return url
