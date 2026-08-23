@@ -235,14 +235,6 @@
               </select>
             </div>
             <div class="col-md-6">
-              <label class="form-label small text-secondary">Spotify Download Mode</label>
-              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setSpotiflacMode">
-                <option value="track" selected>Per Track (each song downloaded individually)</option>
-                <option value="album">Per Album (whole album in one SpotiFLAC run)</option>
-              </select>
-              <div class="form-text text-secondary small">Per Track retries missing songs independently and falls back to yt-dlp per song. Per Album downloads the full album in a single SpotiFLAC invocation (faster, consistent tags) but skips individual fallbacks.</div>
-            </div>
-            <div class="col-md-6">
               <div class="d-flex align-items-center justify-content-between">
                 <label class="form-label small text-secondary m-0">Rate Limit Pacing Delay</label>
                 <span class="badge bg-danger" id="spotiflacDelayBadge">1.5s</span>
@@ -723,7 +715,6 @@
         document.getElementById('concurrentRange').value = s.max_concurrent || 3;
         document.getElementById('concurrentBadge').textContent = s.max_concurrent || 3;
         document.getElementById('setSpotiflacQuality').value = s.spotiflac_quality || 'LOSSLESS';
-        document.getElementById('setSpotiflacMode').value = s.spotiflac_mode || 'track';
         
         const spotDelay = s.spotiflac_delay || 1.5;
         document.getElementById('setSpotiflacDelay').value = spotDelay;
@@ -858,7 +849,6 @@
       const curEnableYtdlp = document.getElementById('setEnableYtdlp').checked;
       const curMaxConc = parseInt(document.getElementById('concurrentRange').value);
       const curSpotQuality = document.getElementById('setSpotiflacQuality').value;
-      const curSpotMode = document.getElementById('setSpotiflacMode').value;
       const curSpotDelay = parseFloat(document.getElementById('setSpotiflacDelay').value);
       const curSpotifyClientId = document.getElementById('setSpotifyClientId').value.trim();
       const curSpotifyClientSecret = document.getElementById('setSpotifyClientSecret').value.trim();
@@ -889,7 +879,6 @@
         curEnableYtdlp !== (_initialSettings.enable_ytdlp !== false) ||
         curMaxConc !== (_initialSettings.max_concurrent || 3) ||
         curSpotQuality !== (_initialSettings.spotiflac_quality || 'LOSSLESS') ||
-        curSpotMode !== (_initialSettings.spotiflac_mode || 'track') ||
         curSpotDelay !== (_initialSettings.spotiflac_delay || 1.5) ||
         curSpotifyClientId !== (_initialSettings.spotify_client_id || '') ||
         curSpotifyClientSecret !== (_initialSettings.spotify_client_secret || '') ||
@@ -942,7 +931,6 @@
       document.getElementById('concurrentRange').value = _initialSettings.max_concurrent || 3;
       document.getElementById('concurrentBadge').textContent = _initialSettings.max_concurrent || 3;
       document.getElementById('setSpotiflacQuality').value = _initialSettings.spotiflac_quality || 'LOSSLESS';
-      document.getElementById('setSpotiflacMode').value = _initialSettings.spotiflac_mode || 'track';
       
       const spotDelay = _initialSettings.spotiflac_delay || 1.5;
       document.getElementById('setSpotiflacDelay').value = spotDelay;
@@ -1011,7 +999,6 @@
         enable_ytdlp: document.getElementById('setEnableYtdlp').checked,
         max_concurrent: parseInt(document.getElementById('concurrentRange').value),
         spotiflac_quality: document.getElementById('setSpotiflacQuality').value,
-        spotiflac_mode: document.getElementById('setSpotiflacMode').value,
         spotiflac_delay: parseFloat(document.getElementById('setSpotiflacDelay').value),
         spotify_client_id: document.getElementById('setSpotifyClientId').value.trim(),
         spotify_client_secret: document.getElementById('setSpotifyClientSecret').value.trim(),

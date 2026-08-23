@@ -27,7 +27,6 @@ _last_search_time = 0.0
 _MIN_SEARCH_INTERVAL = 0.5  # Pacing interval in seconds between search requests
 _url_cache = {}  # Cache: isrc -> url and (norm_artist, norm_song) -> url
 _album_tracks_cache = {}  # Cache: (norm_artist, norm_album) -> dict[norm_title, url]
-_album_url_cache = {}  # Cache: (norm_artist, norm_album) -> album_url
 _yandex_engine = None
 
 
@@ -203,19 +202,8 @@ def _resolve_album_tracks_from_spotify(artist_name: str, album_name: str) -> dic
         except Exception as e:
             logger.debug("[SPOTIFY] Album track parse note for %s: %s", album_url, e)
 
-    # Record the resolved album URL (or None) so album-level downloads can reuse it
-    _album_url_cache.setdefault(cache_key, album_url)
     _album_tracks_cache[cache_key] = track_map
     return track_map
-
-
-def resolve_spotify_album_url(artist_name: str, album_name: str) -> Optional[str]:
-    """Resolve the Spotify album URL for an artist/album via zero-auth search (cached)."""
-    if not artist_name or not album_name:
-        return None
-    cache_key = (_normalize(artist_name), _normalize(album_name))
-    _resolve_album_tracks_from_spotify(artist_name, album_name)  # populates _album_url_cache
-    return _album_url_cache.get(cache_key)
 
 
 def find_spotify_track_by_isrc(

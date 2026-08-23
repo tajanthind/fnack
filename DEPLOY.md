@@ -59,12 +59,8 @@ The database, settings, and downloaded music are all persistent across restarts.
    `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` (free API credentials, not
    user accounts). Without them, zero-auth search is used.
 3. **SpotiFLAC (primary)** – downloads true lossless FLAC from Tidal / Qobuz /
-   Deezer / SoundCloud. No login. Rate-limited + retried automatically.
-   Two download modes are available (Settings → Download Engines):
-   - **Per Track** (default): each song is resolved and downloaded individually,
-     with per-song yt-dlp fallback.
-   - **Per Album**: the whole album is fetched in a single SpotiFLAC invocation
-     (faster, consistent tags); individual track fallbacks are skipped.
+   Deezer / SoundCloud. No login. Rate-limited + retried automatically. Each
+   track is downloaded individually, with per-song yt-dlp fallback.
 4. **yt-dlp (fallback)** – extracts audio from YouTube / YouTube Music /
    SoundCloud. No login. If YouTube enforces a bot-check, fnack automatically
    retries with the Android player client before giving up.
