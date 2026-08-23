@@ -89,13 +89,14 @@ def find_spotify_track_by_isrc(
     if isrc_clean in _url_cache:
         return _url_cache[isrc_clean]
 
-    # Primary lookup: direct DDG HTML search
-    query = f"{isrc_clean} site:open.spotify.com/track"
+    artist_clean = (artist_name or "").strip()
+    # Primary lookup: direct DDG HTML search with artist context to prevent cross-artist ISRC collisions
+    query = f"{artist_clean} {isrc_clean} site:open.spotify.com/track" if artist_clean else f"{isrc_clean} site:open.spotify.com/track"
     found_urls = _search_ddg_html(query)
     if found_urls:
         clean_url = found_urls[0].split("?")[0]
         _url_cache[isrc_clean] = clean_url
-        logger.info("[SPOTIFY] Resolved ISRC '%s' -> %s", isrc_clean, clean_url)
+        logger.info("[SPOTIFY] Resolved ISRC '%s' (%s) -> %s", isrc_clean, artist_clean or "unnamed", clean_url)
         return clean_url
 
     # Secondary lookup via DDGS
@@ -108,10 +109,19 @@ def find_spotify_track_by_isrc(
                 if "open.spotify.com/track/" in url:
                     clean_url = url.split("?")[0]
                     _url_cache[isrc_clean] = clean_url
-                    logger.info("[SPOTIFY] Resolved ISRC '%s' -> %s via DDGS", isrc_clean, clean_url)
+                    logger.info("[SPOTIFY] Resolved ISRC '%s' (%s) -> %s via DDGS", isrc_clean, artist_clean or "unnamed", clean_url)
                     return clean_url
     except Exception:
         pass
+
+    # Fallback to plain ISRC lookup if artist-qualified lookup returned nothing
+    if artist_clean:
+        raw_query = f"{isrc_clean} site:open.spotify.com/track"
+        found_urls = _search_ddg_html(raw_query)
+        if found_urls:
+            clean_url = found_urls[0].split("?")[0]
+            _url_cache[isrc_clean] = clean_url
+            return clean_url
 
     return None
 

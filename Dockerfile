@@ -6,6 +6,7 @@ RUN apt-get update && \
 
 ENV CHROME_PATH=/usr/bin/chromium \
     DISPLAY=:99 \
+    SPOTIFLAC_REGISTRIES=https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/refs/heads/main/registry.json \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
