@@ -486,22 +486,25 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
 
                 # 3. Match by normalized title and duration
                 if not existing_match and track_title and expected_duration:
-                    candidates = Track.query.filter(
-                        Track.id != track_id,
-                        Track.is_downloaded == True,
-                        Track.local_path.isnot(None),
-                        Track.local_path != "",
-                    ).all()
                     norm_current = re.sub(r"[^\w\s]", "", track_title.lower()).strip()
-                    for cand in candidates:
-                        if not cand.title:
-                            continue
-                        norm_cand = re.sub(r"[^\w\s]", "", cand.title.lower()).strip()
-                        if (norm_current == norm_cand or norm_current in norm_cand or norm_cand in norm_current):
-                            if cand.duration and abs(cand.duration - expected_duration) <= 3.0:
-                                if cand.local_path and Path(cand.local_path).exists():
-                                    existing_match = cand
-                                    break
+                    if len(norm_current) >= 4:
+                        # Narrow with a LIKE filter instead of scanning the whole library
+                        candidates = Track.query.filter(
+                            Track.id != track_id,
+                            Track.is_downloaded == True,
+                            Track.local_path.isnot(None),
+                            Track.local_path != "",
+                            Track.title.ilike(f"%{track_title[:60]}%"),
+                        ).limit(50).all()
+                        for cand in candidates:
+                            if not cand.title:
+                                continue
+                            norm_cand = re.sub(r"[^\w\s]", "", cand.title.lower()).strip()
+                            if (norm_current == norm_cand or norm_current in norm_cand or norm_cand in norm_current):
+                                if cand.duration and abs(cand.duration - expected_duration) <= 3.0:
+                                    if cand.local_path and Path(cand.local_path).exists():
+                                        existing_match = cand
+                                        break
 
                 if existing_match and existing_match.local_path:
                     existing_match_path = existing_match.local_path

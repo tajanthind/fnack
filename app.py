@@ -57,7 +57,34 @@ from version import __version__
 
 # Application initialization
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(24).hex()
+
+# Persistent SECRET_KEY: use the env var if provided, else generate once and
+# store it under the config volume so sessions survive container restarts.
+_secret_key = os.environ.get("SECRET_KEY")
+if not _secret_key:
+    _key_file = Path(os.environ.get("CONFIG_DIR", "/config")) / "secret_key"
+    try:
+        if _key_file.exists():
+            _secret_key = _key_file.read_text(encoding="utf-8").strip()
+        if not _secret_key:
+            _secret_key = secrets.token_hex(32)
+            _key_file.parent.mkdir(parents=True, exist_ok=True)
+            _key_file.write_text(_secret_key, encoding="utf-8")
+    except OSError:
+        _secret_key = _secret_key or secrets.token_hex(32)
+app.config["SECRET_KEY"] = _secret_key or secrets.token_hex(24)
+
+@app.errorhandler(500)
+def _json_500_handler(e):
+    """Return JSON (not HTML) for unhandled API errors so the frontend can show a message."""
+    logger.exception("Unhandled server error: %s", e)
+    return jsonify({"error": "Internal server error"}), 500
+
+
+@app.errorhandler(404)
+def _json_404_handler(e):
+    return jsonify({"error": "Not found"}), 404
+
 
 @app.context_processor
 def inject_app_context():
@@ -272,6 +299,29 @@ def api_stats():
         "total_size_bytes": total_size_bytes,
         "total_size_formatted": size_formatted,
     })
+
+
+_running_artist_syncs = 0
+_MAX_CONCURRENT_SYNCS = 3
+
+
+def _start_bounded_artist_sync(artist_id: int, deezer_artist_id: int, options: dict):
+    """Run a discography sync as a background task without blocking the scheduler,
+    bounded so bursts of overdue artists cannot hammer the Deezer API."""
+    global _running_artist_syncs
+    if _running_artist_syncs >= _MAX_CONCURRENT_SYNCS:
+        logger.info("[SCHEDULER] Skipping sync for artist %d: %d syncs already in flight", artist_id, _running_artist_syncs)
+        return
+    _running_artist_syncs += 1
+
+    def _wrapped():
+        global _running_artist_syncs
+        try:
+            _sync_artist_discography_background(artist_id, deezer_artist_id, options)
+        finally:
+            _running_artist_syncs -= 1
+
+    socketio.start_background_task(_wrapped)
 
 
 def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, options: dict):
@@ -1032,19 +1082,26 @@ def api_cookies_upload():
     """Upload or paste a cookies.txt file for yt-dlp authentication."""
     custom_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
     dest = Path(custom_path)
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return jsonify({"error": f"Cannot create config directory: {e}"}), 500
 
-    if "file" in request.files:
-        f = request.files["file"]
-        if f.filename == "":
-            return jsonify({"error": "No file selected"}), 400
-        f.save(str(dest))
-    else:
-        data = request.get_json(silent=True) or {}
-        content = data.get("content", "")
-        if not content.strip():
-            return jsonify({"error": "No cookies content provided"}), 400
-        dest.write_text(content.strip(), encoding="utf-8")
+    try:
+        if "file" in request.files:
+            f = request.files["file"]
+            if f.filename == "":
+                return jsonify({"error": "No file selected"}), 400
+            f.save(str(dest))
+        else:
+            data = request.get_json(silent=True) or {}
+            content = data.get("content", "")
+            if not content.strip():
+                return jsonify({"error": "No cookies content provided"}), 400
+            dest.write_text(content.strip(), encoding="utf-8")
+    except OSError as e:
+        logger.warning("[COOKIES] Failed to save cookies file: %s", e)
+        return jsonify({"error": f"Failed to save cookies file: {e}"}), 500
 
     st = get_cookies_status(str(dest))
     return jsonify({
@@ -1078,12 +1135,21 @@ def api_settings():
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         if "max_concurrent" in data:
-            v = max(1, min(int(data["max_concurrent"]), 10))
-            _set_setting("max_concurrent", str(v))
+            try:
+                v = max(1, min(int(data["max_concurrent"]), 10))
+            except (TypeError, ValueError):
+                v = None
+            if v:
+                _set_setting("max_concurrent", str(v))
         if "spotiflac_quality" in data:
             _set_setting("spotiflac_quality", data["spotiflac_quality"])
         if "spotiflac_delay" in data:
-            _set_setting("spotiflac_delay", str(max(0.5, float(data["spotiflac_delay"]))))
+            try:
+                v = max(0.5, float(data["spotiflac_delay"]))
+            except (TypeError, ValueError):
+                v = None
+            if v:
+                _set_setting("spotiflac_delay", str(v))
         if "youtube_source" in data:
             _set_setting("youtube_source", str(data["youtube_source"]).strip())
         if "youtube_cookies_path" in data:
@@ -1097,7 +1163,12 @@ def api_settings():
         if "spotdl_source" in data:
             _set_setting("spotdl_source", data["spotdl_source"])
         if "discography_interval_hours" in data:
-            _set_setting("discography_interval_hours", str(max(1, int(data["discography_interval_hours"]))))
+            try:
+                v = max(1, int(data["discography_interval_hours"]))
+            except (TypeError, ValueError):
+                v = None
+            if v:
+                _set_setting("discography_interval_hours", str(v))
         if "music_path" in data:
             _set_setting("music_path", data["music_path"])
         if "enable_spotiflac" in data:
@@ -1253,7 +1324,7 @@ def _periodic_discography_sync_loop():
                 for aid, spot_id, opts in artists_to_sync:
                     deezer_id = int(spot_id) if spot_id.isdigit() else None
                     if deezer_id:
-                        _sync_artist_discography_background(aid, deezer_id, opts)
+                        _start_bounded_artist_sync(aid, deezer_id, opts)
                     gevent.sleep(3)
 
         except Exception:
