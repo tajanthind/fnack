@@ -14,7 +14,7 @@ services:
     environment:
       # Set a fixed SECRET_KEY (e.g. openssl rand -hex 32) so sessions survive restarts.
       - SECRET_KEY=${SECRET_KEY:-}
-      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
+      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-1}
       - CHROME_PATH=/usr/bin/chromium
       - DISPLAY=:99
     restart: unless-stopped

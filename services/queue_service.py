@@ -258,7 +258,7 @@ def _get_setting(app: Flask, key: str, default: str = "") -> str:
 
 def _get_max_concurrent(app: Flask) -> int:
     try:
-        val = int(_get_setting(app, "max_concurrent", "3"))
+        val = int(_get_setting(app, "max_concurrent", "1"))
         return max(1, min(val, 10))
     except ValueError:
         return 3

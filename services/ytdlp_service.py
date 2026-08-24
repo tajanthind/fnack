@@ -405,11 +405,16 @@ def download_track_ytdlp(
             logger.exception("[YT-DLP] Execution error for %s: %s", cand_target, e)
             last_error = str(e)
 
-    # Zero-auth resilience: if YouTube refused every candidate with a bot/sign-in check and no
-    # cookies are configured, retry the same targets once using the Android player client, which
-    # frequently bypasses the anti-bot gate without any account or cookies.
-    if not audio_files and not resolved_cookies and last_error and any(
-        w in last_error.lower() for w in ("sign in to confirm", "not a bot", "bot check", "login required", "confirm you")
+    # Zero-auth resilience: if YouTube refused every candidate with a bot/sign-in
+    # check (or stale cookies return 'Video unavailable'), retry the same targets
+    # once using the Android player client, which frequently bypasses the anti-bot
+    # gate. Runs even when a cookie file exists (a stale/expired cookie file must
+    # not block this fallback).
+    if not audio_files and last_error and any(
+        w in last_error.lower() for w in (
+            "sign in to confirm", "not a bot", "bot check", "login required",
+            "confirm you", "video unavailable",
+        )
     ):
         logger.info("[YT-DLP] YouTube bot-check detected and no cookies configured; retrying with Android player client...")
         for cand_target in targets_to_try:

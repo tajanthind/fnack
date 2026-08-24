@@ -73,7 +73,7 @@ else:
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("SQLALCHEMY_DATABASE_URI", f"sqlite:///{_db_path}")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["MAX_CONCURRENT_DEFAULT"] = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "3"))
+app.config["MAX_CONCURRENT_DEFAULT"] = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "1"))
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
