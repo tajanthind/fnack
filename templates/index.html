@@ -128,6 +128,10 @@
         <span class="text-secondary small">Click an artist to view full discography & tracks</span>
       </div>
       <div class="d-flex align-items-center gap-2">
+        <div class="position-relative">
+          <i class="fas fa-filter position-absolute text-secondary" style="top:50%; left:10px; transform:translateY(-50%); font-size:0.8rem;"></i>
+          <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary ps-4" id="libraryFilterInput" placeholder="Filter artists..." style="min-width:180px;" autocomplete="off">
+        </div>
         <button class="btn btn-warning btn-sm fw-bold d-flex align-items-center gap-2" id="globalRetryFailedBtn" onclick="retryAllFailedFromHome()">
           <i class="fas fa-redo"></i>
           <span>Retry All Failed (<span id="failedBadgeHome">0</span>)</span>

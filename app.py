@@ -451,11 +451,28 @@ def api_get_artist(artist_id):
     if not artist:
         return jsonify({"error": "Artist not found"}), 404
 
+    # Eager-load the whole discography in TWO queries (albums + all tracks grouped
+    # in Python) instead of the previous N+1 pattern (one track query per album),
+    # so large discographies (100+ albums) stay fast.
+    albums = (
+        Album.query.filter_by(artist_id=artist_id)
+        .order_by(Album.year.desc().nullslast(), Album.name)
+        .all()
+    )
+    tracks_by_album: dict[int, list] = {}
+    track_rows = (
+        Track.query.filter(Track.artist_id == artist_id)
+        .order_by(Track.disc_number, Track.track_number, Track.title)
+        .all()
+    )
+    for t in track_rows:
+        tracks_by_album.setdefault(t.album_id, []).append(t)
+
     # Group albums by record_type
     albums_data = []
-    for album in artist.albums.order_by(Album.year.desc().nullslast(), Album.name).all():
+    for album in albums:
         tracks_data = []
-        for t in album.tracks.order_by(Track.disc_number, Track.track_number, Track.title).all():
+        for t in tracks_by_album.get(album.id, []):
             tracks_data.append({
                 "id": t.id,
                 "title": t.title,

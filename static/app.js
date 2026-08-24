@@ -269,6 +269,25 @@ async function confirmAddArtist() {
 }
 
 // ----- Dashboard Artists Loader -----
+let _libraryArtists = [];
+
+function applyLibraryFilter(artists) {
+  const input = document.getElementById('libraryFilterInput');
+  const q = (input ? input.value.trim() : '').toLowerCase();
+  if (!q) return artists;
+  return artists.filter(a => (a.name || '').toLowerCase().includes(q));
+}
+
+function initLibraryFilter() {
+  const input = document.getElementById('libraryFilterInput');
+  if (!input) return;
+  input.addEventListener('input', () => {
+    if (_libraryArtists.length) {
+      renderDashboardArtists(applyLibraryFilter(_libraryArtists));
+    }
+  });
+}
+
 async function loadDashboardArtists() {
   const grid = document.getElementById('artistsDashboardGrid');
   if (!grid) return;
@@ -279,7 +298,8 @@ async function loadDashboardArtists() {
       fetch('/api/stats'),
     ]);
     const artists = await respArtists.json();
-    renderDashboardArtists(artists);
+    _libraryArtists = artists;
+    renderDashboardArtists(applyLibraryFilter(artists));
 
     if (respStats.ok) {
       const stats = await respStats.json();
@@ -1247,35 +1267,37 @@ socket.on('download_progress', (data) => {
 });
 
 let _dashboardReloadDebounce = null;
-function debouncedLoadDashboard(delay = 300) {
+function debouncedLoadDashboard(delay = 2000) {
+  // Skip full-grid reloads entirely when the dashboard is not visible or the
+  // tab is hidden; the next visible load refreshes everything anyway.
+  if (document.hidden) return;
+  if (!document.getElementById('artistsDashboardGrid')) return;
   clearTimeout(_dashboardReloadDebounce);
   _dashboardReloadDebounce = setTimeout(() => {
-    if (document.getElementById('artistsDashboardGrid')) {
-      loadDashboardArtists();
-    }
+    loadDashboardArtists();
   }, delay);
 }
 
 socket.on('artist_updated', (data) => {
-  debouncedLoadDashboard(300);
+  debouncedLoadDashboard(2000);
   if (window._currentArtistId && data && data.artist_id === window._currentArtistId) {
     loadArtistDetailPage(window._currentArtistId);
   }
 });
 
 socket.on('artist_added', () => {
-  debouncedLoadDashboard(150);
+  debouncedLoadDashboard(500);
 });
 
 socket.on('artist_synced', (data) => {
-  debouncedLoadDashboard(150);
+  debouncedLoadDashboard(500);
   if (window._currentArtistId && data && data.artist_id === window._currentArtistId) {
     loadArtistDetailPage(window._currentArtistId);
   }
 });
 
 socket.on('artist_deleted', () => {
-  debouncedLoadDashboard(100);
+  debouncedLoadDashboard(300);
 });
 
 socket.on('toast', (data) => {
@@ -1285,6 +1307,7 @@ socket.on('toast', (data) => {
 // ----- DOM Ready Initializer -----
 document.addEventListener('DOMContentLoaded', () => {
   initArtistSearch();
+  initLibraryFilter();
 
   if (document.getElementById('artistsDashboardGrid')) {
     loadDashboardArtists();
