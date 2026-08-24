@@ -44,6 +44,23 @@ def get_cookies_path(custom_path: Optional[str] = None) -> Optional[Path]:
     return None
 
 
+def _copy_cookies_for_ytdlp(cookies_path: Optional[str], dest_dir: Path) -> Optional[str]:
+    """Copy the user's cookies file so yt-dlp can read AND dump its cookie jar
+    without overwriting the original (yt-dlp rewrites --cookies files on exit).
+    Returns the copy path, or None when no valid cookies file exists."""
+    cp = get_cookies_path(cookies_path)
+    if not cp:
+        return None
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / ".fnack_cookies.txt"
+        shutil.copy2(str(cp), str(dest))
+        return str(dest)
+    except OSError as e:
+        logger.debug("[YT-DLP] Cookies copy note: %s", e)
+        return str(cp)  # fall back to the original path
+
+
 def get_cookies_status(custom_path: Optional[str] = None) -> dict:
     """Return status and details of cookies.txt file for UI and settings verification."""
     cp = get_cookies_path(custom_path)
@@ -263,6 +280,11 @@ def download_track_ytdlp(
     output_dir.mkdir(parents=True, exist_ok=True)
     target = query_or_url.strip()
 
+    # IMPORTANT: pass yt-dlp a COPY of the cookies file, never the original.
+    # yt-dlp dumps its cookie jar back into --cookies files on exit, which would
+    # overwrite the user's uploaded cookies.txt (the 'reverts to 13 cookies' bug).
+    cookie_file_to_use = _copy_cookies_for_ytdlp(cookies_path, output_dir)
+
     # Targets to try in order of priority (YouTube Music candidates first, then fallbacks)
     targets_to_try = []
 
@@ -272,7 +294,7 @@ def download_track_ytdlp(
             track_title=track_title,
             expected_duration=expected_duration,
             prefer_youtube_music=prefer_youtube_music,
-            cookies_path=cookies_path,
+            cookies_path=cookie_file_to_use,
         )
         if candidates:
             targets_to_try = [c["url"] for c in candidates]
@@ -301,7 +323,6 @@ def download_track_ytdlp(
     else:
         targets_to_try = [target]
 
-    resolved_cookies = get_cookies_path(cookies_path)
     last_error = ""
     audio_files = []  # populated per-target; initialized here for safety
 
@@ -353,8 +374,8 @@ def download_track_ytdlp(
             "--no-warnings",
         ]
 
-        if resolved_cookies:
-            cmd.extend(["--cookies", str(resolved_cookies)])
+        if cookie_file_to_use:
+            cmd.extend(["--cookies", cookie_file_to_use])
 
         if Path("/usr/bin/node").exists():
             cmd.extend(["--js-runtimes", "node:/usr/bin/node"])
@@ -438,6 +459,8 @@ def download_track_ytdlp(
                 "--extractor-args",
                 "youtube:player_client=android",
             ]
+            if cookie_file_to_use:
+                cmd.extend(["--cookies", cookie_file_to_use])
             if Path("/usr/bin/node").exists():
                 cmd.extend(["--js-runtimes", "node:/usr/bin/node"])
             elif Path("/usr/local/bin/deno").exists():
