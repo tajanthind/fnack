@@ -81,6 +81,7 @@ class Track(db.Model):
     isrc = db.Column(db.String(64), nullable=True, index=True)
     deezer_id = db.Column(db.String(32), nullable=True, index=True)
     spotify_url = db.Column(db.Text, nullable=True)
+    genre = db.Column(db.String(128), nullable=True)
     file_path = db.Column(db.Text, default="", nullable=False)
     file_format = db.Column(db.String(16), nullable=True)
     bitrate = db.Column(db.Integer, nullable=True)

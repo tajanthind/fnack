@@ -99,14 +99,16 @@ def _tag_audio_file(
     disc_num: int = 1,
     total_tracks: Optional[int] = None,
     cover_bytes: Optional[bytes] = None,
+    genre: Optional[str] = None,
 ) -> None:
     """
-    Embed clean, uniform metadata tags (artist, album artist, album, title, track number, disc, year)
+    Embed clean, uniform metadata tags (artist, album artist, album, title, track number, disc, year, genre)
     and front cover artwork across all formats using Mutagen, eliminating casing conflicts for Navidrome.
     """
     try:
         ext = file_path.suffix.lower()
         effective_album_artist = (album_artist or artist or "").strip()
+        effective_genre = (genre or "").strip()
 
         if ext == ".flac":
             from mutagen.flac import FLAC, Picture
@@ -141,6 +143,8 @@ def _tag_audio_file(
             if year:
                 audio["date"] = str(year)
                 audio["year"] = str(year)
+            if effective_genre:
+                audio["genre"] = effective_genre
 
             if cover_bytes:
                 try:
@@ -182,6 +186,9 @@ def _tag_audio_file(
                 tags["TPOS"] = TPOS(encoding=3, text=str(disc_num))
             if year:
                 tags["TDRC"] = TDRC(encoding=3, text=str(year))
+            if effective_genre:
+                from mutagen.id3 import TCON
+                tags["TCON"] = TCON(encoding=3, text=effective_genre)
             if cover_bytes:
                 try:
                     tags["APIC"] = APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover_bytes)
@@ -206,6 +213,8 @@ def _tag_audio_file(
                 audio["disk"] = [(disc_num, 0)]
             if year:
                 audio["\xa9day"] = [str(year)]
+            if effective_genre:
+                audio["\xa9gen"] = [effective_genre]
             if cover_bytes:
                 try:
                     audio["covr"] = [MP4Cover(cover_bytes, imageformat=MP4Cover.FORMAT_JPEG)]
@@ -244,6 +253,20 @@ def _tag_audio_file(
                     audio["discnumber"] = [str(disc_num)]
                 if year:
                     audio["date"] = [str(year)]
+                if effective_genre:
+                    audio["genre"] = [effective_genre]
+                if cover_bytes:
+                    try:
+                        # Ogg formats embed pictures via the FLAC Picture block
+                        from mutagen.flac import Picture
+                        import base64
+                        pic = Picture()
+                        pic.data = cover_bytes
+                        pic.type = 3  # front cover
+                        pic.mime = "image/jpeg"
+                        audio["metadata_block_picture"] = [base64.b64encode(pic.write()).decode("ascii")]
+                    except Exception as pe:
+                        logger.debug("[QUEUE] Opus cover embed note: %s", pe)
                 audio.save()
 
     except Exception as e:
@@ -411,17 +434,25 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         # (any valid audio file is accepted) while keeping basic file validation.
         verify_expected_duration = expected_duration if enable_duration_check else None
 
-        # Auto-resolve ISRC from Deezer if missing
-        if not isrc and track_deezer_id:
+        # Auto-resolve ISRC and genre from Deezer when missing
+        track_genre = track.genre or None
+        if (not isrc or not track_genre) and track_deezer_id:
             try:
                 t_info = get_track_info(track_deezer_id)
-                if t_info.get("isrc"):
+                if t_info.get("isrc") and not isrc:
                     isrc = t_info["isrc"]
                     track.isrc = isrc
+                if t_info.get("genre") and not track_genre:
+                    track_genre = t_info["genre"]
+                    track.genre = track_genre
+                if t_info.get("isrc") or t_info.get("genre"):
                     db.session.commit()
+                if t_info.get("isrc"):
                     logger.info("[QUEUE] Auto-resolved ISRC '%s' for '%s - %s'", isrc, artist_name, track_title)
+                if t_info.get("genre"):
+                    logger.info("[QUEUE] Auto-resolved genre '%s' for '%s - %s'", track_genre, artist_name, track_title)
             except Exception as ie:
-                logger.debug("[QUEUE] Deezer ISRC lookup failed for track %d: %s", track_id, ie)
+                logger.debug("[QUEUE] Deezer ISRC/genre lookup failed for track %d: %s", track_id, ie)
 
     if job_id in cancel_requested_jobs:
         _handle_cancellation(app, socketio, job_id, track_id)
@@ -670,6 +701,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     disc_num=disc_num_val,
                     total_tracks=total_tracks_val,
                     cover_bytes=cover_bytes if embed_cover_setting else None,
+                    genre=track_genre,
                 )
                 rel_path = str(final_dest.relative_to(music_dir))
 
@@ -916,6 +948,7 @@ def download_manual_match_track(
         expected_duration = track.duration
         track_isrc = track.isrc
         track_deezer_id = track.deezer_id
+        track_genre = track.genre or None
         # Capture plain IDs before session expiry/detachment (safe to use outside app context)
         album_id = album.id if album else 0
         artist_id = artist.id if artist else 0
@@ -1135,6 +1168,7 @@ def download_manual_match_track(
                 disc_num=disc_num,
                 total_tracks=total_tracks_val,
                 cover_bytes=cover_bytes if embed_cover_setting else None,
+                genre=track_genre,
             )
 
             rel_path = str(final_dest.relative_to(music_dir))

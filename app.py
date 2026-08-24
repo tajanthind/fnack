@@ -392,6 +392,7 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                             duration=t.get("duration"),
                             isrc=t.get("isrc"),
                             deezer_id=str(t["id"]),
+                            genre=t.get("genre"),
                             status="missing",
                         )
                         db.session.add(track)
@@ -401,6 +402,8 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                             track.isrc = t["isrc"]
                         if t.get("duration") and not track.duration:
                             track.duration = t["duration"]
+                        if t.get("genre") and not track.genre:
+                            track.genre = t["genre"]
 
             valid_deezer_ids = {str(a["id"]) for a in disco.get("albums", [])}
 
@@ -1363,6 +1366,10 @@ with app.app_context():
                 pass
             try:
                 conn.execute(db.text("ALTER TABLE tracks ADD COLUMN monitored BOOLEAN DEFAULT 1"))
+            except Exception:
+                pass
+            try:
+                conn.execute(db.text("ALTER TABLE tracks ADD COLUMN genre VARCHAR(128)"))
             except Exception:
                 pass
             conn.commit()

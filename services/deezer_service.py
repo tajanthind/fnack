@@ -4,7 +4,7 @@ import logging
 import re
 import time
 import unicodedata
-from typing import Any
+from typing import Any, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -261,6 +261,7 @@ def get_artist_discography(
                     "track_position": t.get("track_position", len(tracks) + 1),
                     "disk_number": t.get("disk_number", 1),
                     "isrc": t.get("isrc") if t.get("isrc") and len(str(t.get("isrc")).strip()) == 12 else None,
+                    "genre": _extract_genre(t),
                 })
         except Exception as e:
             logger.warning("[DEEZER] Failed fetching track details for album %d (%s): %s", album_id, title, e)
@@ -340,6 +341,19 @@ def get_artist_discography(
     }
 
 
+def _extract_genre(track_obj: dict) -> Optional[str]:
+    """Best-effort primary genre name from a raw Deezer track object."""
+    try:
+        genres = (track_obj.get("genres") or {}).get("data") or []
+        for g in genres:
+            name = (g or {}).get("name", "")
+            if name:
+                return str(name)
+    except Exception:
+        pass
+    return None
+
+
 def get_track_info(track_id: int) -> dict:
     """Fetch single track metadata from Deezer."""
     data = _get(f"{DEEZER_API}/track/{track_id}")
@@ -352,6 +366,8 @@ def get_track_info(track_id: int) -> dict:
         "album_id": (data.get("album") or {}).get("id"),
         "duration": float(data.get("duration", 0)),
         "isrc": data.get("isrc"),
+        "genre": _extract_genre(data),
+        "release_date": data.get("release_date"),
     }
 
 

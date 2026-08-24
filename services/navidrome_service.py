@@ -7,11 +7,20 @@ is downloaded, imported, or modified, or when triggered manually by the user.
 import hashlib
 import logging
 import secrets
+import threading
+import time
 from typing import Optional, Tuple
 import requests
 
 logger = logging.getLogger("fnack.navidrome")
 TIMEOUT = 8
+
+# Client-side scan debounce: with max_concurrent=1 downloads finish minutes
+# apart, but with faster settings several tracks can complete within seconds.
+# Navidrome re-scans the whole library, so firing once per 30s window is enough.
+_SCAN_DEBOUNCE_SECONDS = 30.0
+_scan_lock = threading.Lock()
+_last_scan_time = 0.0
 
 
 def _get_auth_params(user: str, token_or_pass: str) -> dict:
@@ -71,8 +80,15 @@ def test_navidrome_connection(url: str, user: str = "", token_or_pass: str = "")
 
 
 def trigger_navidrome_scan(app) -> Tuple[bool, str]:
-    """Trigger library rescan on configured Navidrome server."""
+    """Trigger library rescan on configured Navidrome server (debounced)."""
     from models import AppSetting, db
+
+    global _last_scan_time
+    with _scan_lock:
+        now = time.time()
+        if now - _last_scan_time < _SCAN_DEBOUNCE_SECONDS:
+            return False, "Scan already triggered recently (debounced)"
+        _last_scan_time = now
 
     with app.app_context():
         s_url = db.session.get(AppSetting, "navidrome_url")
