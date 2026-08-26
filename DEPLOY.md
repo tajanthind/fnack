@@ -14,17 +14,20 @@ This guide covers building and running fnack yourself (no GitHub registry needed
 Requirements: Docker Engine 24+ with the Compose plugin, ~3 GB free disk for the image.
 
 ```bash
-# 1. Clone / copy the project and enter its directory
-cd fnack
+# 1. Get the project (either way works):
+#    A) From git:        git clone https://github.com/tajanthind/fnack.git && cd fnack
+#    B) No git needed:   see "1b. Deploy Without Git" below, then cd fnack
 
-# 2. Choose where your music library lives (default: ~/Music)
-export MUSIC_PATH="$HOME/Music"
+# 2. Create your .env (music path, secret, concurrency)
+cp .env.example .env
+nano .env                 # set MUSIC_PATH=/home/you/Music  (defaults to ./music)
+                          # SECRET_KEY="$(openssl rand -hex 32)" (optional)
 
-# 3. (Recommended) Set a fixed secret key so sessions survive restarts
-export SECRET_KEY="$(openssl rand -hex 32)"
-
-# 4. Build and start
-docker compose up -d --build
+# 3. Start (pulls the prebuilt image from GitHub Container Registry when
+#    possible; use --build to compile locally from this source instead)
+docker compose up -d
+# or, to always build locally:
+# docker compose up -d --build
 ```
 
 Open the web UI: **http://localhost:4688** (or `http://<server-ip>:4688`).
@@ -34,6 +37,61 @@ Check it is healthy:
 ```bash
 docker ps --filter name=fnack          # status should show (healthy)
 docker logs -f fnack                    # live logs
+```
+
+---
+
+## 1b. Deploy on Another Machine — Without Git
+
+No git is needed on the target machine. Two options:
+
+### Option A — Prebuilt image from GHCR (needs internet, fastest)
+
+GitHub Actions publishes `ghcr.io/tajanthind/fnack:latest` on every push.
+Only the `docker-compose.yml` (plus `.env`) is required:
+
+```bash
+mkdir fnack && cd fnack
+# copy docker-compose.yml and .env.example from any machine / release bundle
+cp .env.example .env      # set MUSIC_PATH=...
+docker compose up -d      # pulls ghcr.io/tajanthind/fnack:latest
+```
+
+### Option B — Release bundle (works offline / fully self-contained)
+
+Build a bundle once on any machine with git:
+
+```bash
+./scripts/make_release.sh        # -> fnack-release-<version>.tar.gz (120 KB)
+```
+
+Copy `fnack-release-<version>.tar.gz` to the target machine
+(scp / USB stick / any transfer), then:
+
+```bash
+tar xzf fnack-release-<version>.tar.gz
+cd fnack
+cp .env.example .env      # set MUSIC_PATH=...
+docker compose up -d --build   # builds locally — no git, no registry
+```
+
+The bundle contains only git-tracked files, so **cookies, secrets, databases
+and `.venv` are never included** (verified by the build script output).
+
+### Option C — Fully offline (no Docker Hub / no apt/pip internet)
+
+On the machine with the image, export it and transfer the file:
+
+```bash
+docker save fnack:latest | gzip > fnack-image-<version>.tar.gz   # ~1–2 GB
+```
+
+On the target:
+
+```bash
+docker load < fnack-image-<version>.tar.gz
+# then Option B's compose (or `image: fnack:latest` in docker-compose.yml)
+docker compose up -d
 ```
 
 ---
@@ -130,7 +188,7 @@ docker run -d \
   -v "$PWD/downloads:/downloads" \
   -v "$HOME/Music:/music" \
   -e SECRET_KEY="$(openssl rand -hex 32)" \
-  -e MAX_CONCURRENT_DOWNLOADS=3 \
+  -e MAX_CONCURRENT_DOWNLOADS=1 \
   fnack:latest
 ```
 
@@ -139,9 +197,24 @@ docker run -d \
 ## 6. Upgrading
 
 ```bash
-# Pull the new code, rebuild, and recreate the container
+# With git:
 cd fnack
 git pull                       # or copy the new source over
+docker compose up -d --build
+```
+
+```bash
+# Without git (prebuilt image from GHCR):
+cd fnack
+docker compose pull            # fetch the latest ghcr.io/tajanthind/fnack:latest
+docker compose up -d
+```
+
+```bash
+# Without git (release bundle):
+# copy the new fnack-release-<version>.tar.gz over the old source, then:
+tar xzf fnack-release-<version>.tar.gz
+cd fnack
 docker compose up -d --build
 ```
 

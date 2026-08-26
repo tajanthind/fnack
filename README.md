@@ -120,11 +120,26 @@ docker run -d --name fnack --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tu
 
 ### Docker Compose (Recommended)
 
-Create `docker-compose.yml`:
+The repository ships a ready-to-use `docker-compose.yml` that works on any
+machine — with or without git (prebuilt image is published to GHCR on every
+push; you can also build locally with `--build`). First run:
+
+```bash
+cp .env.example .env          # then edit MUSIC_PATH to your music library
+docker compose up -d          # pulls the prebuilt image (GHCR)
+# or build locally:           docker compose up -d --build
+```
+
+Deploying to another machine without git is just as easy — see
+[DEPLOY.md](DEPLOY.md#1b-deploy-on-another-machine--without-git) for the
+one-file release bundle (`./scripts/make_release.sh`) and offline options.
+
+If you prefer to write the compose yourself, the equivalent minimal file:
 
 ```yaml
 services:
   fnack:
+    image: ghcr.io/tajanthind/fnack:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -135,18 +150,10 @@ services:
     volumes:
       - ./config:/config
       - ./downloads:/downloads
-      - /path/to/music:/music
+      - ${MUSIC_PATH:-./music}:/music
     environment:
       - SECRET_KEY=${SECRET_KEY:-}
       - MAX_CONCURRENT_DOWNLOADS=1
-```
-
-Build and run the container:
-
-```bash
-export MUSIC_PATH="/path/to/music"          # where your music library lives
-export SECRET_KEY="$(openssl rand -hex 32)" # optional but recommended
-docker compose up -d --build
 ```
 
 Access the web interface at `http://<server-ip>:4688`.

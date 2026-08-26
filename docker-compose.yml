@@ -1,3 +1,22 @@
+# fnack — single-container music downloader
+# ===========================================
+# Run on ANY machine — no git required. Two ways to get the image:
+#
+#   A) Prebuilt image (needs internet):          docker compose up -d
+#      Pulls ghcr.io/tajanthind/fnack:latest (built & published by GitHub
+#      Actions from the main branch).
+#
+#   B) Build locally from this folder:           docker compose up -d --build
+#      Use this when you copied the release bundle and have no GHCR access.
+#
+# First run: copy `.env.example` to `.env` and set MUSIC_PATH to your music
+# library (defaults to ./music next to this file). Create ./config and
+# ./downloads automatically.
+#
+# Optional: put an OpenVPN (.ovpn) or WireGuard (wg0.conf) config in
+# ./config/vpn/ to route all downloads through a VPN (requires the
+# cap_add/devices below — already configured).
+
 services:
   fnack:
     image: ghcr.io/tajanthind/fnack:latest
@@ -8,12 +27,18 @@ services:
     ports:
       - "4688:4688"
     volumes:
+      # Settings / cookies / DB live on the host so they survive rebuilds.
       - ./config:/config
+      # In-progress and temp download work files.
       - ./downloads:/downloads
-      - ${MUSIC_PATH:-/home/tajanthind/Music}:/music
+      # Your music library (set MUSIC_PATH in .env).
+      - ${MUSIC_PATH:-./music}:/music
     environment:
-      # Set a fixed SECRET_KEY (e.g. openssl rand -hex 32) so sessions survive restarts.
+      # Set a fixed secret (e.g. `openssl rand -hex 32`) so sessions survive
+      # restarts. If empty, fnack generates one and stores it in /config.
       - SECRET_KEY=${SECRET_KEY:-}
+      # 1 = downloads run one at a time (most reliable against YouTube/zarz.moe
+      # rate limits). Raise only if you know your IP is clean.
       - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-1}
       - CHROME_PATH=/usr/bin/chromium
       - DISPLAY=:99
@@ -32,7 +57,4 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
-
-volumes:
-  fnack_downloads:
+      start_period: 20s
