@@ -8,10 +8,13 @@ FROM python:3.11-slim-bookworm
 # Node 22: the bundled POT provider requires node >= 20, and a modern JS
 # runtime improves yt-dlp challenge solving. openvpn/wireguard-tools/iproute2
 # provide optional in-container VPN support (configs in /config/vpn/).
-# resolvconf is required by wg-quick for DNS handling — without it WireGuard
-# tunnels fail with "resolvconf: command not found" after bringing up wg0.
+# openresolv provides the `resolvconf` command wg-quick needs for DNS when
+# bringing up wg0 — without it tunnels die with "resolvconf: command not
+# found" right after the interface comes up. (The Debian `resolvconf` package
+# cannot be used: its postinst symlinks /etc/resolv.conf, which is a
+# bind-mounted file in Docker and fails with "Device or resource busy".)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb x11-utils procps curl unzip xz-utils ca-certificates openvpn wireguard-tools iproute2 resolvconf && \
+    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb x11-utils procps curl unzip xz-utils ca-certificates openvpn wireguard-tools iproute2 openresolv && \
     curl -fsSL https://nodejs.org/dist/v22.17.0/node-v22.17.0-linux-x64.tar.xz -o /tmp/node22.tar.xz && \
     tar -xJf /tmp/node22.tar.xz -C /usr/local --strip-components=1 && \
     rm -f /tmp/node22.tar.xz && \
