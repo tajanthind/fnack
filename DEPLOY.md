@@ -294,6 +294,12 @@ VPN exactly as before. Example for a manual `docker run`:
 docker run -d --name fnack --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun ... fnack:latest
 ```
 
+Notes:
+- The image bundles `openresolv` so `wg-quick` can handle DNS (v0.2.22+).
+- When the tunnel comes up, fnack automatically clears the SpotiFLAC
+  rate-limit circuit breaker — so FLAC downloads resume immediately on the
+  fresh VPN IP instead of waiting out a 30–300 s cool-down.
+
 ### One-time library re-verification (existing downloads)
 
 fnack now guarantees new downloads match their tracks. To audit files that were
