@@ -1071,6 +1071,57 @@ def api_navidrome_scan():
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  VPN Management API (optional in-container VPN)
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/api/vpn/status", methods=["GET"])
+def api_vpn_status():
+    from services.vpn_service import get_vpn_status
+    return jsonify(get_vpn_status())
+
+
+@app.route("/api/vpn/config", methods=["POST"])
+def api_vpn_config():
+    """Upload an OpenVPN (.ovpn) or WireGuard (.conf) config."""
+    from services.vpn_service import save_vpn_config
+    if "file" in request.files:
+        f = request.files["file"]
+        if f.filename == "":
+            return jsonify({"error": "No file selected"}), 400
+        content = f.read().decode("utf-8", "ignore")
+        filename = f.filename
+    else:
+        data = request.get_json(silent=True) or {}
+        content = data.get("content", "")
+        filename = data.get("filename", "vpn.ovpn")
+    ok, msg = save_vpn_config(content, filename)
+    if not ok:
+        return jsonify({"error": msg}), 400
+    return jsonify({"message": msg})
+
+
+@app.route("/api/vpn/start", methods=["POST"])
+def api_vpn_start():
+    from services.vpn_service import start_vpn
+    ok, msg = start_vpn()
+    return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
+
+
+@app.route("/api/vpn/stop", methods=["POST"])
+def api_vpn_stop():
+    from services.vpn_service import stop_vpn
+    ok, msg = stop_vpn()
+    return jsonify({"success": ok, "message": msg})
+
+
+@app.route("/api/vpn/config", methods=["DELETE"])
+def api_vpn_config_delete():
+    from services.vpn_service import delete_vpn_config
+    ok, msg = delete_vpn_config()
+    return jsonify({"success": ok, "message": msg})
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  Cookies Management API
 # ══════════════════════════════════════════════════════════════════════
 

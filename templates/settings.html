@@ -360,7 +360,66 @@
       </div>
     </div>
 
-    <!-- Album Artwork & Cover Art -->
+    <!-- VPN Manager (optional in-container VPN) -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+          <h5 class="fw-bold m-0"><i class="fas fa-shield-halved text-success me-2"></i>VPN (Optional)</h5>
+          <div>
+            <span class="badge bg-secondary" id="vpnStatusBadge"><i class="fas fa-circle-notch fa-spin me-1"></i>Checking...</span>
+          </div>
+        </div>
+        <p class="text-secondary small mb-3">
+          Route all of fnack's traffic through a VPN inside this same container. This is the most effective fix for
+          YouTube bot-checks ("Sign in to confirm you're not a bot") — residential VPN IPs are flagged far less often.
+          Upload an <strong>OpenVPN</strong> (<code>.ovpn</code>) or <strong>WireGuard</strong> (<code>.conf</code>) config from any provider.
+        </p>
+
+        <div class="bg-dark p-3 rounded mb-3">
+          <div class="row g-2 mb-3">
+            <div class="col-md-8">
+              <label class="form-label small text-secondary">Upload VPN Config File</label>
+              <input type="file" class="form-control form-control-sm bg-dark text-white border-secondary" id="vpnFileInput" accept=".ovpn,.conf,.txt">
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+              <button type="button" class="btn btn-outline-success btn-sm w-100" onclick="uploadVpnConfig()">
+                <i class="fas fa-upload me-1"></i>Upload & Apply
+              </button>
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label small text-secondary">Or Paste Config Content</label>
+            <textarea class="form-control form-control-sm bg-dark text-white border-secondary font-monospace" id="vpnPasteInput" rows="4" placeholder="client&#10;dev tun&#10;proto udp&#10;remote vpn.example.com 1194&#10;..."></textarea>
+          </div>
+
+          <div class="d-flex flex-wrap gap-2 pt-2 border-top border-secondary border-opacity-25">
+            <button type="button" class="btn btn-brand btn-sm" onclick="startVpn()">
+              <i class="fas fa-play me-1"></i>Start VPN
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="stopVpn()">
+              <i class="fas fa-stop me-1"></i>Stop VPN
+            </button>
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteVpnConfig()">
+              <i class="fas fa-trash-alt me-1"></i>Delete Config
+            </button>
+          </div>
+        </div>
+
+        <div class="small text-secondary">
+          <strong>Status:</strong> <span id="vpnStatusText">—</span>
+        </div>
+        <div class="small text-secondary mt-1">
+          <strong>Public IP:</strong> <span id="vpnPublicIp">—</span>
+          <span class="text-info" id="vpnIpNote"></span>
+        </div>
+        <div class="form-text text-secondary small mt-2">
+          Configs are stored in <code>/config/vpn/</code> (your host volume). The container needs
+          <code>NET_ADMIN</code> + <code>/dev/net/tun</code> — already set in the provided <code>docker-compose.yml</code>.
+        </div>
+      </div>
+    </div>
+
     <div class="card bg-dark-card border-0 shadow-sm mb-4">
       <div class="card-body p-4">
         <h5 class="fw-bold mb-3"><i class="fas fa-image text-danger me-2"></i>Album Artwork & Cover Art</h5>
@@ -844,6 +903,131 @@
       }
     }
 
+    // ----- VPN Manager -----
+    let _vpnNormalIp = null;
+
+    async function loadVpnStatus() {
+      const badge = document.getElementById('vpnStatusBadge');
+      const statusEl = document.getElementById('vpnStatusText');
+      const ipEl = document.getElementById('vpnPublicIp');
+      const noteEl = document.getElementById('vpnIpNote');
+      try {
+        const resp = await fetch('/api/vpn/status');
+        const st = await resp.json();
+        if (badge) {
+          badge.className = 'badge ' + (st.running ? 'bg-success' : st.configured ? 'bg-warning text-dark' : 'bg-secondary');
+          badge.innerHTML = st.running
+            ? '<i class="fas fa-shield-halved me-1"></i>Connected'
+            : st.configured
+              ? '<i class="fas fa-shield-halved me-1"></i>Configured (not connected)'
+              : '<i class="fas fa-shield-halved me-1"></i>Not Configured';
+        }
+        if (statusEl) {
+          if (st.running) {
+            statusEl.innerHTML = `Connected via <strong>${escapeHtml(st.type || 'VPN')}</strong> (${(st.config_files || []).join(', ') || 'config'})`;
+          } else if (st.configured) {
+            statusEl.innerHTML = `Config present but VPN not running (${escapeHtml((st.config_files || []).join(', '))}). Start it above.`;
+          } else {
+            statusEl.textContent = 'No VPN config yet. Upload an OpenVPN (.ovpn) or WireGuard (.conf) file above.';
+          }
+        }
+        if (ipEl && st.public_ip) {
+          ipEl.textContent = st.public_ip;
+          if (!st.running) {
+            _vpnNormalIp = st.public_ip;
+          } else if (_vpnNormalIp && _vpnNormalIp !== st.public_ip) {
+            if (noteEl) noteEl.textContent = ' (different from your normal IP — tunnel is working)';
+          }
+        } else if (ipEl) {
+          ipEl.textContent = '—';
+        }
+      } catch (err) {
+        console.error('VPN status error:', err);
+        if (badge) {
+          badge.className = 'badge bg-secondary';
+          badge.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i>Unavailable';
+        }
+      }
+    }
+
+    async function uploadVpnConfig() {
+      const fileInput = document.getElementById('vpnFileInput');
+      const pasteInput = document.getElementById('vpnPasteInput');
+      try {
+        if (fileInput && fileInput.files && fileInput.files.length > 0) {
+          const fd = new FormData();
+          fd.append('file', fileInput.files[0]);
+          const resp = await fetch('/api/vpn/config', { method: 'POST', body: fd });
+          const data = await resp.json();
+          if (resp.ok) {
+            showToast(data.message, 'success');
+            await startVpn();
+          } else {
+            showToast(data.error || 'Failed to upload config', 'error');
+          }
+        } else if (pasteInput && pasteInput.value.trim()) {
+          const content = pasteInput.value;
+          const name = content.includes('interface') ? 'wg0.conf' : 'vpn.ovpn';
+          const resp = await fetch('/api/vpn/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content, filename: name }),
+          });
+          const data = await resp.json();
+          if (resp.ok) {
+            showToast(data.message, 'success');
+            await startVpn();
+          } else {
+            showToast(data.error || 'Failed to save config', 'error');
+          }
+        } else {
+          showToast('Select a file or paste a config first', 'error');
+          return;
+        }
+        loadVpnStatus();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function startVpn() {
+      try {
+        const resp = await fetch('/api/vpn/start', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok) {
+          showToast(data.message || 'VPN started', 'success');
+        } else {
+          showToast(data.error || data.message || 'VPN failed to start', 'error');
+        }
+        loadVpnStatus();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function stopVpn() {
+      try {
+        const resp = await fetch('/api/vpn/stop', { method: 'POST' });
+        const data = await resp.json();
+        showToast(data.message || 'VPN stopped', 'info');
+        loadVpnStatus();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function deleteVpnConfig() {
+      if (!confirm('Delete all VPN configs and stop the VPN?')) return;
+      try {
+        const resp = await fetch('/api/vpn/config', { method: 'DELETE' });
+        const data = await resp.json();
+        showToast(data.message || 'VPN config removed', 'info');
+        loadVpnStatus();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
     function checkDirty() {
       const curEnableSpotiflac = document.getElementById('setEnableSpotiflac').checked;
       const curEnableYtdlp = document.getElementById('setEnableYtdlp').checked;
@@ -1149,7 +1333,10 @@
       }
     }
 
-    document.addEventListener('DOMContentLoaded', loadSettings);
+    document.addEventListener('DOMContentLoaded', () => {
+      loadSettings();
+      loadVpnStatus();
+    });
   </script>
 </body>
 </html>
