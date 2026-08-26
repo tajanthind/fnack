@@ -257,6 +257,48 @@ def find_best_youtube_candidate(
     return candidates[0] if candidates else None
 
 
+def _extract_ytdlp_error(output: str, max_chars: int = 700) -> str:
+    """Pull the meaningful failure text out of yt-dlp's raw output.
+
+    Skips download-progress noise (MiB/s counters, 'Destination:', playlist
+    item lines) and keeps real error/warning lines, or the last meaningful
+    line when no explicit error was printed (e.g. 'Finished downloading
+    playlist: X' for a 0-item SoundCloud album result).
+    """
+    if not output or not output.strip():
+        return "No output produced"
+    noise = (
+        "MiB/s", "KiB/s", "Destination:", "[download]", "[ExtractAudio]",
+        "Deleting original", "Extracting URL", "Downloading page",
+        "already been downloaded", "at ", "% of", "has already been",
+    )
+    interesting = []
+    playlist_hint = None
+    for line in output.splitlines():
+        low = line.strip()
+        if not low:
+            continue
+        if any(n in low for n in noise):
+            continue
+        if "playlist" in low.lower():
+            playlist_hint = low
+            continue
+        if any(k in low for k in (
+            "ERROR:", "WARNING:", "HTTP Error", "Sign in", "Unable",
+            "not available", "not a valid URL", "Requested format",
+            "did not get any data", "failed", "error", "403", "404", "410",
+            "geo-restricted", "DRM", "is not supported", "unsupported",
+        )):
+            interesting.append(low)
+    if interesting:
+        snippet = " | ".join(interesting[-4:])
+    elif playlist_hint:
+        snippet = f"Search returned a playlist/album, not a track: {playlist_hint}"
+    else:
+        snippet = output.strip().splitlines()[-1][:300]
+    return snippet[:max_chars]
+
+
 def download_track_ytdlp(
     query_or_url: str,
     output_dir: Path,
@@ -417,8 +459,7 @@ def download_track_ytdlp(
                     return True, latest_file, None
 
             # Clean error snippet
-            err_lines = [l for l in full_output.splitlines() if "ERROR:" in l or "WARNING:" in l or "HTTP Error" in l or "Sign in" in l]
-            err_snippet = "\n".join(err_lines[-3:]) if err_lines else (full_output[-300:] if full_output else "No output produced")
+            err_snippet = _extract_ytdlp_error(full_output)
             last_error = f"yt-dlp error: {err_snippet}"
             logger.debug("[YT-DLP] Candidate '%s' failed (%s), trying next candidate if available...", cand_target, err_snippet)
 

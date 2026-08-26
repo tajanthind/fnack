@@ -134,12 +134,21 @@ def _artist_list(s: str) -> list:
 
 
 def _check_artist(actual_artist: str, expected_artist: str) -> bool:
-    """True when the expected artist appears among the file's artists (multi-artist aware)."""
+    """True when the expected artist appears among the file's artists (multi-artist aware).
+
+    Falls back to fuzzy matching so close transliteration/spelling variants
+    (e.g. 'Sharry Maan' vs 'Sherry Maan') are not falsely rejected.
+    """
+    from difflib import SequenceMatcher
     exp = _primary_artist(expected_artist)
     if not exp:
         return False
-    for a in _artist_list(actual_artist):
+    acts = _artist_list(actual_artist)
+    for a in acts:
         if a and (exp == a or exp in a or a in exp):
+            return True
+    for a in acts:
+        if a and SequenceMatcher(None, exp, a).ratio() >= 0.8:
             return True
     return False
 
