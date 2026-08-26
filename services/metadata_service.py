@@ -249,7 +249,8 @@ def _merge_duplicate_albums(app) -> dict:
 
 
 def _remove_empty_album_dirs() -> None:
-    """Delete leftover empty album folders (e.g. after duplicate-file cleanup)."""
+    """Delete leftover empty album folders (e.g. after duplicate-file cleanup),
+    including any stray cover.jpg/folder.jpg they contain."""
     try:
         if not MUSIC_ROOT.is_dir():
             return
@@ -257,11 +258,19 @@ def _remove_empty_album_dirs() -> None:
             if not artist_dir.is_dir():
                 continue
             for album_dir in artist_dir.iterdir():
-                if album_dir.is_dir():
-                    try:
-                        album_dir.rmdir()
-                    except OSError:
-                        pass  # not empty — keep
+                if not album_dir.is_dir():
+                    continue
+                for cover in ("cover.jpg", "folder.jpg"):
+                    cover_path = album_dir / cover
+                    if cover_path.is_file():
+                        try:
+                            cover_path.unlink()
+                        except OSError:
+                            pass
+                try:
+                    album_dir.rmdir()
+                except OSError:
+                    pass  # not empty — keep
     except OSError:
         pass
 
