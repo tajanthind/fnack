@@ -494,6 +494,21 @@ def download_track_ytdlp(
                 last_error = str(e)
 
     logger.warning("[YT-DLP] All candidates failed for '%s'. Last error: %s", query_or_url, last_error)
+
+    # User-actionable hint: stale/expired YouTube cookies produce exactly this
+    # pattern (search works, but stream downloads fail with 'Video unavailable'
+    # or bot-checks). Tell the user to re-export cookies once.
+    if last_error and any(w in last_error.lower() for w in ("video unavailable", "sign in to confirm", "not a bot", "bot check")):
+        if get_cookies_path(cookies_path):
+            logger.warning(
+                "[YT-DLP] Hint: these YouTube failures often mean the cookies.txt file is stale/expired. "
+                "Re-export fresh cookies from a signed-in browser (Settings -> YouTube Cookies) and retry."
+            )
+        else:
+            logger.warning(
+                "[YT-DLP] Hint: YouTube is bot-blocking this IP without cookies. Add cookies.txt "
+                "(Settings -> YouTube Cookies) and retry."
+            )
     return False, None, last_error
 
 
