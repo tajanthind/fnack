@@ -282,35 +282,80 @@ def _extract_ytdlp_error(output: str, max_chars: int = 700) -> str:
     """
     if not output or not output.strip():
         return "No output produced"
-    noise = (
+
+    noise_fragments = (
         "MiB/s", "KiB/s", "Destination:", "[download]", "[ExtractAudio]",
         "Deleting original", "Extracting URL", "Downloading page",
-        "already been downloaded", "at ", "% of", "has already been",
+        "already been downloaded", "has already been", "ETA ",
     )
+    noise_line_start = (
+        "[download]", "[Merger]", "[ExtractAudio]", "[Metadata]", "[Fixup]",
+        "[ffmpeg]", "[info]", "[debug]", "[youtube]", "[youtubetab]",
+        "[generic]", "[soundcloud]", "[SponsorBlock]", "[MoveFiles]",
+        "[EmbedThumbnail]", "[VideoConvertor]", "[ModifyChapters]",
+        "[niconico]", "[DASH]", "[youtube:playlist]", "[download] has already",
+    )
+    progress_re = re.compile(r"^\s*\d+(\.\d+)?\s*%|^\s*\[download\]|^\s*100%| in 00:0\d|^\s*0:0\d")
+
     interesting = []
     playlist_hint = None
-    for line in output.splitlines():
-        low = line.strip()
-        if not low:
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
             continue
-        if any(n in low for n in noise):
+        low = line.lower()
+        if any(n in low for n in noise_fragments):
             continue
-        if "playlist" in low.lower():
-            playlist_hint = low
+        if line.startswith(noise_line_start):
+            continue
+        if progress_re.match(line) or "% of" in low:
+            continue
+        if "playlist" in low:
+            playlist_hint = line
             continue
         if any(k in low for k in (
-            "ERROR:", "WARNING:", "HTTP Error", "Sign in", "Unable",
-            "not available", "not a valid URL", "Requested format",
-            "did not get any data", "failed", "error", "403", "404", "410",
-            "geo-restricted", "DRM", "is not supported", "unsupported",
+            "error:", "warning:", "http error", "sign in", "unable",
+            "not available", "not a valid url", "requested format",
+            "did not get any data", "failed", "403", "404", "410",
+            "geo-restricted", "drm", "is not supported", "unsupported",
+            "no video", "no result", "nothing found", "cannot", "unable to",
+            "requested format is not available",
         )):
-            interesting.append(low)
+            interesting.append(line)
     if interesting:
         snippet = " | ".join(interesting[-4:])
     elif playlist_hint:
         snippet = f"Search returned a playlist/album, not a track: {playlist_hint}"
     else:
-        snippet = output.strip().splitlines()[-1][:300]
+        # No explicit error: pick the last line that is not pure progress/noise.
+        # Prefer lines with alphabetic content; ignore stray counters/timestamps
+        # and truncated filename fragments ("0:00", "ck.m4a\"") that yt-dlp
+        # leaves behind on failed runs.
+        candidates = []
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            low = line.lower()
+            if any(n in low for n in noise_fragments):
+                continue
+            if line.startswith(noise_line_start):
+                continue
+            if progress_re.match(line) or "% of" in low:
+                continue
+            if not re.search(r"[a-z]", low):
+                continue  # pure numbers/timestamps — not useful
+            if len(line) > 2:
+                candidates.append(line)
+        # Drop lines that are clearly truncated path/name fragments
+        filtered = [
+            ln for ln in candidates
+            if not (ln.endswith(('"', "\\")) or (len(ln) < 12 and " " not in ln))
+        ]
+        if filtered:
+            snippet = filtered[-1]
+        else:
+            snippet = "No detailed error available (see container logs)"
     return snippet[:max_chars]
 
 

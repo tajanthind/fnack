@@ -27,6 +27,10 @@ Automated Lossless Music Discography Downloader, Tagger, and Library Manager.
 - **Global Overview Stats**: Track Total Artists Managed, Downloaded Tracks, Total Failed Songs, and Total Catalogue Size (dynamically formatted in MB, GB, or TB).
 - **One-Click Global Retry**: Prominent "Retry All Failed Songs" button re-queues every failed or error track across your entire library in one click.
 
+### Fast Interactive Library Import (`/import`)
+- **Parallel Folder Scan**: Scans your `/music` root concurrently (bounded greenlet pool) with cached Deezer lookups, so even a 50-artist library scans in a few seconds instead of one network round-trip per folder.
+- **Multi-Select & Bulk Import**: Check any number of discovered artist folders (or select all) and import them in one batch — each artist is fetched and mapped in the background with a live progress bar, so the web UI stays responsive no matter how many artists you import at once.
+
 ### Manual Match & Track Fixer
 - **Custom URL Matching**: Click the search icon next to any missing, failed, or downloaded song to fetch from a specific Spotify, YouTube, YouTube Music, or Deezer link.
 - **Automatic Retagging**: Downloads the targeted stream, applies uniform tags (Title, Artist, Album, Year, Track/Disc numbers, embedded artwork), and replaces any incorrect file in your library.

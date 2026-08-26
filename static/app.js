@@ -841,8 +841,14 @@ function confirmDeleteArtist(artistId, artistName) {
 
 // ----- Interactive Root Folder Importer (/import) -----
 let _importCandidates = [];
+let _selectedImportFolders = new Set();
+let _bulkImportRunning = false;
 let _selectedImportFolder = null;
 let _selectArtistSearchDebounce = null;
+
+function _folderRowId(folderName) {
+  return 'importRow_' + escapeHtml(folderName).replace(/[^a-zA-Z0-9]/g, '_');
+}
 
 async function loadImportCandidates() {
   const tbody = document.getElementById('importCandidatesTbody');
@@ -850,17 +856,77 @@ async function loadImportCandidates() {
   if (!tbody) return;
 
   if (loading) loading.classList.remove('d-none');
-  tbody.innerHTML = `<tr><td colspan="5" class="text-center text-secondary py-4"><div class="spinner-border spinner-border-sm text-danger me-2" role="status"></div>Scanning /music directory...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="6" class="text-center text-secondary py-4"><div class="spinner-border spinner-border-sm text-danger me-2" role="status"></div>Scanning /music directory...</td></tr>`;
   try {
-    const resp = await fetch('/api/import/candidates');
-    const candidates = await resp.json();
+    const [candResp, statusResp] = await Promise.all([
+      fetch('/api/import/candidates'),
+      fetch('/api/import/bulk/status'),
+    ]);
+    const candidates = await candResp.json();
+    const status = statusResp.ok ? await statusResp.json() : null;
     _importCandidates = candidates;
+    if (status && status.active) {
+      _bulkImportRunning = true;
+    }
     renderImportCandidates(candidates);
+    updateBulkImportBar();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-danger py-3">Failed to scan: ${escapeHtml(err.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="text-danger py-3">Failed to scan: ${escapeHtml(err.message)}</td></tr>`;
   } finally {
     if (loading) loading.classList.add('d-none');
   }
+}
+
+function updateBulkImportBar() {
+  const bar = document.getElementById('bulkImportBar');
+  const btn = document.getElementById('importSelectedBtn');
+  const countEl = document.getElementById('importSelectedCount');
+  if (!bar) return;
+
+  const readyCount = _importCandidates.filter(c => !c.is_already_imported).length;
+  const selCount = _selectedImportFolders.size;
+
+  if (bar) bar.classList.toggle('d-none', !(selCount > 0 || _bulkImportRunning));
+  if (btn) {
+    btn.disabled = _bulkImportRunning || selCount === 0;
+    btn.innerHTML = _bulkImportRunning
+      ? '<i class="fas fa-spinner fa-spin me-1"></i>Importing...'
+      : '<i class="fas fa-file-import me-1"></i>Import Selected (<span id="importSelectedCount">' + selCount + '</span>)';
+  }
+  if (countEl && !_bulkImportRunning) countEl.textContent = selCount;
+  const selectAll = document.getElementById('selectAllFolders');
+  if (selectAll) {
+    selectAll.checked = readyCount > 0 && selCount === readyCount;
+    selectAll.indeterminate = selCount > 0 && selCount < readyCount;
+  }
+}
+
+function toggleSelectAllFolders(el) {
+  _selectedImportFolders.clear();
+  if (el && el.checked) {
+    for (let i = 0; i < _importCandidates.length; i++) {
+      const c = _importCandidates[i];
+      if (!c.is_already_imported) _selectedImportFolders.add(c.folder_name);
+    }
+  }
+  renderImportCandidates(_importCandidates);
+  updateBulkImportBar();
+}
+
+function onFolderSelectChange(idx, checked) {
+  const c = _importCandidates[idx];
+  if (!c) return;
+  if (checked) _selectedImportFolders.add(c.folder_name);
+  else _selectedImportFolders.delete(c.folder_name);
+  const selectAll = document.getElementById('selectAllFolders');
+  if (selectAll) selectAll.checked = false;
+  updateBulkImportBar();
+}
+
+function clearImportSelection() {
+  _selectedImportFolders.clear();
+  renderImportCandidates(_importCandidates);
+  updateBulkImportBar();
 }
 
 function renderImportCandidates(candidates) {
@@ -868,17 +934,22 @@ function renderImportCandidates(candidates) {
   if (!tbody) return;
 
   if (!Array.isArray(candidates) || candidates.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary py-4">No audio folders found in /music</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary py-4">No audio folders found in /music</td></tr>';
     return;
   }
 
   let html = '';
-  for (const c of candidates) {
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
     const isImported = c.is_already_imported;
     const suggested = c.suggested_deezer;
+    const rowId = _folderRowId(c.folder_name);
 
     html += `
-      <tr>
+      <tr id="${rowId}">
+        <td>
+          <input type="checkbox" class="form-check-input folder-select" data-idx="${i}" ${isImported ? 'disabled' : ''} ${_selectedImportFolders.has(c.folder_name) ? 'checked' : ''} onchange="onFolderSelectChange(${i}, this.checked)">
+        </td>
         <td class="fw-bold">
           <div class="d-flex align-items-center gap-2">
             <i class="fas fa-folder text-warning"></i>
@@ -895,14 +966,14 @@ function renderImportCandidates(candidates) {
               </div>
             </div>
             ${!isImported ? `
-              <button class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:0.75rem;" title="Change Deezer artist match" onclick="openSelectArtistModal('${escapeHtml(c.folder_name)}')">
+              <button class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:0.75rem;" title="Change Deezer artist match" onclick="openSelectArtistModal(${i})">
                 <i class="fas fa-search me-1"></i>Change
               </button>` : ''
             }
           </div>
         </td>
         <td>${c.album_count} albums / ${c.track_count} tracks</td>
-        <td>
+        <td class="import-row-status">
           ${isImported
             ? '<span class="badge bg-success-subtle text-success"><i class="fas fa-check-circle me-1"></i>Managed</span>'
             : '<span class="badge bg-secondary-subtle text-secondary"><i class="fas fa-arrow-circle-right me-1"></i>Ready</span>'
@@ -910,7 +981,7 @@ function renderImportCandidates(candidates) {
         </td>
         <td class="text-end">
           ${!isImported ? `
-            <button class="btn btn-brand btn-sm" id="btn_import_${escapeHtml(c.folder_name).replace(/[^a-zA-Z0-9]/g, '_')}" onclick="importArtistFolder('${escapeHtml(c.folder_name)}', ${suggested ? suggested.id : 'null'}, this)">
+            <button class="btn btn-brand btn-sm" id="btn_import_${escapeHtml(c.folder_name).replace(/[^a-zA-Z0-9]/g, '_')}" onclick="importArtistFolder(${i}, this)">
               <i class="fas fa-file-import me-1"></i>Import
             </button>` : `<a href="/artist/${c.existing_artist_id}" class="btn btn-outline-secondary btn-sm"><i class="fas fa-external-link-alt me-1"></i>View</a>`
           }
@@ -918,9 +989,134 @@ function renderImportCandidates(candidates) {
       </tr>`;
   }
   tbody.innerHTML = html;
+  updateBulkImportBar();
 }
 
-function openSelectArtistModal(folderName) {
+function _setImportRowStatus(folderName, html) {
+  const row = document.getElementById(_folderRowId(folderName));
+  if (!row) return;
+  const cell = row.querySelector('.import-row-status');
+  if (cell) cell.innerHTML = html;
+}
+
+function _importItemFor(folderName) {
+  const cand = _importCandidates.find(c => c.folder_name === folderName);
+  const suggested = cand ? cand.suggested_deezer : null;
+  return {
+    folder_name: folderName,
+    deezer_id: suggested && suggested.id ? suggested.id : null,
+  };
+}
+
+async function _postBulkImport(items, onQueued) {
+  try {
+    const resp = await fetch('/api/import/folder/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      _bulkImportRunning = true;
+      updateBulkImportBar();
+      if (onQueued) onQueued();
+    } else {
+      showToast(data.error || 'Could not start import', 'error');
+    }
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
+  }
+}
+
+async function importSelectedFolders() {
+  if (_bulkImportRunning) return;
+  const folders = Array.from(_selectedImportFolders);
+  if (folders.length === 0) {
+    showToast('Select at least one folder to import', 'error');
+    return;
+  }
+  const items = folders.map(f => _importItemFor(f));
+  await _postBulkImport(items, () => {
+    showToast(`Queued import for ${items.length} folder(s). This runs in the background — you can keep browsing.`, 'info');
+    for (const f of folders) {
+      _setImportRowStatus(f, '<span class="badge bg-info-subtle text-info"><i class="fas fa-hourglass-half me-1"></i>Queued</span>');
+    }
+  });
+}
+
+async function importArtistFolder(idx, btnEl) {
+  if (_bulkImportRunning) {
+    showToast('An import batch is already running — please wait for it to finish.', 'error');
+    return;
+  }
+  const cand = _importCandidates[idx];
+  if (!cand) return;
+  const folderName = cand.folder_name;
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Queued...';
+  }
+  const item = _importItemFor(folderName);
+  if (cand.suggested_deezer && cand.suggested_deezer.id) item.deezer_id = cand.suggested_deezer.id;
+  await _postBulkImport([item], () => {
+    showToast(`Import queued for '${folderName}' in the background.`, 'info');
+    _setImportRowStatus(folderName, '<span class="badge bg-info-subtle text-info"><i class="fas fa-hourglass-half me-1"></i>Queued</span>');
+  });
+}
+
+// SocketIO progress handler (registered in the socket block below)
+function handleImportProgress(data) {
+  if (!data || !data.status) return;
+  const bar = document.getElementById('bulkProgressBar');
+  const text = document.getElementById('bulkProgressText');
+  const total = data.total || 0;
+
+  if (data.status === 'finished') {
+    _bulkImportRunning = false;
+    updateBulkImportBar();
+    if (bar) bar.style.width = '100%';
+    if (text) text.textContent = `Finished: ${data.done || 0} imported, ${data.failed || 0} failed`;
+    const msg = data.failed > 0
+      ? `Bulk import finished: ${data.done} imported, ${data.failed} failed.`
+      : `Bulk import finished: ${data.done} artist(s) imported successfully!`;
+    showToast(msg, data.failed > 0 ? 'warning' : 'success');
+    setTimeout(() => {
+      if (bar) bar.style.width = '0%';
+      if (text) text.textContent = 'Ready to import';
+    }, 4000);
+    _selectedImportFolders.clear();
+    loadImportCandidates();
+    return;
+  }
+
+  if (data.status === 'importing') {
+    _bulkImportRunning = true;
+    updateBulkImportBar();
+    const pct = total > 0 ? Math.round(((data.index || 0) / total) * 100) : 0;
+    if (bar) bar.style.width = pct + '%';
+    if (text) text.textContent = `Importing (${(data.index || 0) + 1}/${total}): ${data.folder_name || ''}...`;
+    if (data.folder_name) {
+      _setImportRowStatus(data.folder_name, '<span class="badge bg-warning-subtle text-warning"><i class="fas fa-spinner fa-spin me-1"></i>Importing...</span>');
+    }
+  } else if (data.status === 'done') {
+    const pct = total > 0 ? Math.round((((data.index || 0) + 1) / total) * 100) : 0;
+    if (bar) bar.style.width = pct + '%';
+    if (text && data.folder_name) text.textContent = `${data.folder_name} → ${data.artist_name || ''} (${data.matched_tracks || 0} tracks mapped)`;
+    if (data.folder_name) {
+      _setImportRowStatus(data.folder_name, '<span class="badge bg-success-subtle text-success"><i class="fas fa-check me-1"></i>Imported</span>');
+    }
+  } else if (data.status === 'error') {
+    if (text && data.folder_name) text.textContent = `${data.folder_name} failed: ${data.error || ''}`;
+    if (data.folder_name) {
+      _setImportRowStatus(data.folder_name, `<span class="badge bg-danger-subtle text-danger" title="${escapeHtml(data.error || '')}"><i class="fas fa-times me-1"></i>Failed</span>`);
+    }
+  }
+}
+
+function openSelectArtistModal(idx) {
+  const cand = _importCandidates[idx];
+  if (!cand) return;
+  const folderName = cand.folder_name;
   _selectedImportFolder = folderName;
   const modal = document.getElementById('selectArtistModal');
   const span = document.getElementById('selectArtistFolderSpan');
@@ -935,8 +1131,7 @@ function openSelectArtistModal(folderName) {
   }
 
   // Preload alternate matches if available
-  const cand = _importCandidates.find(c => c.folder_name === folderName);
-  if (cand && Array.isArray(cand.alternate_matches) && cand.alternate_matches.length > 0) {
+  if (Array.isArray(cand.alternate_matches) && cand.alternate_matches.length > 0) {
     renderSelectArtistResults(cand.alternate_matches);
   } else {
     performSelectArtistSearch(folderName);
@@ -1025,39 +1220,6 @@ function confirmSelectArtistForFolder(deezerId, name, imageUrl, nbAlbums) {
   hideSelectArtistModal();
   renderImportCandidates(_importCandidates);
   showToast(`Matched '${_selectedImportFolder}' to Deezer artist '${name}'`, 'info');
-}
-
-async function importArtistFolder(folderName, deezerId, btnEl) {
-  try {
-    if (btnEl) {
-      btnEl.disabled = true;
-      btnEl.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Importing...';
-    }
-    showToast(`Starting import for folder '${folderName}'...`, 'info');
-
-    const resp = await fetch('/api/import/folder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder_name: folderName, deezer_id: deezerId }),
-    });
-    const data = await resp.json();
-    if (resp.ok) {
-      showToast(`Successfully imported '${data.artist_name}': ${data.matched_tracks} tracks mapped!`, 'success');
-      loadImportCandidates();
-    } else {
-      showToast(data.error || 'Import failed', 'error');
-      if (btnEl) {
-        btnEl.disabled = false;
-        btnEl.innerHTML = '<i class="fas fa-file-import me-1"></i>Import';
-      }
-    }
-  } catch (err) {
-    showToast('Network error: ' + err.message, 'error');
-    if (btnEl) {
-      btnEl.disabled = false;
-      btnEl.innerHTML = '<i class="fas fa-file-import me-1"></i>Import';
-    }
-  }
 }
 
 // ----- Artist Discography Filters Modal -----
@@ -1302,6 +1464,10 @@ socket.on('artist_deleted', () => {
 
 socket.on('toast', (data) => {
   showToast(data.message, data.type || 'info');
+});
+
+socket.on('import_progress', (data) => {
+  if (typeof handleImportProgress === 'function') handleImportProgress(data);
 });
 
 // ----- DOM Ready Initializer -----

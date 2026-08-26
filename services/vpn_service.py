@@ -137,8 +137,11 @@ def start_vpn() -> Tuple[bool, str]:
         if r.returncode == 0:
             logger.info("[VPN] WireGuard tunnel up via %s", wg.name)
             return True, f"WireGuard connected via {wg.name}"
-        return False, f"WireGuard failed to start: {(r.stderr or r.stdout or '').strip()[:300]}"
+        err_text = (r.stderr or r.stdout or "").strip()[:300]
+        logger.warning("[VPN] WireGuard failed to start via %s: %s", wg.name, err_text)
+        return False, f"WireGuard failed to start: {err_text}"
     except Exception as e:
+        logger.warning("[VPN] WireGuard error via %s: %s", wg.name, e)
         return False, f"WireGuard error: {e}"
 
 
@@ -169,10 +172,26 @@ def save_vpn_config(content: str, filename: str) -> Tuple[bool, str]:
     if not content or len(content) < 20:
         return False, "Config content is too short"
 
+    # Normalize Windows line endings — wg-quick chokes on stray \r characters
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
     # Refuse obvious secrets-harvesting content (comment-only / plain URL)
     lowered = content.lower()
     if "remote " not in lowered and "interface" not in lowered and "dev tun" not in lowered:
         return False, "This does not look like a VPN config (missing 'remote' / 'interface' directives)"
+
+    # WireGuard configs need [Interface] with a PrivateKey and at least one [Peer]
+    if name.endswith(".conf"):
+        if "[interface]" not in lowered or "privatekey" not in lowered:
+            return False, (
+                "This does not look like a valid WireGuard config: it must contain a "
+                "[Interface] section with a PrivateKey (and at least one [Peer])."
+            )
+        if "[peer]" not in lowered:
+            return False, (
+                "This WireGuard config has no [Peer] section. Add the server's "
+                "PublicKey and Endpoint (and your AllowedIPs) under [Peer]."
+            )
 
     try:
         VPN_DIR.mkdir(parents=True, exist_ok=True)

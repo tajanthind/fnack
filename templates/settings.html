@@ -392,6 +392,12 @@
             <label class="form-label small text-secondary">Or Paste Config Content</label>
             <textarea class="form-control form-control-sm bg-dark text-white border-secondary font-monospace" id="vpnPasteInput" rows="4" placeholder="client&#10;dev tun&#10;proto udp&#10;remote vpn.example.com 1194&#10;..."></textarea>
           </div>
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <button type="button" class="btn btn-outline-success btn-sm d-none" id="vpnSavePasteBtn" onclick="saveVpnConfig()">
+              <i class="fas fa-save me-1"></i>Save Pasted Config
+            </button>
+            <small class="text-secondary" id="vpnPasteHint"></small>
+          </div>
 
           <div class="d-flex flex-wrap gap-2 pt-2 border-top border-secondary border-opacity-25">
             <button type="button" class="btn btn-brand btn-sm" onclick="startVpn()">
@@ -950,6 +956,47 @@
       }
     }
 
+    function _detectVpnConfigName(content) {
+      // Case-insensitive: WireGuard configs declare "[Interface]" (capital I)
+      return (content || '').toLowerCase().includes('interface') ? 'wg0.conf' : 'vpn.ovpn';
+    }
+
+    async function saveVpnConfig() {
+      const pasteInput = document.getElementById('vpnPasteInput');
+      const btn = document.getElementById('vpnSavePasteBtn');
+      if (!pasteInput || !pasteInput.value.trim()) {
+        showToast('Paste a VPN config first', 'error');
+        return;
+      }
+      const content = pasteInput.value;
+      const name = _detectVpnConfigName(content);
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Saving...';
+      }
+      try {
+        const resp = await fetch('/api/vpn/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content, filename: name }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          showToast(data.message, 'success');
+        } else {
+          showToast(data.error || 'Failed to save config', 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-save me-1"></i>Save Pasted Config';
+        }
+        loadVpnStatus();
+      }
+    }
+
     async function uploadVpnConfig() {
       const fileInput = document.getElementById('vpnFileInput');
       const pasteInput = document.getElementById('vpnPasteInput');
@@ -967,7 +1014,7 @@
           }
         } else if (pasteInput && pasteInput.value.trim()) {
           const content = pasteInput.value;
-          const name = content.includes('interface') ? 'wg0.conf' : 'vpn.ovpn';
+          const name = _detectVpnConfigName(content);
           const resp = await fetch('/api/vpn/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1336,6 +1383,27 @@
     document.addEventListener('DOMContentLoaded', () => {
       loadSettings();
       loadVpnStatus();
+
+      // Show the "Save Pasted Config" button as soon as the user pastes/types
+      // a VPN config, and detect whether it looks like WireGuard or OpenVPN.
+      const vpnPaste = document.getElementById('vpnPasteInput');
+      const vpnSaveBtn = document.getElementById('vpnSavePasteBtn');
+      const vpnHint = document.getElementById('vpnPasteHint');
+      if (vpnPaste && vpnSaveBtn) {
+        const update = () => {
+          const content = vpnPaste.value.trim();
+          vpnSaveBtn.classList.toggle('d-none', !content);
+          if (vpnHint) {
+            vpnHint.textContent = content
+              ? (_detectVpnConfigName(content) === 'wg0.conf'
+                  ? 'Detected WireGuard config — will save as wg0.conf'
+                  : 'Detected OpenVPN config — will save as vpn.ovpn')
+              : '';
+          }
+        };
+        vpnPaste.addEventListener('input', update);
+        update();
+      }
     });
   </script>
 </body>

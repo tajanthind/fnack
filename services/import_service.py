@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 import unicodedata
 from collections import Counter
 from pathlib import Path
@@ -14,6 +15,38 @@ from services.deezer_service import get_artist_discography, search_artist
 logger = logging.getLogger("fnack.import")
 
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
+
+# ── Scan caches ────────────────────────────────────────────────────────────
+# Scanning a big /music root is slow mostly because of the Deezer network
+# lookups (one search per un-imported folder) and mutagen tag sampling. Cache
+# both so repeated scans (page refresh, after each import) stay fast.
+_SCAN_TTL_SECONDS = 30.0          # whole-scan result cache
+_SEARCH_TTL_SECONDS = 600.0       # Deezer artist-search cache (per normalized name)
+_scan_cache: dict = {}            # str(music_path) -> {"ts": float, "candidates": list}
+_deezer_search_cache: dict = {}   # normalized query -> {"ts": float, "results": list}
+
+
+def _invalidate_scan_cache() -> None:
+    """Drop the cached scan results (e.g. after an artist is imported)."""
+    _scan_cache.clear()
+
+
+def _cached_search_artist(query: str, limit: int = 6) -> list:
+    """search_artist() with a short TTL cache keyed by normalized query."""
+    key = _normalize(query)
+    if not key:
+        return []
+    now = time.monotonic()
+    hit = _deezer_search_cache.get(key)
+    if hit and now - hit["ts"] < _SEARCH_TTL_SECONDS:
+        return hit["results"]
+    try:
+        results = search_artist(query, limit=limit)
+    except Exception as e:
+        logger.debug("[IMPORT] Deezer search failed for '%s': %s", query, e)
+        results = []
+    _deezer_search_cache[key] = {"ts": now, "results": results}
+    return results
 
 
 def _normalize(s: str) -> str:
@@ -34,121 +67,167 @@ def _clean_title(t: str) -> str:
     return t.strip()
 
 
+def _scan_one_folder(
+    folder: Path,
+    root: Path,
+    existing_by_name: dict,
+    existing_by_id: dict,
+) -> Optional[dict]:
+    """Scan a single artist folder (tag sampling + Deezer suggestion)."""
+    audio_files = [f for f in folder.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
+    if not audio_files:
+        return None
+
+    # Sample audio files across the folder to extract tags
+    albumartists = Counter()
+    artists = Counter()
+    albums_set = set()
+
+    n = len(audio_files)
+    sample_files = audio_files if n <= 24 else [audio_files[i] for i in range(0, n, max(1, n // 24))][:24]
+
+    for f in sample_files:
+        try:
+            mf = mutagen.File(str(f), easy=True)
+            if mf:
+                tags = dict(mf) if hasattr(mf, "items") else {}
+                for art in tags.get("albumartist", []):
+                    if art and str(art).strip():
+                        albumartists[str(art).strip()] += 2
+                for art in tags.get("artist", []):
+                    if art and str(art).strip():
+                        artists[str(art).strip()] += 1
+                for alb in tags.get("album", []):
+                    if alb and str(alb).strip():
+                        albums_set.add(str(alb).strip())
+        except Exception:
+            pass
+
+    if not albums_set:
+        albums_set = {p.parent.name for p in audio_files if p.parent != folder}
+
+    top_albumartist = albumartists.most_common(1)[0][0] if albumartists else None
+    top_artist = artists.most_common(1)[0][0] if artists else None
+
+    # Best detected artist name from tags
+    detected_name = top_albumartist or top_artist or folder.name
+
+    # Check if already imported
+    already_id = (
+        existing_by_name.get(_normalize(folder.name))
+        or existing_by_name.get(_normalize(detected_name))
+        or (top_artist and existing_by_name.get(_normalize(top_artist)))
+    )
+
+    # Search Deezer suggestions if not imported (cached + only when needed)
+    suggested = None
+    alternate_matches = []
+    if not already_id:
+        results = _cached_search_artist(folder.name, limit=6)
+
+        # If folder name returned nothing, also search with the detected tag name
+        if not results and top_artist and _normalize(top_artist) != _normalize(folder.name):
+            more_results = _cached_search_artist(top_artist, limit=4)
+            existing_res_ids = {r["id"] for r in results}
+            for r in more_results:
+                if r["id"] not in existing_res_ids:
+                    results.append(r)
+
+        folder_norm = _normalize(folder.name)
+        tag_norm = _normalize(detected_name)
+
+        def _score_candidate(c):
+            c_norm = _normalize(c.get("name", ""))
+            score = 0
+            if c_norm == folder_norm:
+                score += 1000  # Exact match to folder name
+            elif folder_norm and len(folder_norm) > 2 and (c_norm.startswith(folder_norm) or folder_norm in c_norm):
+                score += 500
+            elif c_norm == tag_norm:
+                score += 400  # Exact match to top metadata tag
+            elif tag_norm and len(tag_norm) > 2 and (c_norm.startswith(tag_norm) or tag_norm in c_norm):
+                score += 200
+            score += min(50, c.get("nb_album", 0))
+            return score
+
+        if results:
+            results.sort(key=_score_candidate, reverse=True)
+            suggested = results[0]
+            alternate_matches = results[:5]
+
+    return {
+        "folder_name": folder.name,
+        "detected_artist": detected_name,
+        "track_count": len(audio_files),
+        "album_count": len(albums_set) or 1,
+        "is_already_imported": bool(already_id),
+        "existing_artist_id": already_id,
+        "suggested_deezer": suggested,
+        "alternate_matches": alternate_matches,
+    }
+
+
 def scan_root_folder_candidates(music_path: str) -> list[dict]:
     """
     Scan root music folder and return list of artist folder candidates for interactive import.
     Uses multi-factor scoring (folder name, albumartist tags, track tags) to accurately identify artists.
+
+    The folder walks run concurrently (bounded greenlet pool) and Deezer lookups are cached,
+    so large libraries scan in a few seconds instead of a network round-trip per folder.
     """
     root = Path(music_path)
     if not root.is_dir():
         return []
 
-    candidates = []
+    # Serve from cache when a scan happened moments ago (page refresh / after import)
+    cache_key = str(root)
+    now = time.monotonic()
+    hit = _scan_cache.get(cache_key)
+    if hit and now - hit["ts"] < _SCAN_TTL_SECONDS:
+        return hit["candidates"]
+
     existing_artists = Artist.query.all()
     existing_by_name = {_normalize(a.name): a.id for a in existing_artists}
     existing_by_id = {a.spotify_id: a.id for a in existing_artists if a.spotify_id}
 
-    for folder in sorted(root.iterdir()):
-        if not folder.is_dir() or folder.name.startswith("."):
-            continue
+    folders = [
+        folder for folder in sorted(root.iterdir())
+        if folder.is_dir() and not folder.name.startswith(".")
+    ]
 
-        audio_files = [f for f in folder.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
-        if not audio_files:
-            continue
+    results = []
+    if len(folders) <= 2:
+        # Tiny library: no need for the pool overhead
+        for folder in folders:
+            cand = _scan_one_folder(folder, root, existing_by_name, existing_by_id)
+            if cand:
+                results.append(cand)
+    else:
+        # Parallel scan: the network-bound Deezer lookups and mutagen reads are
+        # greenlet-safe under the app's gevent monkey-patching (requests is
+        # patched), so we can process several folders concurrently.
+        try:
+            import gevent
+            from gevent.pool import Pool
+        except Exception:
+            gevent = None
 
-        # Sample audio files across the folder to extract tags
-        albumartists = Counter()
-        artists = Counter()
-        albums_set = set()
+        if gevent is not None:
+            pool = Pool(min(8, len(folders)))
+            jobs = [
+                pool.spawn(_scan_one_folder, folder, root, existing_by_name, existing_by_id)
+                for folder in folders
+            ]
+            pool.join()
+            results = [j.value for j in jobs if j.value]
+        else:
+            for folder in folders:
+                cand = _scan_one_folder(folder, root, existing_by_name, existing_by_id)
+                if cand:
+                    results.append(cand)
 
-        sample_files = (
-            audio_files[:40]
-            if len(audio_files) <= 40
-            else [audio_files[i] for i in range(0, len(audio_files), max(1, len(audio_files) // 40))][:40]
-        )
-
-        for f in sample_files:
-            try:
-                mf = mutagen.File(str(f), easy=True)
-                if mf:
-                    tags = dict(mf) if hasattr(mf, "items") else {}
-                    for art in tags.get("albumartist", []):
-                        if art and str(art).strip():
-                            albumartists[str(art).strip()] += 2
-                    for art in tags.get("artist", []):
-                        if art and str(art).strip():
-                            artists[str(art).strip()] += 1
-                    for alb in tags.get("album", []):
-                        if alb and str(alb).strip():
-                            albums_set.add(str(alb).strip())
-            except Exception:
-                pass
-
-        if not albums_set:
-            albums_set = {p.parent.name for p in audio_files if p.parent != folder}
-
-        top_albumartist = albumartists.most_common(1)[0][0] if albumartists else None
-        top_artist = artists.most_common(1)[0][0] if artists else None
-
-        # Best detected artist name from tags
-        detected_name = top_albumartist or top_artist or folder.name
-
-        # Check if already imported
-        already_id = (
-            existing_by_name.get(_normalize(folder.name))
-            or existing_by_name.get(_normalize(detected_name))
-            or (top_artist and existing_by_name.get(_normalize(top_artist)))
-        )
-
-        # Search Deezer suggestions if not imported
-        suggested = None
-        alternate_matches = []
-        if not already_id:
-            # Search Deezer using folder name first
-            results = search_artist(folder.name, limit=6)
-
-            # If folder name returned few results or if detected tag is different, also search with detected tag
-            if top_artist and _normalize(top_artist) != _normalize(folder.name) and len(results) < 3:
-                more_results = search_artist(top_artist, limit=4)
-                existing_res_ids = {r["id"] for r in results}
-                for r in more_results:
-                    if r["id"] not in existing_res_ids:
-                        results.append(r)
-
-            folder_norm = _normalize(folder.name)
-            tag_norm = _normalize(detected_name)
-
-            def _score_candidate(c):
-                c_norm = _normalize(c.get("name", ""))
-                score = 0
-                if c_norm == folder_norm:
-                    score += 1000  # Exact match to folder name
-                elif folder_norm and len(folder_norm) > 2 and (c_norm.startswith(folder_norm) or folder_norm in c_norm):
-                    score += 500
-                elif c_norm == tag_norm:
-                    score += 400  # Exact match to top metadata tag
-                elif tag_norm and len(tag_norm) > 2 and (c_norm.startswith(tag_norm) or tag_norm in c_norm):
-                    score += 200
-                score += min(50, c.get("nb_album", 0))
-                return score
-
-            if results:
-                results.sort(key=_score_candidate, reverse=True)
-                suggested = results[0]
-                alternate_matches = results[:5]
-
-        candidates.append({
-            "folder_name": folder.name,
-            "detected_artist": detected_name,
-            "track_count": len(audio_files),
-            "album_count": len(albums_set) or 1,
-            "is_already_imported": bool(already_id),
-            "existing_artist_id": already_id,
-            "suggested_deezer": suggested,
-            "alternate_matches": alternate_matches,
-        })
-
-    return candidates
+    _scan_cache[cache_key] = {"ts": now, "candidates": results}
+    return results
 
 
 def import_artist_folder(
@@ -164,6 +243,9 @@ def import_artist_folder(
     artist_dir = root / folder_name
     if not artist_dir.is_dir():
         return {"error": f"Folder '{folder_name}' not found in {music_path}"}
+
+    # Force the next scan to recompute (this folder becomes "Managed")
+    _invalidate_scan_cache()
 
     audio_files = [f for f in artist_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
     opts = filter_options or {}
@@ -397,6 +479,14 @@ def import_artist_folder(
             first_downloaded = next((t for t in tracks if t.local_path), None)
             if first_downloaded and first_downloaded.local_path:
                 album.local_path = str(Path(first_downloaded.local_path).parent)
+
+    # The discography was just fetched & indexed here; mark it synced so the
+    # periodic scheduler doesn't immediately re-fetch the same discography
+    # (which used to double the network load during bulk imports).
+    from datetime import datetime, timezone
+    artist.last_synced_at = datetime.now(timezone.utc)
+    artist.sync_status = "ready"
+    artist.sync_error = None
 
     db.session.commit()
     logger.info("[IMPORT] Imported artist '%s': %d local files matched, %d unmatched", artist_name, matched_count, len(unmatched_files))

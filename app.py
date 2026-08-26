@@ -109,6 +109,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")  # wait up to 30s for a write lock instead of failing instantly
         cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
         cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.execute("PRAGMA mmap_size=268435456")  # 256MB mmap
@@ -1048,6 +1049,115 @@ def api_import_folder():
 
     socketio.emit("artist_added", {"artist_id": res["artist_id"]})
     return jsonify(res)
+
+
+# ── Bulk folder import (background, non-blocking) ──────────────────────────
+# Importing an artist takes ~5-15s (Deezer discography + iTunes fallback +
+# DB writes). Running many of those synchronously in the request thread made
+# the web UI freeze. These are now processed by a single background worker
+# (bounded greenlet pool) that reports progress over SocketIO, so the page
+# stays perfectly responsive while a whole batch imports.
+
+_bulk_import = {
+    "active": False,
+    "total": 0,
+    "done": 0,
+    "failed": 0,
+    "current": None,
+}
+
+
+def _bulk_import_worker(items: list) -> None:
+    """Process a batch of folder imports in the background with bounded concurrency."""
+    from gevent.pool import Pool
+    from services.import_service import import_artist_folder
+
+    with app.app_context():
+        global _bulk_import
+        music_path = _get_setting("music_path", "/music")
+        total = len(items)
+        done = 0
+        failed = 0
+
+        def _run(item, index):
+            folder_name = item.get("folder_name")
+            if not folder_name:
+                return folder_name, {"error": "Missing folder_name"}
+            opts = {
+                "filter_remixes": item.get("filter_remixes", True),
+                "filter_lofi": item.get("filter_lofi", True),
+                "filter_live": item.get("filter_live", True),
+                "filter_compilations": item.get("filter_compilations", True),
+                "include_albums": item.get("include_albums", True),
+                "include_singles": item.get("include_singles", True),
+                "include_compilations": item.get("include_compilations", False),
+                "monitored": item.get("monitored", True),
+                "auto_download": item.get("auto_download", False),
+            }
+            socketio.emit("import_progress", {
+                "status": "importing", "index": index, "total": total, "folder_name": folder_name,
+            })
+            # Each pooled greenlet needs its own app context (gevent makes
+            # contextvars greenlet-local, so it is not inherited from the worker).
+            with app.app_context():
+                try:
+                    res = import_artist_folder(
+                        music_path, folder_name,
+                        deezer_artist_id=item.get("deezer_id"),
+                        filter_options=opts,
+                    )
+                except Exception as e:
+                    logger.exception("[IMPORT] Bulk import failed for folder '%s'", folder_name)
+                    res = {"error": str(e)}
+            if "error" in res:
+                socketio.emit("import_progress", {
+                    "status": "error", "index": index, "total": total,
+                    "folder_name": folder_name, "error": res["error"],
+                })
+                return folder_name, True
+            socketio.emit("artist_added", {"artist_id": res["artist_id"]})
+            socketio.emit("import_progress", {
+                "status": "done", "index": index, "total": total,
+                "folder_name": folder_name,
+                "artist_name": res["artist_name"],
+                "artist_id": res["artist_id"],
+                "matched_tracks": res["matched_tracks"],
+                "unmatched_tracks": res["unmatched_tracks"],
+            })
+            return folder_name, False
+
+        try:
+            pool = Pool(min(3, max(1, total)))
+            jobs = [pool.spawn(_run, item, i) for i, item in enumerate(items)]
+            pool.join()
+            for _folder, is_fail in [j.value for j in jobs]:
+                if is_fail:
+                    failed += 1
+                else:
+                    done += 1
+        finally:
+            _bulk_import.update(active=False, done=done, failed=failed, total=total, current=None)
+            socketio.emit("import_progress", {
+                "status": "finished", "total": total, "done": done, "failed": failed,
+            })
+
+
+@app.route("/api/import/bulk/status")
+def api_import_bulk_status():
+    return jsonify(_bulk_import)
+
+
+@app.route("/api/import/folder/bulk", methods=["POST"])
+def api_import_folder_bulk():
+    data = request.get_json(silent=True) or {}
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "No folders selected for import"}), 400
+    if _bulk_import["active"]:
+        return jsonify({"error": "An import batch is already running. Please wait for it to finish."}), 409
+    _bulk_import.update(active=True, total=len(items), done=0, failed=0, current=None)
+    socketio.start_background_task(_bulk_import_worker, items)
+    return jsonify({"accepted": True, "total": len(items)}), 202
 
 
 # ══════════════════════════════════════════════════════════════════════
