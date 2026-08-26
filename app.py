@@ -1295,6 +1295,8 @@ def handle_socket_connect():
 def _periodic_discography_sync_loop():
     """Periodic auto-sync for monitored artists based on configured interval."""
     gevent.sleep(60)
+    global _last_metadata_normalize
+    _last_metadata_normalize = 0.0
     while True:
         try:
             with app.app_context():
@@ -1340,6 +1342,17 @@ def _periodic_discography_sync_loop():
                     conn.execute(db.text("PRAGMA wal_checkpoint(PASSIVE)"))
         except Exception:
             pass
+
+        # Periodically re-normalize library tags (retroactive Navidrome fix) so
+        # any stray files with mismatched metadata get fixed within a few hours.
+        # Throttled to once per 6h since steady-state runs are cheap but not free.
+        try:
+            if time.time() - _last_metadata_normalize >= 6 * 3600:
+                from services.metadata_service import normalize_album_tags
+                normalize_album_tags(app)
+                _last_metadata_normalize = time.time()
+        except Exception:
+            logger.exception("[SCHEDULER] Periodic metadata normalization failed")
 
         gevent.sleep(300)
 
@@ -1409,7 +1422,18 @@ with app.app_context():
 socketio.start_background_task(start_queue_worker, app, socketio)
 socketio.start_background_task(start_folder_watcher, app, socketio)
 socketio.start_background_task(_periodic_discography_sync_loop)
-logger.info("fnack server initialized and background tasks (queue, watcher, scheduler) started")
+
+# Retroactive metadata normalization: fix Navidrome album grouping for the
+# existing library on every boot (skips files that already match).
+def _boot_metadata_normalize():
+    try:
+        from services.metadata_service import normalize_album_tags
+        normalize_album_tags(app)
+    except Exception:
+        logger.exception("[METADATA] Boot normalization failed")
+
+socketio.start_background_task(_boot_metadata_normalize)
+logger.info("fnack server initialized and background tasks (queue, watcher, scheduler, metadata) started")
 
 if __name__ == "__main__":
     logger.info("Starting fnack on 0.0.0.0:4688")

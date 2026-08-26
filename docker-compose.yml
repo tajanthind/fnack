@@ -5,8 +5,6 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: fnack
-    depends_on:
-      - bgutil-provider
     ports:
       - "4688:4688"
     volumes:
@@ -19,11 +17,14 @@ services:
       - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-1}
       - CHROME_PATH=/usr/bin/chromium
       - DISPLAY=:99
-      # PO-token provider: long-lived tokens that help bypass YouTube bot-checks
-      # without cookies (used automatically by yt-dlp when the provider is up).
-      - POT_PROVIDER_URL=${POT_PROVIDER_URL:-http://bgutil-provider:4416}
-    networks:
-      - fnack_net
+      # PO-token provider runs inside this same container on localhost:4416.
+      - POT_PROVIDER_URL=${POT_PROVIDER_URL:-http://127.0.0.1:4416}
+    # Optional in-container VPN (configs in ./config/vpn/):
+    # OpenVPN (.ovpn) or WireGuard (wg0.conf). Requires these privileges.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     restart: unless-stopped
     stop_grace_period: 60s
     healthcheck:
@@ -33,16 +34,5 @@ services:
       retries: 3
       start_period: 15s
 
-  # Proof-of-Origin token provider for yt-dlp (bgutil-ytdlp-pot-provider).
-  # Generates long-lived PO tokens so YouTube downloads work without cookies
-  # on IPs that would otherwise show "Sign in to confirm you're not a bot".
-  bgutil-provider:
-    image: brainicism/bgutil-ytdlp-pot-provider:latest
-    container_name: bgutil-provider
-    restart: unless-stopped
-    networks:
-      - fnack_net
-
-networks:
-  fnack_net:
-    name: fnack_net
+volumes:
+  fnack_downloads:

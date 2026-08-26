@@ -188,6 +188,39 @@ docker compose up -d --build
 | Downloads not starting | Settings → check `enable_spotiflac` / `enable_ytdlp`; `docker logs fnack` for queue activity |
 | Xvfb / display errors | Ensure `DISPLAY=:99` and the container can start Xvfb (auto-handled by entrypoint) |
 
+### Automatic library metadata normalization (Navidrome grouping)
+
+fnack keeps album tags aligned with the database so Navidrome never splits one
+album into several entries with the same name. It runs **automatically**:
+- at every container start (retroactive pass over the whole library), and
+- periodically while running (catches files changed by imports/older versions).
+
+Files that already carry the correct album/albumartist tags are skipped, so
+steady-state runs are fast. You can also trigger it manually:
+
+```bash
+docker exec fnack python3 /app/scripts/normalize_album_tags.py
+```
+
+Then trigger a Navidrome scan (Settings → Navidrome → Scan) to re-group albums.
+
+### Optional VPN support (single container)
+
+YouTube bot-checks are far less aggressive from residential IPs. fnack can route
+**all of its traffic through a VPN inside the same container** — no extra
+container needed. Place your config in the mounted `./config/vpn/` directory:
+
+- **OpenVPN** (most providers): `./config/vpn/<name>.ovpn`
+- **WireGuard**: `./config/vpn/wg0.conf`
+
+The compose file already grants the required privileges (`NET_ADMIN` +
+`/dev/net/tun`). With no config in `./config/vpn/`, the container runs without a
+VPN exactly as before. Example for a manual `docker run`:
+
+```bash
+docker run -d --name fnack --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tun ... fnack:latest
+```
+
 ### One-time library re-verification (existing downloads)
 
 fnack now guarantees new downloads match their tracks. To audit files that were
