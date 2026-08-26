@@ -8,7 +8,6 @@ env/
 build/
 develop-eggs/
 dist/
-downloads/
 eggs/
 .eggs/
 lib/
@@ -51,8 +50,7 @@ config/*cookies*.txt
 # Local storage and runtime state dirs
 downloads/*
 !downloads/.gitkeep
-music/*
-!music/.gitkeep
+music/*!music/.gitkeep
 config/*
 !config/.gitkeep
 
