@@ -51,6 +51,15 @@ def is_spotiflac_rate_limited() -> bool:
     return time.time() < _rate_limit_cooldown_until
 
 
+def reset_spotiflac_rate_limit() -> None:
+    """Clear the 429 circuit breaker (e.g. after the VPN brings up a fresh IP)."""
+    global _consecutive_429s, _rate_limit_cooldown_until
+    with _rate_lock:
+        _consecutive_429s = 0
+        _rate_limit_cooldown_until = 0.0
+    logger.info("[SPOTIFLAC] Rate-limit circuit breaker cleared (fresh IP assumed)")
+
+
 def _wait_out_cooldown() -> float:
     """Return the remaining 429 cool-down seconds (sticky: the cool-down stays armed
     until its time elapses, so the queue's circuit-breaker check also sees it)."""

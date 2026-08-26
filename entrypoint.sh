@@ -54,9 +54,11 @@ if [ -d "$VPN_DIR" ] && ls "$VPN_DIR"/*.ovpn > /dev/null 2>&1; then
     done
 elif [ -f "$VPN_DIR/wg0.conf" ]; then
     echo "[FNACK] VPN: starting WireGuard with $VPN_DIR/wg0.conf"
-    wg-quick up "$VPN_DIR/wg0.conf" 2>/dev/null \
-      || wg-quick up wg0 > /dev/null 2>&1 \
-      || echo "[FNACK] WARNING: WireGuard failed to start (needs kernel wireguard or --cap-add=NET_ADMIN + /dev/net/tun)"
+    if ! WG_OUTPUT=$(wg-quick up "$VPN_DIR/wg0.conf" 2>&1); then
+        echo "[FNACK] WARNING: WireGuard failed to start:" >&2
+        echo "$WG_OUTPUT" | tail -6 >&2
+        echo "[FNACK] Hint: needs kernel wireguard or --cap-add=NET_ADMIN + /dev/net/tun" >&2
+    fi
 fi
 
 # Execute the primary container command

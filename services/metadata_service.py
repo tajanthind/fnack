@@ -7,11 +7,18 @@ ALBUMARTIST tags left over by older versions or imports).
 Runs automatically at container startup and periodically (via the scheduler);
 can also be invoked manually. Files whose tags already match the expected
 metadata are skipped, so steady-state runs are fast.
+
+Also merges duplicate database album rows (same artist, album name equal
+ignoring case/whitespace, and one album's track titles a subset of the
+other's) — Deezer exposes many releases under two IDs (album + single with
+identical content), which used to split albums inside Navidrome forever.
 """
 
 import logging
 import os
+import re
 import shutil
+import unicodedata
 from pathlib import Path
 
 from models import Track, db
@@ -21,6 +28,15 @@ logger = logging.getLogger("fnack.metadata")
 
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
 MUSIC_ROOT = Path(os.environ.get("MUSIC_DIR", "/music"))
+
+_TYPE_RANK = {"album": 3, "ep": 2, "single": 1}
+
+
+def _norm(s) -> str:
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", str(s))
+    return re.sub(r"[^a-zA-Z0-9]+", "", s).lower()
 
 
 def _read_simple_tag(mf, keys):
@@ -33,6 +49,125 @@ def _read_simple_tag(mf, keys):
     return None
 
 
+def _merge_duplicate_albums(app) -> dict:
+    """Merge duplicate album rows so Navidrome stops splitting one release
+    across multiple albums.
+
+    Only merges when:
+      * same artist, album name equal ignoring case + whitespace, and
+      * one album's normalized track titles are a subset of the other's
+        (i.e. they are the same content — not a real single-vs-album pair
+        with different tracks).
+
+    Returns a stats dict: {merged_albums, merged_tracks, removed_dup_tracks}.
+    """
+    import sqlalchemy as sa
+    from models import Album, DownloadJob
+
+    stats = {"merged_albums": 0, "merged_tracks": 0, "removed_dup_tracks": 0}
+
+    with app.app_context():
+        norm_col = sa.func.lower(sa.func.trim(Album.name))
+        groups = (
+            db.session.query(
+                Album.artist_id,
+                norm_col.label("norm_name"),
+                sa.func.count(sa.distinct(Album.id)).label("n"),
+            )
+            .group_by(Album.artist_id, norm_col)
+            .having(sa.func.count(sa.distinct(Album.id)) > 1)
+            .all()
+        )
+
+        for artist_id, norm_name, _n in groups:
+            if not norm_name:
+                continue
+            albums = (
+                Album.query.filter_by(artist_id=artist_id)
+                .filter(norm_col == norm_name)
+                .all()
+            )
+            if any((a.name or "").lower() == "unmatched local tracks" for a in albums):
+                continue
+
+            # Normalized title sets per album
+            sets = {}
+            dl_count = {}
+            for al in albums:
+                tracks = al.tracks.all()
+                sets[al.id] = {_norm(t.title) for t in tracks if t.title}
+                dl_count[al.id] = sum(1 for t in tracks if t.is_downloaded)
+
+            # Canonical = album whose content contains every other's
+            def _rank(al):
+                return (
+                    len(sets[al.id]),
+                    dl_count[al.id],
+                    _TYPE_RANK.get(al.record_type or "", 0),
+                    -al.id,
+                )
+
+            canonical = max(albums, key=_rank)
+            others = [al for al in albums if al.id != canonical.id]
+            if not others:
+                continue
+
+            # Only merge when every other album is a subset of the canonical one
+            if any(not sets[o.id] <= sets[canonical.id] for o in others):
+                logger.info(
+                    "[METADATA] Skipping merge for '%s' (%d albums): track lists differ",
+                    canonical.name, len(albums),
+                )
+                continue
+
+            canonical_map = {_norm(t.title): t for t in canonical.tracks.all() if t.title}
+
+            for other in others:
+                for track in list(other.tracks.all()):
+                    nt = _norm(track.title)
+                    existing = canonical_map.get(nt) if nt else None
+                    if existing is not None:
+                        # Same track already in the canonical album — keep the
+                        # downloaded copy if there is one, then drop the dup row.
+                        if track.is_downloaded and not existing.is_downloaded:
+                            existing.local_path = track.local_path
+                            existing.file_path = track.file_path
+                            existing.file_format = track.file_format
+                            existing.duration = track.duration
+                            existing.size_bytes = track.size_bytes
+                            existing.is_downloaded = True
+                            existing.status = "completed"
+                        DownloadJob.query.filter_by(track_id=track.id).delete()
+                        db.session.delete(track)
+                        stats["removed_dup_tracks"] += 1
+                    else:
+                        track.album_id = canonical.id
+                        if nt:
+                            canonical_map[nt] = track
+                        stats["merged_tracks"] += 1
+
+                if not canonical.year and other.year:
+                    canonical.year = other.year
+                if not canonical.cover_url and other.cover_url:
+                    canonical.cover_url = other.cover_url
+                db.session.delete(other)
+                stats["merged_albums"] += 1
+
+            # Refresh downloaded state of the canonical album
+            canon_tracks = canonical.tracks.all()
+            canonical.is_downloaded = bool(canon_tracks) and all(t.is_downloaded for t in canon_tracks)
+            canonical.size_bytes = sum(t.size_bytes or 0 for t in canon_tracks)
+
+            db.session.commit()
+            logger.info(
+                "[METADATA] Merged duplicate album '%s' (artist id %s): %d album(s), "
+                "%d track(s) moved, %d duplicate track(s) removed",
+                canonical.name, artist_id, stats["merged_albums"], stats["merged_tracks"], stats["removed_dup_tracks"],
+            )
+
+    return stats
+
+
 def normalize_album_tags(app, quiet: bool = True) -> dict:
     """Re-tag every downloaded file with its database album/artist/title and move
     stray files into their correct album folder. Returns stats.
@@ -43,6 +178,12 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
     import mutagen
 
     stats = {"checked": 0, "retagged": 0, "moved": 0, "skipped": 0, "errors": 0}
+
+    # First collapse duplicate DB albums (Deezer exposes many releases twice).
+    # Without this, files get tagged with two spellings of the same album and
+    # Navidrome keeps showing them split no matter how many times it rescans.
+    merge_stats = _merge_duplicate_albums(app)
+
     with app.app_context():
         tracks = Track.query.filter(Track.is_downloaded == True).all()  # noqa: E712
         for t in tracks:
@@ -130,7 +271,23 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
 
         db.session.commit()
     logger.info(
-        "[METADATA] Normalize pass: %d checked, %d retagged, %d moved, %d skipped, %d errors",
+        "[METADATA] Normalize pass: %d checked, %d retagged, %d moved, %d skipped, %d errors"
+        " | duplicates: %d albums merged, %d tracks moved, %d dup tracks removed",
         stats["checked"], stats["retagged"], stats["moved"], stats["skipped"], stats["errors"],
+        merge_stats["merged_albums"], merge_stats["merged_tracks"], merge_stats["removed_dup_tracks"],
     )
+
+    # If anything changed on disk or in tags, ask Navidrome to rescan so the
+    # merged/retagged albums are regrouped (its scan is debounced server-side).
+    if (
+        stats["retagged"] > 0 or stats["moved"] > 0
+        or merge_stats["merged_albums"] > 0 or merge_stats["merged_tracks"] > 0
+    ):
+        try:
+            from services.navidrome_service import trigger_navidrome_scan
+            trigger_navidrome_scan(app)
+        except Exception:
+            logger.debug("[METADATA] Could not trigger Navidrome scan after normalize", exc_info=True)
+
+    stats.update(merge_stats)
     return stats

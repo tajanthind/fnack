@@ -19,6 +19,17 @@ VPN_DIR = Path(os.environ.get("VPN_DIR", "/config/vpn"))
 LOG_FILE = "/tmp/fnack-vpn.log"
 
 
+def _clear_spotiflac_breaker() -> None:
+    """After the tunnel is up we have a fresh public IP — reset the SpotiFLAC
+    429 circuit breaker so lossless downloads are retried immediately instead
+    of waiting out the 30-300s cool-down on the old rate-limited IP."""
+    try:
+        from services.spotiflac_service import reset_spotiflac_rate_limit
+        reset_spotiflac_rate_limit()
+    except Exception as e:
+        logger.debug("[VPN] Could not reset SpotiFLAC breaker: %s", e)
+
+
 def _openvpn_configs() -> list:
     if not VPN_DIR.is_dir():
         return []
@@ -128,6 +139,7 @@ def start_vpn() -> Tuple[bool, str]:
         if not _tun_interfaces():
             return False, "OpenVPN started but the tunnel did not come up. Check the VPN logs (Settings -> VPN or docker logs)."
         logger.info("[VPN] OpenVPN tunnel up via %s", cfg.name)
+        _clear_spotiflac_breaker()
         return True, f"OpenVPN connected via {cfg.name}"
 
     # WireGuard
@@ -136,6 +148,7 @@ def start_vpn() -> Tuple[bool, str]:
         r = subprocess.run(["wg-quick", "up", str(wg)], capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
             logger.info("[VPN] WireGuard tunnel up via %s", wg.name)
+            _clear_spotiflac_breaker()
             return True, f"WireGuard connected via {wg.name}"
         err_text = (r.stderr or r.stdout or "").strip()[:300]
         logger.warning("[VPN] WireGuard failed to start via %s: %s", wg.name, err_text)
@@ -197,6 +210,12 @@ def save_vpn_config(content: str, filename: str) -> Tuple[bool, str]:
         VPN_DIR.mkdir(parents=True, exist_ok=True)
         dest = VPN_DIR / name
         dest.write_text(content, encoding="utf-8")
+        # Private keys in the config must not be world-readable (wg-quick warns
+        # "config is world accessible" and some setups refuse to start).
+        try:
+            os.chmod(dest, 0o600)
+        except OSError:
+            pass
         logger.info("[VPN] Saved VPN config %s", dest)
         return True, f"VPN config saved as {name}. Restart the VPN to apply it."
     except OSError as e:
