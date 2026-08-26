@@ -20,6 +20,21 @@ AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
 VARIANT_WORDS = {"cover", "live", "karaoke", "tribute", "instrumental", "acoustic", "slowed", "sped up", "lo-fi", "reverb", "teaser", "trailer", "short film", "skit", "reaction", "interview"}
 VIDEO_EXTRANEOUS_WORDS = {"music video", "official video", "official music video", "musicvideo", "visualizer", "short film", "mv", "teaser"}
 
+# Optional PO-token provider (bgutil-ytdlp-pot-provider sidecar). PO tokens are
+# long-lived (months) and can bypass YouTube bot-checks without cookies. When
+# POT_PROVIDER_URL is set, yt-dlp is told to fetch tokens from that provider.
+POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
+
+
+def _add_pot_provider_args(cmd: list) -> list:
+    """Append --extractor-args for the PO token provider when configured."""
+    if POT_PROVIDER_URL:
+        cmd.extend([
+            "--extractor-args",
+            f"youtubepot-bgutilhttp:base_url={POT_PROVIDER_URL}",
+        ])
+    return cmd
+
 # Possible cookies.txt search locations
 DEFAULT_COOKIE_LOCATIONS = [
     Path(os.environ.get("CONFIG_DIR", "/config")) / "cookies.txt",
@@ -415,6 +430,7 @@ def download_track_ytdlp(
             str(output_dir / "%(title)s.%(ext)s"),
             "--no-warnings",
         ]
+        _add_pot_provider_args(cmd)
 
         if cookie_file_to_use:
             cmd.extend(["--cookies", cookie_file_to_use])
@@ -500,6 +516,7 @@ def download_track_ytdlp(
                 "--extractor-args",
                 "youtube:player_client=android",
             ]
+            _add_pot_provider_args(cmd)
             if cookie_file_to_use:
                 cmd.extend(["--cookies", cookie_file_to_use])
             if Path("/usr/bin/node").exists():
