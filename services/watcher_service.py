@@ -31,6 +31,32 @@ def _normalize(s: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "", s).lower()
 
 
+def _maintenance_running() -> bool:
+    """True while the detached library-maintenance subprocess is active.
+
+    Maintenance intentionally deletes/moves files (dedupe, album merges) —
+    the watcher must not race it by marking tracks missing for those changes,
+    otherwise the two fight over the same rows (0-rows-matched errors) and
+    flood the log. Uses the same flock the maintenance process holds.
+    """
+    import fcntl
+
+    lock = os.environ.get("MAINTENANCE_LOCK", "/downloads/work/maintenance.lock")
+    try:
+        if not os.path.exists(lock):
+            return False
+        fd = os.open(lock, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True  # locked by the maintenance process
+        finally:
+            os.close(fd)
+        return False
+    except Exception:
+        return False
+
+
 class MusicFolderHandler(FileSystemEventHandler):
     def __init__(self, app, socketio, music_root: Path):
         super().__init__()
@@ -84,6 +110,9 @@ class MusicFolderHandler(FileSystemEventHandler):
 
     def on_deleted(self, event):
         if event.is_directory or not self._is_audio_file(event.src_path):
+            return
+        if _maintenance_running():
+            logger.debug("[WATCHER] Skipping deletion event (maintenance running): %s", event.src_path)
             return
 
         deleted_path = str(Path(event.src_path).resolve())
@@ -152,10 +181,19 @@ class MusicFolderHandler(FileSystemEventHandler):
                         "type": "info",
                     })
             except Exception as e:
+                # A failed commit leaves the session in a broken state; without
+                # a rollback every later event in this greenlet also fails.
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
                 logger.warning("[WATCHER] Error handling deleted file %s: %s", deleted_path, e)
 
     def on_moved(self, event):
         if event.is_directory or not (self._is_audio_file(event.src_path) or self._is_audio_file(event.dest_path)):
+            return
+        if _maintenance_running():
+            logger.debug("[WATCHER] Skipping move event (maintenance running): %s", event.src_path)
             return
 
         src_path = str(Path(event.src_path).resolve())
