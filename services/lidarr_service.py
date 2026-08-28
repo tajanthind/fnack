@@ -7,12 +7,12 @@ import secrets
 import time
 from datetime import datetime
 from email.utils import formatdate
+from typing import Optional
 from pathlib import Path
 from flask import Flask, Response, jsonify, request
 
-from models import AppSetting, Artist, DownloadJob, Track, db
+from models import Album, AppSetting, Artist, DownloadJob, Track, db
 from services.deezer_service import get_album_info, get_track_info, search_album, search_artist, search_track
-from services.queue_service import queue_track
 
 logger = logging.getLogger("fnack.lidarr")
 
@@ -60,9 +60,9 @@ def handle_sabnzbd_api(app: Flask):
     if mode in ("addurl", "addfile"):
         item_type, item_id = _parse_grab()
         if item_type and item_id:
-            job = _create_lidarr_grab_job(app, item_type, item_id)
-            if job:
-                return jsonify({"status": True, "nzo_ids": [f"SAB-{job.id}"]})
+            jobs = _create_lidarr_grab_job(app, item_type, item_id)
+            if jobs:
+                return jsonify({"status": True, "nzo_ids": [f"SAB-{j.id}" for j in jobs]})
         return jsonify({"status": False, "error": "Could not parse item from NZB"}), 400
 
     if mode == "queue":
@@ -148,37 +148,115 @@ def _parse_grab():
 
 
 def _create_lidarr_grab_job(app: Flask, item_type: str, item_id: int):
-    """Create a download job for Lidarr grab."""
+    """Expand a Lidarr grab (a Deezer album or track) into the local library
+    (Artist / Album / Track rows) and queue one DownloadJob per track, so the
+    queue worker can download them exactly like any other library track.
+
+    Returns the list of created/queued DownloadJob objects."""
+    from services.deezer_service import get_album_tracks, get_album_info, get_track_info
+
     with app.app_context():
+        jobs: list = []
+
         if item_type == "track":
             info = get_track_info(item_id)
             artist_name = info.get("artist_name") or "Unknown Artist"
-            title = info.get("title") or "Unknown Track"
+            track_title = info.get("title") or "Unknown Track"
+            album_title = info.get("album_title") or track_title
+            album_deezer_id = info.get("album_id")
+            cover_url = None
+            year = None
+            record_type = "single"
+            tracks_to_queue = [{
+                "id": item_id,
+                "title": track_title,
+                "track_position": 1,
+                "disk_number": 1,
+                "duration": float(info.get("duration") or 0),
+            }]
         else:
             info = get_album_info(item_id)
             artist_name = info.get("artist_name") or "Unknown Artist"
-            title = info.get("title") or "Unknown Album"
+            album_title = info.get("title") or "Unknown Album"
+            album_deezer_id = info.get("id") or item_id
+            cover_url = info.get("cover_url")
+            year = info.get("year")
+            record_type = info.get("record_type") or "album"
+            tracks_to_queue = get_album_tracks(item_id)
+
+        if not tracks_to_queue:
+            logger.warning("[LIDARR] Grab for %s %d returned no tracks", item_type, item_id)
+            return []
 
         artist = Artist.query.filter_by(name=artist_name).first()
         if not artist:
-            artist = Artist(spotify_id=f"lidarr:{artist_name}", name=artist_name, source="lidarr")
+            artist = Artist(
+                spotify_id=f"lidarr:{artist_name}",
+                name=artist_name,
+                source="lidarr",
+                monitored=True,
+            )
             db.session.add(artist)
             db.session.flush()
 
-        job = DownloadJob(
-            artist_id=artist.id,
-            item_type=item_type,
-            album_spotify_id=str(item_id),
-            album_name=title,
-            album_type=item_type,
-            cover_url=info.get("cover_url"),
-            status="queued",
-            source="lidarr",
-        )
-        db.session.add(job)
+        album = None
+        if album_deezer_id:
+            album = Album.query.filter_by(artist_id=artist.id, deezer_id=str(album_deezer_id)).first()
+        if not album:
+            album = Album(
+                artist_id=artist.id,
+                name=album_title,
+                year=year,
+                cover_url=cover_url,
+                deezer_id=str(album_deezer_id) if album_deezer_id else None,
+                record_type=record_type,
+            )
+            db.session.add(album)
+            db.session.flush()
+
+        for t in tracks_to_queue:
+            track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()
+            if not track:
+                track = Track(
+                    album_id=album.id,
+                    artist_id=artist.id,
+                    title=t["title"],
+                    track_number=t.get("track_position") or 0,
+                    disc_number=t.get("disk_number") or 1,
+                    duration=t.get("duration"),
+                    deezer_id=str(t["id"]),
+                    status="missing",
+                )
+                db.session.add(track)
+                db.session.flush()
+
+            existing = DownloadJob.query.filter_by(track_id=track.id, status="queued").first()
+            if existing:
+                jobs.append(existing)
+                continue
+
+            job = DownloadJob(
+                track_id=track.id,
+                album_id=album.id,
+                artist_id=artist.id,
+                item_type="track",
+                album_spotify_id=str(album.deezer_id or ""),
+                album_name=album.name,
+                album_type=album.record_type,
+                album_url="",
+                cover_url=album.cover_url,
+                status="queued",
+                source="lidarr",
+            )
+            track.status = "queued"
+            db.session.add(job)
+            db.session.flush()
+            jobs.append(job)
+
+        album.is_downloaded = False
         db.session.commit()
-        logger.info("[LIDARR] Created grab job %d for %s '%s'", job.id, item_type, title)
-        return job
+        logger.info("[LIDARR] Grab expanded: %d track job(s) queued for '%s - %s'", len(jobs), artist_name, album_title)
+        return jobs
 
 
 def _caps_xml():
@@ -202,11 +280,25 @@ def _caps_xml():
     return Response(xml, mimetype="application/xml")
 
 
-def _get_nzb(app: Flask):
-    job_id = request.args.get("id", type=int)
-    title = f"Release {job_id}"
-    item_type = "album"
-    item_id = job_id or 0
+def _get_nzb(app: Flask, item_type: Optional[str] = None, item_id: Optional[int] = None):
+    """Build the NZB file Lidarr sends to its download client. The NZB body
+    embeds <item_type>/<item_id> so fnack's SABnzbd emulation can parse the
+    grab back out when Lidarr POSTs it."""
+    if not item_id:
+        item_id = request.args.get("id", type=int) or 0
+    item_type = item_type or "album"
+
+    # Nicer release names when the item is known to Deezer
+    title = f"Release {item_id}"
+    try:
+        if item_type == "track":
+            info = get_track_info(item_id)
+            title = f"{info.get('artist_name', '')} - {info.get('title', '')}"
+        elif item_id:
+            info = get_album_info(item_id)
+            title = f"{info.get('artist_name', '')} - {info.get('title', '')}"
+    except Exception:
+        pass
 
     nzb = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'

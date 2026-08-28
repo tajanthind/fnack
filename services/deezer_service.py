@@ -390,6 +390,21 @@ def get_album_info(album_id: int) -> dict:
     }
 
 
+def get_album_tracks(album_id: int) -> list[dict]:
+    """Fetch an album's track list from Deezer."""
+    data = _get(f"{DEEZER_API}/album/{album_id}")
+    out = []
+    for t in (data.get("tracks") or {}).get("data", []):
+        out.append({
+            "id": t["id"],
+            "title": t.get("title", ""),
+            "track_position": t.get("track_position", 0),
+            "disk_number": t.get("disk_number", 1),
+            "duration": float(t.get("duration", 0) or 0),
+        })
+    return out
+
+
 def search_album(query: str, limit: int = 20) -> list[dict]:
     """Search Deezer for albums by query."""
     q = (query or "").strip()

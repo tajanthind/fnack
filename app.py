@@ -1484,13 +1484,18 @@ def sabnzbd_proxy():
 @app.route("/api/newznab", methods=["GET"])
 @app.route("/api/newznab/api", methods=["GET"])
 @app.route("/api/torznab", methods=["GET"])
+@app.route("/api/torznab/api", methods=["GET"])
+@app.route("/torznab/api", methods=["GET"])
 def newznab_proxy():
     return handle_newznab_api(app)
 
 
 @app.route("/api/nzb/<item_type>/<int:item_id>", methods=["GET"])
 def api_nzb_grab(item_type, item_id):
-    return handle_newznab_api(app)
+    # Lidarr downloads the <link> from the search feed verbatim (no ?t=get),
+    # so serve the real NZB directly from the path's item type/id.
+    from services.lidarr_service import _get_nzb
+    return _get_nzb(app, item_type=item_type, item_id=item_id)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1511,6 +1516,7 @@ def _periodic_discography_sync_loop():
     # NOTE: _last_maintenance is initialized at module level and stamped by the
     # boot task — never reset it here, or the first scheduler cycle (~60s after
     # boot) would re-run the whole maintenance pass right after boot did.
+    global _last_maintenance
     gevent.sleep(60)
     while True:
         try:
