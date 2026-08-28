@@ -453,7 +453,22 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
                 if mf is not None:
                     cur_album = _read_simple_tag(mf, ("album", "\xa9alb", "TALB"))
                     cur_albumartist = _read_simple_tag(mf, ("albumartist", "aART", "TPE2"))
-                    if cur_album == album_name and cur_albumartist == artist_name:
+                    # Per-track original/release dates (left by downloaders)
+                    # make Navidrome split one album into many — any file still
+                    # carrying them (or with a date different from the album
+                    # year) must be re-tagged, which strips them.
+                    has_stray_dates = any(
+                        k.upper() in {"ORIGINALDATE", "RELEASEDATE", "TDOR", "TDRL"}
+                        for k in getattr(mf, "keys", lambda: ())()
+                    )
+                    cur_date = _read_simple_tag(mf, ("date", "\xa9day", "TDRC"))
+                    date_mismatch = bool(album.year) and bool(cur_date) and cur_date != str(album.year)
+                    if (
+                        cur_album == album_name
+                        and cur_albumartist == artist_name
+                        and not has_stray_dates
+                        and not date_mismatch
+                    ):
                         stats["skipped"] += 1
                         continue
             except Exception:

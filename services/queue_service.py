@@ -120,7 +120,13 @@ def _tag_audio_file(
                     "ALBUMARTIST", "ALBUM ARTIST", "ALBUM_ARTIST", "ARTIST",
                     "ALBUM", "TITLE", "TRACKNUMBER", "TRACKTOTAL", "TOTALTRACKS",
                     "DISCNUMBER", "DISCTOTAL", "DATE", "YEAR",
+                    # Per-track dates/IDs from the source downloader would give
+                    # every song its own release date and make Navidrome split
+                    # the album into one row per song — always strip them.
+                    "ORIGINALDATE", "RELEASEDATE", "TDOR", "TDRL",
                     "MUSICBRAINZ_ALBUMID", "MUSICBRAINZ_TRACKID", "MUSICBRAINZ_ARTISTID",
+                    "MUSICBRAINZ_RELEASEGROUPID", "MUSICBRAINZ_RELEASETRACKID",
+                    "MUSICBRAINZ_ALBUMSTATUS", "MUSICBRAINZ_ALBUMTYPE",
                 }:
                     del audio[k]
 
@@ -171,6 +177,12 @@ def _tag_audio_file(
                 audio.add_tags()
 
             tags = audio.tags
+            # Strip per-track release/original dates (Navidrome splits albums
+            # when songs carry different dates) before writing the uniform ones.
+            for fid in ("TDRL", "TDOR"):
+                tags.delall(fid)
+            for k in [k for k in tags.keys() if k.startswith("TXXX:MusicBrainz")]:
+                tags.delall(k)
             if artist:
                 tags["TPE1"] = TPE1(encoding=3, text=artist)
             if effective_album_artist:
@@ -199,6 +211,11 @@ def _tag_audio_file(
         elif ext in (".m4a", ".mp4", ".aac"):
             from mutagen.mp4 import MP4, MP4Cover
             audio = MP4(str(file_path))
+            # Per-track dates split albums in Navidrome — drop any date atoms
+            # (including iTunes-style ORIGINALDATE) before writing the uniform one.
+            for k in list(audio.keys()):
+                if "day" in k.lower() or "date" in k.lower():
+                    del audio[k]
             if artist:
                 audio["\xa9ART"] = [artist]
             if effective_album_artist:
@@ -236,6 +253,11 @@ def _tag_audio_file(
                     audio = MutagenFile(str(file_path))
 
             if audio is not None:
+                # Strip per-track dates/IDs (Navidrome album splits) before
+                # writing the uniform album date.
+                for k in list(audio.keys()):
+                    if k.upper() in {"ORIGINALDATE", "RELEASEDATE", "TDOR", "TDRL"}:
+                        del audio[k]
                 if artist:
                     audio["artist"] = [artist]
                 if effective_album_artist:
