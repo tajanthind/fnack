@@ -180,6 +180,8 @@ Authentik / Tailscale).
 docker build -t fnack:latest .
 
 # Run it with host bind mounts
+# (the --sysctl flag is required for WireGuard policy routing; Docker refuses
+#  in-container writes to that key, so it must be applied at container start)
 docker run -d \
   --name fnack \
   --restart unless-stopped \
@@ -187,6 +189,9 @@ docker run -d \
   -v "$PWD/config:/config" \
   -v "$PWD/downloads:/downloads" \
   -v "$HOME/Music:/music" \
+  --cap-add=NET_ADMIN \
+  --device=/dev/net/tun:/dev/net/tun \
+  --sysctl net.ipv4.conf.all.src_valid_mark=1 \
   -e SECRET_KEY="$(openssl rand -hex 32)" \
   -e MAX_CONCURRENT_DOWNLOADS=1 \
   fnack:latest
@@ -295,7 +300,10 @@ docker run -d --name fnack --cap-add=NET_ADMIN --device=/dev/net/tun:/dev/net/tu
 ```
 
 Notes:
-- The image bundles `openresolv` so `wg-quick` can handle DNS (v0.2.22+).
+- The image bundles `openresolv` (DNS for wg-quick), `nftables` (tunnel
+  firewall rules) and a `sysctl` shim, plus the compose file sets
+  `net.ipv4.conf.all.src_valid_mark=1` — all three are required for
+  WireGuard to come up inside Docker (v0.2.23+).
 - When the tunnel comes up, fnack automatically clears the SpotiFLAC
   rate-limit circuit breaker — so FLAC downloads resume immediately on the
   fresh VPN IP instead of waiting out a 30–300 s cool-down.

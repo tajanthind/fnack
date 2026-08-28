@@ -57,7 +57,8 @@ elif [ -f "$VPN_DIR/wg0.conf" ]; then
     if ! WG_OUTPUT=$(wg-quick up "$VPN_DIR/wg0.conf" 2>&1); then
         echo "[FNACK] WARNING: WireGuard failed to start:" >&2
         echo "$WG_OUTPUT" | tail -6 >&2
-        echo "[FNACK] Hint: needs kernel wireguard or --cap-add=NET_ADMIN + /dev/net/tun" >&2
+        echo "[FNACK] Hint: the container must run with --cap-add=NET_ADMIN, --device=/dev/net/tun" >&2
+        echo "[FNACK]       and --sysctl net.ipv4.conf.all.src_valid_mark=1 (see docker-compose.yml)." >&2
     fi
 fi
 

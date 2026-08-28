@@ -50,6 +50,11 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
+    # wg-quick needs this policy-routing mark; Docker applies it at container
+    # start (the path is read-only from inside, so the bundled sysctl shim
+    # makes wg-quick tolerate that).
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
     restart: unless-stopped
     stop_grace_period: 60s
     healthcheck:

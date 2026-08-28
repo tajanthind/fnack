@@ -31,12 +31,41 @@ MUSIC_ROOT = Path(os.environ.get("MUSIC_DIR", "/music"))
 
 _TYPE_RANK = {"album": 3, "ep": 2, "single": 1}
 
+# Edition suffixes that are the same release, not a different album
+# ("Nine Track Mind" == "Nine Track Mind (Deluxe Edition)").
+_EDITION_SUFFIX_RE = re.compile(
+    r"(\s*[\(\[]\s*(deluxe edition|super deluxe edition|super deluxe|deluxe version|deluxe|special edition|expanded edition|expanded|bonus track version|bonus tracks|limited edition|anniversary edition|remastered edition|remaster|explicit version|clean version|international version|uk version|japanese edition|target edition|itunes version|spotify version)[^)\]]*[\)\]])+$",
+    re.IGNORECASE,
+)
+
+_LOSSLESS_RANK = {".flac": 5, ".wav": 5, ".alac": 4, ".m4a": 4, ".opus": 2, ".ogg": 2, ".mp3": 1, ".aac": 1}
+
 
 def _norm(s) -> str:
     if not s:
         return ""
     s = unicodedata.normalize("NFKD", str(s))
     return re.sub(r"[^a-zA-Z0-9]+", "", s).lower()
+
+
+def _norm_album_name(s) -> str:
+    """Normalize an album name for duplicate comparison (ignores edition suffixes)."""
+    return _norm(_EDITION_SUFFIX_RE.sub("", s or ""))
+
+
+def _compatible(set_a, set_b) -> bool:
+    """True when two track-title sets are the same content: one contains the
+    other, or they overlap heavily (>= 75% of the smaller set). This merges
+    identical albums, standard-vs-deluxe editions and fuzzy-spelled copies,
+    while leaving genuinely different releases (e.g. 50% overlap) alone."""
+    if not set_a or not set_b:
+        return False
+    inter = len(set_a & set_b)
+    return inter / min(len(set_a), len(set_b)) >= 0.75
+
+
+def _file_rank(path) -> int:
+    return _LOSSLESS_RANK.get(Path(path).suffix.lower(), 0)
 
 
 def _read_simple_tag(mf, keys):
@@ -93,14 +122,27 @@ def _merge_album_into(canonical, other, canonical_map, stats) -> None:
                 and track.local_path and existing.local_path
                 and track.local_path != existing.local_path
             ):
-                # Same song downloaded twice (e.g. the album was imported under
-                # two spellings). Delete the extra file so Navidrome stops
-                # showing a duplicate album from the orphaned copy.
-                try:
-                    if os.path.isfile(track.local_path):
-                        os.remove(track.local_path)
-                except OSError:
-                    pass
+                # Same song downloaded twice (album imported under two
+                # spellings/editions). Keep the higher-quality file and delete
+                # the other copy so Navidrome stops showing a duplicate album
+                # from the orphaned files.
+                if _file_rank(track.local_path) > _file_rank(existing.local_path):
+                    try:
+                        if os.path.isfile(existing.local_path):
+                            os.remove(existing.local_path)
+                    except OSError:
+                        pass
+                    existing.local_path = track.local_path
+                    existing.file_path = track.file_path
+                    existing.file_format = track.file_format
+                    existing.duration = track.duration
+                    existing.size_bytes = track.size_bytes
+                else:
+                    try:
+                        if os.path.isfile(track.local_path):
+                            os.remove(track.local_path)
+                    except OSError:
+                        pass
             DownloadJob.query.filter_by(track_id=track.id).delete()
             db.session.delete(track)
             stats["removed_dup_tracks"] += 1
@@ -154,7 +196,7 @@ def _merge_duplicate_albums(app) -> dict:
             canonical = _pick_canonical(canonical, al, sets[canonical.id], sets[al.id], dl[canonical.id], dl[al.id])
 
         others = [al for al in albums if al.id != canonical.id]
-        if any(not sets[o.id] <= sets[canonical.id] for o in others):
+        if any(not _compatible(sets[o.id], sets[canonical.id]) for o in others):
             logger.info(
                 "[METADATA] Skipping merge for '%s' (%d albums): track lists differ",
                 canonical.name, len(albums),
@@ -218,12 +260,15 @@ def _merge_duplicate_albums(app) -> dict:
                         na, nb = norm_names[a.id], norm_names[b.id]
                         if not na or not nb or len(na) < 4 or len(nb) < 4:
                             continue
-                        if SequenceMatcher(None, na, nb).ratio() < 0.85:
+                        same_name = (
+                            _norm_album_name(a.name) == _norm_album_name(b.name)
+                            or SequenceMatcher(None, na, nb).ratio() >= 0.85
+                        )
+                        if not same_name:
                             continue
-                        sa_, sb = sets[a.id], sets[b.id]
-                        if not (sa_ <= sb or sb <= sa_):
+                        if not _compatible(sets[a.id], sets[b.id]):
                             continue
-                        canonical = _pick_canonical(a, b, sa_, sb, dl[a.id], dl[b.id])
+                        canonical = _pick_canonical(a, b, sets[a.id], sets[b.id], dl[a.id], dl[b.id])
                         other = b if canonical.id == a.id else a
                         canonical_map = {_norm(t.title): t for t in canonical.tracks.all() if t.title}
                         _merge_album_into(canonical, other, canonical_map, stats)
@@ -273,6 +318,75 @@ def _remove_empty_album_dirs() -> None:
                     pass  # not empty — keep
     except OSError:
         pass
+
+
+def _backfill_album_artwork(app) -> int:
+    """Ensure every downloaded album has cover art files on disk.
+
+    Albums mapped from an existing library (folder import) never go through
+    the download path, so their cover.jpg was never written even though the
+    DB has cover_url. Navidrome then shows those albums without artwork.
+    This fetches and saves any missing covers (parallelized, skips existing).
+    Returns the number of covers saved.
+    """
+    from models import Album, AppSetting
+
+    with app.app_context():
+        s_save = db.session.get(AppSetting, "save_cover_art")
+        save_cover = s_save.value.lower() != "false" if s_save else True
+        s_fn = db.session.get(AppSetting, "cover_art_filename")
+        cover_filename = s_fn.value.strip() if s_fn and s_fn.value.strip() else "cover.jpg"
+        if not save_cover:
+            return 0
+
+        from services.queue_service import _save_album_cover
+
+        jobs = []  # (dest_dir, cover_url)
+        seen_dirs = set()
+        for album in Album.query.filter(Album.cover_url.isnot(None)).all():
+            if not album.cover_url:
+                continue
+            tracks = [t for t in album.tracks.all() if t.local_path]
+            if not tracks:
+                continue
+            dest_dir = Path(tracks[0].local_path).parent
+            if dest_dir in seen_dirs or not dest_dir.is_dir():
+                continue
+            seen_dirs.add(dest_dir)
+            has_cover = any(
+                (dest_dir / fn).is_file() and (dest_dir / fn).stat().st_size > 1024
+                for fn in ("cover.jpg", "folder.jpg")
+            )
+            if not has_cover:
+                jobs.append((dest_dir, album.cover_url))
+
+        saved = 0
+        if not jobs:
+            return 0
+
+        def _fetch(job):
+            dest_dir, url = job
+            before = set(dest_dir.iterdir()) if dest_dir.is_dir() else set()
+            _save_album_cover(dest_dir, url, save_cover=True, cover_filename=cover_filename)
+            after = set(dest_dir.iterdir()) if dest_dir.is_dir() else set()
+            return 1 if after - before else 0
+
+        try:
+            import gevent
+            from gevent.pool import Pool
+            pool = Pool(min(8, len(jobs)))
+            results = pool.map(_fetch, jobs)
+            saved = sum(r for r in results if r)
+        except Exception:
+            for job in jobs:
+                try:
+                    _fetch(job)
+                    saved += 1
+                except Exception:
+                    pass
+
+    logger.info("[METADATA] Artwork backfill: %d cover(s) saved", saved)
+    return saved
 
 
 def normalize_album_tags(app, quiet: bool = True) -> dict:
@@ -381,17 +495,23 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
     # Drop empty album folders left behind by duplicate-file cleanup
     _remove_empty_album_dirs()
 
+    # Ensure every downloaded album has cover art on disk (imported libraries
+    # never saved covers). Navidrome shows albums without art otherwise.
+    covers_backfilled = _backfill_album_artwork(app)
+
     logger.info(
         "[METADATA] Normalize pass: %d checked, %d retagged, %d moved, %d skipped, %d errors"
-        " | duplicates: %d albums merged, %d tracks moved, %d dup tracks removed",
+        " | duplicates: %d albums merged, %d tracks moved, %d dup tracks removed"
+        " | artwork: %d covers saved",
         stats["checked"], stats["retagged"], stats["moved"], stats["skipped"], stats["errors"],
         merge_stats["merged_albums"], merge_stats["merged_tracks"], merge_stats["removed_dup_tracks"],
+        covers_backfilled,
     )
 
     # If anything changed on disk or in tags, ask Navidrome to rescan so the
     # merged/retagged albums are regrouped (its scan is debounced server-side).
     if (
-        stats["retagged"] > 0 or stats["moved"] > 0
+        stats["retagged"] > 0 or stats["moved"] > 0 or covers_backfilled > 0
         or merge_stats["merged_albums"] > 0 or merge_stats["merged_tracks"] > 0
     ):
         try:
@@ -401,4 +521,5 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
             logger.debug("[METADATA] Could not trigger Navidrome scan after normalize", exc_info=True)
 
     stats.update(merge_stats)
+    stats["covers_backfilled"] = covers_backfilled
     return stats

@@ -1031,9 +1031,14 @@ def download_manual_match_track(
                 cookies_path=cookies_path,
                 check_duration=False,
             )
-            # Fallback if direct YouTube URL was blocked or failed
+            # Fallback if direct YouTube URL was blocked or failed: try the
+            # official release on a lossless provider (Spotify resolution).
+            # NOTE: no YouTube/SoundCloud *search* fallback here — the user
+            # gave an explicit URL, so if it fails we must report the real
+            # reason (e.g. bot-check), not silently hunt other links.
             if not ok or not downloaded_file:
                 socketio.emit("download_progress", {"track_id": track_id, "progress": 60.0, "status": "downloading"})
+                direct_err = last_err or "provided URL failed"
                 spot_url = resolve_spotify_url(track_title, artist_name, album_name, isrc=track_isrc)
                 if spot_url:
                     ok, downloaded_file, last_err = download_track_spotiflac(
@@ -1042,17 +1047,10 @@ def download_manual_match_track(
                         quality=quality_setting,
                         rate_limit_delay=spotiflac_delay,
                     )
-                if not downloaded_file:
-                    ok, downloaded_file, last_err = download_track_ytdlp(
-                        f"{artist_name} - {track_title}",
-                        tmp_work_dir,
-                        output_format=fallback_format,
-                        artist_name=artist_name,
-                        track_title=track_title,
-                        expected_duration=expected_duration,
-                        cookies_path=cookies_path,
-                        check_duration=False,
-                    )
+                    if not downloaded_file:
+                        last_err = f"Provided link failed: {direct_err} | Lossless fallback also failed: {last_err}"
+                else:
+                    last_err = direct_err
 
         # 3. Deezer URL
         elif "deezer.com/track/" in target_input:

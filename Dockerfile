@@ -13,8 +13,10 @@ FROM python:3.11-slim-bookworm
 # found" right after the interface comes up. (The Debian `resolvconf` package
 # cannot be used: its postinst symlinks /etc/resolv.conf, which is a
 # bind-mounted file in Docker and fails with "Device or resource busy".)
+# nftables is used by wg-quick for the tunnel firewall rules (it falls back
+# to iptables-restore, which is not installed, when nft is missing).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb x11-utils procps curl unzip xz-utils ca-certificates openvpn wireguard-tools iproute2 openresolv && \
+    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb x11-utils procps curl unzip xz-utils ca-certificates openvpn wireguard-tools iproute2 openresolv nftables && \
     curl -fsSL https://nodejs.org/dist/v22.17.0/node-v22.17.0-linux-x64.tar.xz -o /tmp/node22.tar.xz && \
     tar -xJf /tmp/node22.tar.xz -C /usr/local --strip-components=1 && \
     rm -f /tmp/node22.tar.xz && \
@@ -38,6 +40,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 RUN chmod +x /app/entrypoint.sh
+
+# WireGuard-in-Docker shim: Docker mounts /proc/sys/net/ipv4/conf/* read-only,
+# so wg-quick's src_valid_mark write fails and it tears the tunnel down. The
+# shim (installed first in PATH) no-ops those writes; the value itself is set
+# at container start via --sysctl (docker-compose.yml `sysctls:`).
+COPY scripts/sysctl-shim /usr/local/sbin/sysctl
+RUN chmod +x /usr/local/sbin/sysctl
 
 RUN mkdir -p /config /downloads /music
 VOLUME ["/config", "/downloads", "/music"]

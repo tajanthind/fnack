@@ -1,0 +1,24 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# sysctl shim for fnack's in-container WireGuard support.
+#
+# Docker mounts /proc/sys/net/ipv4/conf/* read-only inside containers, so
+# wg-quick's `sysctl -q net.ipv4.conf.all.src_valid_mark=1` fails with
+# "permission denied". wg-quick treats that as fatal and tears the tunnel
+# down. The container is started with --sysctl net.ipv4.conf.all.src_valid_mark=1
+# (docker-compose: sysctls), so the kernel already has the right value — a
+# blocked write is harmless. This shim intercepts writes to net.ipv4.conf.*
+# and succeeds, while passing every other sysctl call through to the real
+# /sbin/sysctl.
+# ---------------------------------------------------------------------------
+blocked=""
+for arg in "$@"; do
+    case "$arg" in
+        net.ipv4.conf.*=*) blocked=1 ;;
+    esac
+done
+if [ -n "$blocked" ]; then
+    /sbin/sysctl "$@" >/dev/null 2>&1
+    exit 0
+fi
+exec /sbin/sysctl "$@"

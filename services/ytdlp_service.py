@@ -416,10 +416,12 @@ def download_track_ytdlp(
                 expanded.append(t)
         targets_to_try = expanded
 
-        # Add SoundCloud fallback targets for resilient zero-account audio downloading
+        # Add a single SoundCloud search fallback (quoted, most precise).
+        # SoundCloud searches for non-Western tracks usually return wrong
+        # songs/compilation mixes, which the verifier rejects anyway, so one
+        # attempt is enough — two just doubled the wasted time per failure.
         clean_t = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", "", track_title).strip()
         targets_to_try.append(f'scsearch2:"{artist_name}" "{clean_t}"')
-        targets_to_try.append(f"scsearch2:{artist_name} {clean_t}")
     elif not (target.startswith("http://") or target.startswith("https://") or target.startswith("ytsearch") or target.startswith("scsearch")):
         targets_to_try = [f"ytsearch1:{target}", f"scsearch1:{target}"]
     else:
