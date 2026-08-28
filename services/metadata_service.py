@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import unicodedata
+from collections import defaultdict
 from pathlib import Path
 
 from models import Track, db
@@ -98,7 +99,7 @@ def _pick_canonical(a, b, set_a, set_b, dl_a, dl_b):
     return a if a.id < b.id else b
 
 
-def _merge_album_into(canonical, other, canonical_map, stats) -> None:
+def _merge_album_into(canonical, other, canonical_map, stats, cross_artist: bool = False) -> None:
     """Fold every track of `other` into `canonical` (dup titles are dropped,
     along with their duplicate files), then delete the `other` album row."""
     from models import DownloadJob
@@ -123,8 +124,9 @@ def _merge_album_into(canonical, other, canonical_map, stats) -> None:
                 and track.local_path != existing.local_path
             ):
                 # Same song downloaded twice (album imported under two
-                # spellings/editions). Keep the higher-quality file and delete
-                # the other copy so Navidrome stops showing a duplicate album
+                # spellings/editions/artists). Keep the higher-quality file and
+                # delete the other copy (also breaks hardlinks between the two
+                # album folders) so Navidrome stops showing a duplicate album
                 # from the orphaned files.
                 if _file_rank(track.local_path) > _file_rank(existing.local_path):
                     try:
@@ -148,6 +150,8 @@ def _merge_album_into(canonical, other, canonical_map, stats) -> None:
             stats["removed_dup_tracks"] += 1
         else:
             track.album_id = canonical.id
+            if cross_artist and track.artist_id != canonical.artist_id:
+                track.artist_id = canonical.artist_id
             if nt:
                 canonical_map[nt] = track
             stats["merged_tracks"] += 1
@@ -289,6 +293,74 @@ def _merge_duplicate_albums(app) -> dict:
                         break
                 if not merged_something:
                     break
+
+        # ---- Pass 3: cross-artist duplicates ----
+        # Collab releases (e.g. Cheema Y & Gur Sidhu) get imported once per
+        # member artist, and the same song file is often hardlinked in both
+        # album folders — which made the per-file retagger flip-flop the tags
+        # (last write wins for both paths) and Navidrome split the album per
+        # artist. Merge same-name, same-content albums across artists into one.
+        # Grouped by normalized name so the pair scan stays small.
+        while True:
+            groups = defaultdict(list)
+            for al in Album.query.all():
+                if (al.name or "").lower() == "unmatched local tracks":
+                    continue
+                groups[_norm_album_name(al.name)].append(al)
+
+            merged_something = False
+            for albs in groups.values():
+                if len(albs) < 2:
+                    continue
+                sets = {al.id: {_norm(t.title) for t in al.tracks.all() if t.title} for al in albs}
+                dl = {al.id: sum(1 for t in al.tracks.all() if t.is_downloaded) for al in albs}
+                norm_names = {al.id: _norm(al.name) for al in albs}
+
+                for i in range(len(albs)):
+                    for j in range(i + 1, len(albs)):
+                        a, b = albs[i], albs[j]
+                        if a.artist_id == b.artist_id:
+                            continue
+                        na, nb = norm_names[a.id], norm_names[b.id]
+                        if not na or not nb or len(na) < 4 or len(nb) < 4:
+                            continue
+                        same_name = (
+                            _norm_album_name(a.name) == _norm_album_name(b.name)
+                            or SequenceMatcher(None, na, nb).ratio() >= 0.85
+                        )
+                        if not same_name:
+                            continue
+                        # Guard against real same-name releases by different artists
+                        if min(len(sets[a.id]), len(sets[b.id])) < 2:
+                            continue
+                        if not _compatible(sets[a.id], sets[b.id]):
+                            continue
+                        canonical = _pick_canonical(a, b, sets[a.id], sets[b.id], dl[a.id], dl[b.id])
+                        other = b if canonical.id == a.id else a
+                        # capture names before the merge deletes rows / commits
+                        other_artist_name = other.artist.name if other.artist else "?"
+                        canonical_artist_name = canonical.artist.name if canonical.artist else "?"
+                        canonical_map = {_norm(t.title): t for t in canonical.tracks.all() if t.title}
+                        _merge_album_into(canonical, other, canonical_map, stats, cross_artist=True)
+                        canon_tracks = canonical.tracks.all()
+                        canonical.is_downloaded = bool(canon_tracks) and all(t.is_downloaded for t in canon_tracks)
+                        canonical.size_bytes = sum(t.size_bytes or 0 for t in canon_tracks)
+                        db.session.commit()
+                        merged_something = True
+                        logger.info(
+                            "[METADATA] Merged cross-artist duplicate '%s' (%s) -> '%s' (%s, id %d): "
+                            "%d track(s) moved, %d duplicate track(s) removed",
+                            other.name, other_artist_name,
+                            canonical.name, canonical_artist_name, canonical.id,
+                            stats["merged_tracks"], stats["removed_dup_tracks"],
+                        )
+                        break
+                    if merged_something:
+                        break
+                if merged_something:
+                    break
+            if not merged_something:
+                break
 
     return stats
 

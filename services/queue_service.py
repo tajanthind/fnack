@@ -292,7 +292,14 @@ def _tag_audio_file(
                 audio.save()
 
     except Exception as e:
-        logger.debug("[QUEUE] Tagging note for %s: %s", file_path.name, e)
+        # file_path may be a str or Path depending on the caller — never
+        # crash the error handler itself (that masked the real tagging error).
+        try:
+            fname = Path(file_path).name
+        except Exception:
+            fname = str(file_path)
+        logger.warning("[QUEUE] Tagging note for %s: %s", fname, e)
+        raise
 
 
 def _get_setting(app: Flask, key: str, default: str = "") -> str:
