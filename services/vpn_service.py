@@ -97,6 +97,7 @@ def get_vpn_status() -> dict:
     public_ip = None
     if running:
         public_ip = get_public_ip()
+    handshake_age = _wg_handshake_age() if _wireguard_configs() else None
     return {
         "configured": is_configured(),
         "running": running,
@@ -106,6 +107,10 @@ def get_vpn_status() -> dict:
         "type": "wireguard" if _wireguard_configs() and not _openvpn_configs() else "openvpn" if _openvpn_configs() else None,
         "public_ip": public_ip,
         "vpn_dir": str(VPN_DIR),
+        "split_mode": _proxy_running(),
+        "proxy": f"127.0.0.1:{_PROXY_PORT}" if _proxy_running() else None,
+        "handshake_age_seconds": handshake_age,
+        "handshake_ok": handshake_age is not None and handshake_age < 180,
     }
 
 
@@ -138,6 +143,72 @@ def _restore_docker_dns() -> None:
 
 
 _RESOLV_BACKUP = "/tmp/fnack-resolv-backup.conf"
+_PROXY_PORT = int(os.environ.get("FNACK_VPN_PROXY_PORT", "1080"))
+_PROXY_UID = 2001
+_PROXY_SCRIPT = "/app/scripts/http_proxy.py"
+_PROXY_ENV = {
+    "HTTP_PROXY": f"http://127.0.0.1:{_PROXY_PORT}",
+    "HTTPS_PROXY": f"http://127.0.0.1:{_PROXY_PORT}",
+    "ALL_PROXY": f"http://127.0.0.1:{_PROXY_PORT}",
+    "NO_PROXY": "localhost,127.0.0.1,::1,192.168.0.0/16,172.16.0.0/12,100.64.0.0/10",
+}
+
+
+def _run_ip(*args) -> None:
+    subprocess.run(["ip", *args], capture_output=True, text=True, timeout=10)
+
+
+def _enable_split_mode() -> None:
+    """Keep the container's normal routing; route only the proxy's sockets
+    (uid 2001) via the WireGuard tunnel, then point downloads/metadata at the
+    proxy. The web dashboard and LAN traffic stay direct."""
+    _run_ip("rule", "del", "not", "fwmark", "51820", "table", "51820")
+    _run_ip("rule", "del", "table", "main", "suppress_prefixlength", "0")
+    _run_ip("rule", "add", f"uidrange", f"{_PROXY_UID}-{_PROXY_UID}", "lookup", "51820")
+    if not _proxy_running():
+        try:
+            subprocess.Popen(
+                ["python3", _PROXY_SCRIPT, "--port", str(_PROXY_PORT), "--uid", str(_PROXY_UID)],
+                stdout=open("/tmp/fnack-http-proxy.log", "a"),
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except Exception as e:
+            logger.warning("[VPN] Could not start HTTP proxy: %s", e)
+    for k, v in _PROXY_ENV.items():
+        os.environ[k] = v
+    logger.info("[VPN] Split mode active: downloads/metadata via 127.0.0.1:%d, dashboard direct", _PROXY_PORT)
+
+
+def _disable_split_mode() -> None:
+    _run_ip("rule", "del", "uidrange", f"{_PROXY_UID}-{_PROXY_UID}", "lookup", "51820")
+    subprocess.run(["pkill", "-f", "scripts/http_proxy.py"], capture_output=True, timeout=10)
+    for k in _PROXY_ENV:
+        os.environ.pop(k, None)
+
+
+def _proxy_running() -> bool:
+    try:
+        r = subprocess.run(["pgrep", "-f", "scripts/http_proxy.py"], capture_output=True, timeout=5)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _wg_handshake_age() -> Optional[float]:
+    """Seconds since the last successful WireGuard handshake (None = never)."""
+    try:
+        r = subprocess.run(["wg", "show", "wg0", "latest-handshakes"], capture_output=True, text=True, timeout=5)
+        for line in (r.stdout or "").splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] == "wg0":
+                ts = int(parts[1])
+                if ts == 0:
+                    return None
+                return max(0.0, time.time() - ts)
+    except Exception:
+        pass
+    return None
 
 
 def start_vpn() -> Tuple[bool, str]:
@@ -186,9 +257,10 @@ def start_vpn() -> Tuple[bool, str]:
         r = subprocess.run(["wg-quick", "up", str(wg)], capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
             logger.info("[VPN] WireGuard tunnel up via %s", wg.name)
+            _enable_split_mode()
             _restore_docker_dns()
             _clear_spotiflac_breaker()
-            return True, f"WireGuard connected via {wg.name}"
+            return True, f"WireGuard connected via {wg.name} (split mode: downloads via tunnel, dashboard direct)"
         err_text = (r.stderr or r.stdout or "").strip()[:300]
         logger.warning("[VPN] WireGuard failed to start via %s: %s", wg.name, err_text)
         _restore_docker_dns()
@@ -201,6 +273,7 @@ def start_vpn() -> Tuple[bool, str]:
 
 def stop_vpn() -> Tuple[bool, str]:
     """Stop the running VPN tunnel."""
+    _disable_split_mode()
     stopped = False
     try:
         subprocess.run(["pkill", "-f", "openvpn --config"], capture_output=True, timeout=10)

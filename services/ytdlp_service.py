@@ -479,6 +479,13 @@ def download_track_ytdlp(
         ]
         _add_pot_provider_args(cmd)
 
+        # Split-mode VPN: when the container's HTTP proxy is active (env set by
+        # the VPN split mode), force yt-dlp through it so downloads egress via
+        # the tunnel while the dashboard/LAN stay direct.
+        vpn_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("ALL_PROXY")
+        if vpn_proxy and not (target.startswith("http://127.0.0.1") or target.startswith("http://localhost")):
+            cmd.extend(["--proxy", vpn_proxy])
+
         if cookie_file_to_use:
             cmd.extend(["--cookies", cookie_file_to_use])
 

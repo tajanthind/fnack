@@ -969,7 +969,13 @@
         }
         if (statusEl) {
           if (st.running) {
-            statusEl.innerHTML = `Connected via <strong>${escapeHtml(st.type || 'VPN')}</strong> (${(st.config_files || []).join(', ') || 'config'})`;
+            let extra = '';
+            if (st.split_mode) extra = ' (downloads only — dashboard stays on LAN)';
+            if (st.handshake_ok === false) {
+              statusEl.innerHTML = `⚠️ Tunnel is up but <strong>no recent handshake</strong> — the VPN IP is not active yet, so downloads through it will fail. (${escapeHtml((st.config_files || []).join(', '))})`;
+            } else {
+              statusEl.innerHTML = `Connected via <strong>${escapeHtml(st.type || 'VPN')}</strong> (${(st.config_files || []).join(', ') || 'config'})${extra}`;
+            }
           } else if (st.configured) {
             statusEl.innerHTML = `Config present but VPN not running (${escapeHtml((st.config_files || []).join(', '))}). Start it above.`;
           } else {

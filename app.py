@@ -319,6 +319,9 @@ _MAINTENANCE_INTERVALS = {
     "manual": -1,
 }
 
+# When library maintenance last ran (stamped by the boot task / scheduler).
+_last_maintenance = 0.0
+
 
 def _maintenance_interval_seconds() -> int:
     """Seconds between automatic maintenance runs (0 = at restart only, -1 = off)."""
@@ -1505,9 +1508,10 @@ def handle_socket_connect():
 
 def _periodic_discography_sync_loop():
     """Periodic auto-sync for monitored artists based on configured interval."""
+    # NOTE: _last_maintenance is initialized at module level and stamped by the
+    # boot task — never reset it here, or the first scheduler cycle (~60s after
+    # boot) would re-run the whole maintenance pass right after boot did.
     gevent.sleep(60)
-    global _last_maintenance
-    _last_maintenance = 0.0
     while True:
         try:
             with app.app_context():
