@@ -60,9 +60,9 @@ def handle_sabnzbd_api(app: Flask):
     if mode in ("addurl", "addfile"):
         item_type, item_id = _parse_grab()
         if item_type and item_id:
-            jobs = _create_lidarr_grab_job(app, item_type, item_id)
-            if jobs:
-                return jsonify({"status": True, "nzo_ids": [f"SAB-{j.id}" for j in jobs]})
+            job_ids = _create_lidarr_grab_job(app, item_type, item_id)
+            if job_ids:
+                return jsonify({"status": True, "nzo_ids": [f"SAB-{jid}" for jid in job_ids]})
         return jsonify({"status": False, "error": "Could not parse item from NZB"}), 400
 
     if mode == "queue":
@@ -156,7 +156,7 @@ def _create_lidarr_grab_job(app: Flask, item_type: str, item_id: int):
     from services.deezer_service import get_album_tracks, get_album_info, get_track_info
 
     with app.app_context():
-        jobs: list = []
+        job_ids: list = []
 
         if item_type == "track":
             info = get_track_info(item_id)
@@ -232,7 +232,7 @@ def _create_lidarr_grab_job(app: Flask, item_type: str, item_id: int):
 
             existing = DownloadJob.query.filter_by(track_id=track.id, status="queued").first()
             if existing:
-                jobs.append(existing)
+                job_ids.append(existing.id)
                 continue
 
             job = DownloadJob(
@@ -251,12 +251,12 @@ def _create_lidarr_grab_job(app: Flask, item_type: str, item_id: int):
             track.status = "queued"
             db.session.add(job)
             db.session.flush()
-            jobs.append(job)
+            job_ids.append(job.id)
 
         album.is_downloaded = False
         db.session.commit()
-        logger.info("[LIDARR] Grab expanded: %d track job(s) queued for '%s - %s'", len(jobs), artist_name, album_title)
-        return jobs
+        logger.info("[LIDARR] Grab expanded: %d track job(s) queued for '%s - %s'", len(job_ids), artist_name, album_title)
+        return job_ids
 
 
 def _caps_xml():
