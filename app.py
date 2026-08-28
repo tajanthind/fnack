@@ -307,6 +307,27 @@ def api_stats():
 _running_artist_syncs = 0
 _MAX_CONCURRENT_SYNCS = 3
 
+# Library maintenance schedule. One setting controls ALL the cleanup work
+# (album merge/de-dupe, tag normalization, artwork backfill, Navidrome split
+# repair): "weekly" (default) = every restart + once a week, "daily" = every
+# restart + once a day, "restart" = only at every container restart,
+# "manual" = never automatic (Settings -> Run Maintenance Now only).
+_MAINTENANCE_INTERVALS = {
+    "weekly": 7 * 24 * 3600,
+    "daily": 24 * 3600,
+    "restart": 0,
+    "manual": -1,
+}
+
+
+def _maintenance_interval_seconds() -> int:
+    """Seconds between automatic maintenance runs (0 = at restart only, -1 = off)."""
+    try:
+        val = _get_setting("maintenance_interval", "weekly")
+        return _MAINTENANCE_INTERVALS.get(str(val).strip().lower(), 7 * 24 * 3600)
+    except Exception:
+        return 7 * 24 * 3600
+
 
 def _start_bounded_artist_sync(artist_id: int, deezer_artist_id: int, options: dict):
     """Run a discography sync as a background task without blocking the scheduler,
@@ -1192,6 +1213,15 @@ def api_navidrome_fix_splits():
     return jsonify({"success": True, **res})
 
 
+@app.route("/api/maintenance/run", methods=["POST"])
+def api_maintenance_run():
+    """Run the full library maintenance (merge/retag/artwork/navidrome repair)
+    in the background right now. Returns immediately; progress goes to the
+    container logs (fnack-maintenance.log)."""
+    _run_maintenance_subprocess()
+    return jsonify({"accepted": True, "message": "Library maintenance started in the background."}), 202
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  VPN Management API (optional in-container VPN)
 # ══════════════════════════════════════════════════════════════════════
@@ -1375,6 +1405,10 @@ def api_settings():
             _set_setting("navidrome_auto_scan", "true" if data["navidrome_auto_scan"] else "false")
         if "navidrome_db_path" in data:
             _set_setting("navidrome_db_path", str(data["navidrome_db_path"]).strip())
+        if "maintenance_interval" in data:
+            val = str(data["maintenance_interval"]).strip().lower()
+            if val in _MAINTENANCE_INTERVALS:
+                _set_setting("maintenance_interval", val)
         if "theme" in data:
             _set_setting("theme", str(data["theme"]).strip())
         if "spotify_client_id" in data:
@@ -1417,6 +1451,7 @@ def api_settings():
         "navidrome_token": _get_setting("navidrome_token", ""),
         "navidrome_auto_scan": _get_setting("navidrome_auto_scan", "true").lower() == "true",
         "navidrome_db_path": _get_setting("navidrome_db_path", ""),
+        "maintenance_interval": _get_setting("maintenance_interval", "weekly"),
     })
 
 
@@ -1471,8 +1506,8 @@ def handle_socket_connect():
 def _periodic_discography_sync_loop():
     """Periodic auto-sync for monitored artists based on configured interval."""
     gevent.sleep(60)
-    global _last_metadata_normalize
-    _last_metadata_normalize = 0.0
+    global _last_maintenance
+    _last_maintenance = 0.0
     while True:
         try:
             with app.app_context():
@@ -1521,14 +1556,15 @@ def _periodic_discography_sync_loop():
 
         # Periodically re-run library maintenance (tag normalization, album
         # de-duplication, artwork backfill, Navidrome split repair) in a
-        # detached subprocess so the web loop is never blocked.
-        # Throttled to once per 6h since steady-state runs are cheap but not free.
+        # detached subprocess so the web loop is never blocked. The frequency
+        # is one adjustable setting (default: every restart + once a week).
         try:
-            if time.time() - _last_metadata_normalize >= 6 * 3600:
+            maint_secs = _maintenance_interval_seconds()
+            if maint_secs > 0 and time.time() - _last_maintenance >= maint_secs:
                 _run_maintenance_subprocess()
-                _last_metadata_normalize = time.time()
+                _last_maintenance = time.time()
         except Exception:
-            logger.exception("[SCHEDULER] Periodic metadata normalization failed")
+            logger.exception("[SCHEDULER] Periodic library maintenance failed")
 
         gevent.sleep(300)
 
@@ -1620,11 +1656,11 @@ def _run_maintenance_subprocess():
 
 
 def _boot_metadata_normalize():
-    global _last_metadata_normalize
+    global _last_maintenance
     _run_maintenance_subprocess()
     # Mark maintenance as just-run so the periodic scheduler (first cycle runs
     # ~60s after boot) does not immediately re-run the whole pass.
-    _last_metadata_normalize = time.time()
+    _last_maintenance = time.time()
 
 socketio.start_background_task(_boot_metadata_normalize)
 logger.info("fnack server initialized and background tasks (queue, watcher, scheduler, metadata) started")

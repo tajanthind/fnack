@@ -273,11 +273,20 @@ album into several entries with the same name. It runs **automatically**:
 - at every container start (retroactive pass over the whole library), and
 - periodically while running (catches files changed by imports/older versions).
 
+The whole maintenance bundle — duplicate-album merging, tag normalization,
+missing-artwork backfill and Navidrome split repair — is governed by **one
+setting**: Settings → Performance & Automation → **Library Maintenance
+Schedule** (`weekly` = every restart + once a week, the default; `daily`;
+`restart`; or `manual`). It always runs in a detached background process, so
+the dashboard stays fast regardless of library size. Progress is visible via
+`docker logs fnack` (`/tmp/fnack-maintenance.log`); the **Run Maintenance
+Now** button (or `POST /api/maintenance/run`) triggers it immediately.
+
 Files that already carry the correct album/albumartist tags are skipped, so
 steady-state runs are fast. You can also trigger it manually:
 
 ```bash
-docker exec fnack python3 /app/scripts/normalize_album_tags.py
+docker exec fnack python3 /app/scripts/run_maintenance.py
 ```
 
 Then trigger a Navidrome scan (Settings → Navidrome → Scan) to re-group albums.

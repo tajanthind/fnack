@@ -581,6 +581,26 @@
           <div class="form-text text-secondary small">How often fnack queries Deezer to discover new releases for monitored artists.</div>
         </div>
 
+        <!-- Library Maintenance Schedule -->
+        <div class="mb-3">
+          <label class="form-label fw-bold small">Library Maintenance Schedule</label>
+          <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setMaintenanceInterval" style="max-width: 260px;">
+            <option value="weekly" selected>Weekly + every restart (Recommended)</option>
+            <option value="daily">Daily + every restart</option>
+            <option value="restart">Every restart only</option>
+            <option value="manual">Manual only (button below)</option>
+          </select>
+          <div class="form-text text-secondary small">
+            One setting controls ALL library cleanup: duplicate-album merging,
+            tag normalization, missing-artwork backfill, and Navidrome split
+            repair. Runs in the background so the dashboard stays fast, no
+            matter how many artists you have.
+          </div>
+          <button type="button" class="btn btn-outline-info btn-sm mt-2" id="btnRunMaintenance" onclick="runMaintenanceNow()">
+            <i class="fas fa-broom me-1"></i>Run Maintenance Now
+          </button>
+        </div>
+
         <!-- Music Storage Path -->
         <div class="mb-3">
           <label class="form-label fw-bold small">Music Storage Path</label>
@@ -826,6 +846,7 @@
         document.getElementById('setNavidromeToken').value = s.navidrome_token || '';
         document.getElementById('setNavidromeAutoScan').checked = s.navidrome_auto_scan !== false;
         document.getElementById('setNavidromeDbPath').value = s.navidrome_db_path || '';
+        document.getElementById('setMaintenanceInterval').value = s.maintenance_interval || 'weekly';
 
         updateCookieStatusUI(s.cookies_status);
         setDirty(false);
@@ -1121,6 +1142,7 @@
       const curNavToken = document.getElementById('setNavidromeToken').value;
       const curNavAuto = document.getElementById('setNavidromeAutoScan').checked;
       const curNavDb = document.getElementById('setNavidromeDbPath').value.trim();
+      const curMaintInt = document.getElementById('setMaintenanceInterval').value;
       const curTheme = _currentTheme;
 
       const isChanged = (
@@ -1148,7 +1170,8 @@
         curNavUser !== (_initialSettings.navidrome_user || '') ||
         curNavToken !== (_initialSettings.navidrome_token || '') ||
         curNavAuto !== (_initialSettings.navidrome_auto_scan !== false) ||
-        curNavDb !== (_initialSettings.navidrome_db_path || '')
+        curNavDb !== (_initialSettings.navidrome_db_path || '') ||
+        curMaintInt !== (_initialSettings.maintenance_interval || 'weekly')
       );
 
       setDirty(isChanged);
@@ -1270,6 +1293,7 @@
         navidrome_token: document.getElementById('setNavidromeToken').value,
         navidrome_auto_scan: document.getElementById('setNavidromeAutoScan').checked,
         navidrome_db_path: document.getElementById('setNavidromeDbPath').value.trim(),
+        maintenance_interval: document.getElementById('setMaintenanceInterval').value,
       };
 
       try {
@@ -1379,6 +1403,30 @@
         showToast('Network error: ' + err.message, 'error');
       } finally {
         if (btn) btn.disabled = false;
+      }
+    }
+
+    async function runMaintenanceNow() {
+      const btn = document.getElementById('btnRunMaintenance');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Starting...';
+      }
+      try {
+        const resp = await fetch('/api/maintenance/run', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok) {
+          showToast(data.message || 'Maintenance started in the background.', 'success');
+        } else {
+          showToast(data.error || 'Could not start maintenance', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-broom me-1"></i>Run Maintenance Now';
+        }
       }
     }
 
