@@ -19,6 +19,8 @@ import logging
 import os
 import secrets
 import shutil
+import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1517,16 +1519,13 @@ def _periodic_discography_sync_loop():
         except Exception:
             pass
 
-        # Periodically re-normalize library tags (retroactive Navidrome fix) so
-        # any stray files with mismatched metadata get fixed within a few hours,
-        # and re-merge any split album rows in the Navidrome DB.
+        # Periodically re-run library maintenance (tag normalization, album
+        # de-duplication, artwork backfill, Navidrome split repair) in a
+        # detached subprocess so the web loop is never blocked.
         # Throttled to once per 6h since steady-state runs are cheap but not free.
         try:
             if time.time() - _last_metadata_normalize >= 6 * 3600:
-                from services.metadata_service import normalize_album_tags
-                normalize_album_tags(app)
-                from services.navidrome_service import run_auto_split_repair
-                run_auto_split_repair(app)
+                _run_maintenance_subprocess()
                 _last_metadata_normalize = time.time()
         except Exception:
             logger.exception("[SCHEDULER] Periodic metadata normalization failed")
@@ -1603,17 +1602,29 @@ socketio.start_background_task(_periodic_discography_sync_loop)
 # Retroactive metadata normalization + Navidrome split repair: fix Navidrome
 # album grouping for the existing library on every boot (skips files that
 # already match, merges any split album rows in the Navidrome DB).
+#
+# The heavy work runs in a DETACHED SUBPROCESS (scripts/run_maintenance.py) so
+# the web dashboard stays responsive even with thousands of artists — the
+# inline version slowed every request while it scanned/tagged the library.
+def _run_maintenance_subprocess():
+    try:
+        subprocess.Popen(
+            [sys.executable, "/app/scripts/run_maintenance.py"],
+            stdout=open("/tmp/fnack-maintenance.log", "a"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        logger.info("[MAINTENANCE] Spawned background library maintenance (see /tmp/fnack-maintenance.log)")
+    except Exception as e:
+        logger.exception("[MAINTENANCE] Could not start maintenance subprocess: %s", e)
+
+
 def _boot_metadata_normalize():
-    try:
-        from services.metadata_service import normalize_album_tags
-        normalize_album_tags(app)
-    except Exception:
-        logger.exception("[METADATA] Boot normalization failed")
-    try:
-        from services.navidrome_service import run_auto_split_repair
-        run_auto_split_repair(app)
-    except Exception:
-        logger.exception("[NAVIDROME] Boot split-repair failed")
+    global _last_metadata_normalize
+    _run_maintenance_subprocess()
+    # Mark maintenance as just-run so the periodic scheduler (first cycle runs
+    # ~60s after boot) does not immediately re-run the whole pass.
+    _last_metadata_normalize = time.time()
 
 socketio.start_background_task(_boot_metadata_normalize)
 logger.info("fnack server initialized and background tasks (queue, watcher, scheduler, metadata) started")

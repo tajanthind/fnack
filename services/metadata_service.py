@@ -401,7 +401,7 @@ def _backfill_album_artwork(app) -> int:
     This fetches and saves any missing covers (parallelized, skips existing).
     Returns the number of covers saved.
     """
-    from models import Album, AppSetting
+    from models import Album, AppSetting, Track
 
     with app.app_context():
         s_save = db.session.get(AppSetting, "save_cover_art")
@@ -413,24 +413,38 @@ def _backfill_album_artwork(app) -> int:
 
         from services.queue_service import _save_album_cover
 
+        # Only albums that actually have downloaded files are candidates; only
+        # those whose folder is missing a cover get fetched. Two queries total.
+        tracks = (
+            Track.query.filter(Track.is_downloaded == True, Track.local_path.isnot(None))  # noqa: E712
+            .with_entities(Track.album_id, Track.local_path)
+            .all()
+        )
+        album_folder: dict = {}
+        for album_id, local_path in tracks:
+            if album_id not in album_folder:
+                album_folder[album_id] = Path(local_path).parent
+
+        rows = db.session.query(Album.id, Album.cover_url).filter(Album.cover_url.isnot(None)).all()
+
         jobs = []  # (dest_dir, cover_url)
         seen_dirs = set()
-        for album in Album.query.filter(Album.cover_url.isnot(None)).all():
-            if not album.cover_url:
+        for album_id, cover_url in rows:
+            if not cover_url:
                 continue
-            tracks = [t for t in album.tracks.all() if t.local_path]
-            if not tracks:
+            dest_dir = album_folder.get(album_id)
+            if dest_dir is None or not dest_dir.is_dir():
                 continue
-            dest_dir = Path(tracks[0].local_path).parent
-            if dest_dir in seen_dirs or not dest_dir.is_dir():
+            resolved = dest_dir.resolve()
+            if resolved in seen_dirs:
                 continue
-            seen_dirs.add(dest_dir)
+            seen_dirs.add(resolved)
             has_cover = any(
                 (dest_dir / fn).is_file() and (dest_dir / fn).stat().st_size > 1024
                 for fn in ("cover.jpg", "folder.jpg")
             )
             if not has_cover:
-                jobs.append((dest_dir, album.cover_url))
+                jobs.append((dest_dir, cover_url))
 
         saved = 0
         if not jobs:
