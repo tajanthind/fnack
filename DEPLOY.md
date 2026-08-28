@@ -282,6 +282,35 @@ docker exec fnack python3 /app/scripts/normalize_album_tags.py
 
 Then trigger a Navidrome scan (Settings → Navidrome → Scan) to re-group albums.
 
+### Automatic Navidrome album-split repair (recommended)
+
+If Navidrome already split some albums into multiple rows (e.g. from per-track
+release dates left by older fnack versions), fnack can merge those rows
+automatically at **every restart** and every 6h. It also takes a snapshot
+backup (`navidrome.db.bak-<timestamp>`) before any change.
+
+1. Make the Navidrome database visible to the fnack container by adding a bind
+   mount to `docker-compose.yml`:
+
+   ```yaml
+   volumes:
+     - ./config:/config
+     - ./downloads:/downloads
+     - ${MUSIC_PATH:-./music}:/music
+     - /opt/navidrome/data:/navidrome-data:ro   # <- Navidrome's data dir
+   ```
+
+   (Use `:ro` if Navidrome is running on the same host — fnack only needs to
+   read; the repair writes to the DB via SQLite WAL. If Navidrome runs on a
+   different machine, run the script there instead, or copy the DB.)
+
+2. In the web UI: **Settings → Navidrome → Navidrome Database Path**, enter
+   `/navidrome-data/navidrome.db`, and save.
+
+From then on fnack merges any split album rows at every boot and every 6h, and
+triggers a Navidrome rescan when it changes something. The **Fix Album Splits
+Now** button runs it immediately.
+
 ### Optional VPN support (single container)
 
 YouTube bot-checks are far less aggressive from residential IPs. fnack can route

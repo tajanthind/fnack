@@ -1180,6 +1180,16 @@ def api_navidrome_scan():
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
 
+@app.route("/api/navidrome/fix-splits", methods=["POST"])
+def api_navidrome_fix_splits():
+    """Run the Navidrome album-split repair now (also runs automatically at boot)."""
+    from services.navidrome_service import run_auto_split_repair
+    res = run_auto_split_repair(app)
+    if res.get("error"):
+        return jsonify({"success": False, **res}), 400
+    return jsonify({"success": True, **res})
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  VPN Management API (optional in-container VPN)
 # ══════════════════════════════════════════════════════════════════════
@@ -1361,6 +1371,8 @@ def api_settings():
             _set_setting("navidrome_token", str(data["navidrome_token"]).strip())
         if "navidrome_auto_scan" in data:
             _set_setting("navidrome_auto_scan", "true" if data["navidrome_auto_scan"] else "false")
+        if "navidrome_db_path" in data:
+            _set_setting("navidrome_db_path", str(data["navidrome_db_path"]).strip())
         if "theme" in data:
             _set_setting("theme", str(data["theme"]).strip())
         if "spotify_client_id" in data:
@@ -1402,6 +1414,7 @@ def api_settings():
         "navidrome_user": _get_setting("navidrome_user", ""),
         "navidrome_token": _get_setting("navidrome_token", ""),
         "navidrome_auto_scan": _get_setting("navidrome_auto_scan", "true").lower() == "true",
+        "navidrome_db_path": _get_setting("navidrome_db_path", ""),
     })
 
 
@@ -1505,12 +1518,15 @@ def _periodic_discography_sync_loop():
             pass
 
         # Periodically re-normalize library tags (retroactive Navidrome fix) so
-        # any stray files with mismatched metadata get fixed within a few hours.
+        # any stray files with mismatched metadata get fixed within a few hours,
+        # and re-merge any split album rows in the Navidrome DB.
         # Throttled to once per 6h since steady-state runs are cheap but not free.
         try:
             if time.time() - _last_metadata_normalize >= 6 * 3600:
                 from services.metadata_service import normalize_album_tags
                 normalize_album_tags(app)
+                from services.navidrome_service import run_auto_split_repair
+                run_auto_split_repair(app)
                 _last_metadata_normalize = time.time()
         except Exception:
             logger.exception("[SCHEDULER] Periodic metadata normalization failed")
@@ -1584,14 +1600,20 @@ socketio.start_background_task(start_queue_worker, app, socketio)
 socketio.start_background_task(start_folder_watcher, app, socketio)
 socketio.start_background_task(_periodic_discography_sync_loop)
 
-# Retroactive metadata normalization: fix Navidrome album grouping for the
-# existing library on every boot (skips files that already match).
+# Retroactive metadata normalization + Navidrome split repair: fix Navidrome
+# album grouping for the existing library on every boot (skips files that
+# already match, merges any split album rows in the Navidrome DB).
 def _boot_metadata_normalize():
     try:
         from services.metadata_service import normalize_album_tags
         normalize_album_tags(app)
     except Exception:
         logger.exception("[METADATA] Boot normalization failed")
+    try:
+        from services.navidrome_service import run_auto_split_repair
+        run_auto_split_repair(app)
+    except Exception:
+        logger.exception("[NAVIDROME] Boot split-repair failed")
 
 socketio.start_background_task(_boot_metadata_normalize)
 logger.info("fnack server initialized and background tasks (queue, watcher, scheduler, metadata) started")

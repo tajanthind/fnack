@@ -529,12 +529,29 @@
             <div class="text-secondary small">Automatically send a Subsonic scan request to Navidrome as soon as any track download finishes.</div>
           </div>
 
+          <div class="mb-3">
+            <label class="form-label small text-secondary fw-bold">Navidrome Database Path (auto-fix album splits)</label>
+            <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input font-monospace" id="setNavidromeDbPath" placeholder="/navidrome-data/navidrome.db">
+            <div class="form-text text-secondary small">
+              Optional: the <code>navidrome.db</code> file on this host, mounted into the fnack
+              container. When set, fnack merges split album rows (e.g. from per-track
+              release dates) automatically at every restart and every 6h — no manual
+              script needed. Add a bind mount for your Navidrome data dir in
+              <code>docker-compose.yml</code>, e.g. <code>- /opt/navidrome/data:/navidrome-data</code>,
+              then enter <code>/navidrome-data/navidrome.db</code> here. A snapshot backup is
+              taken before any change.
+            </div>
+          </div>
+
           <div class="d-flex flex-wrap align-items-center gap-2 pt-2 border-top border-secondary border-opacity-25">
             <button type="button" class="btn btn-outline-secondary btn-sm" id="btnTestNavidrome" onclick="testNavidromeConnection()">
               <i class="fas fa-plug me-1"></i>Test Connection
             </button>
             <button type="button" class="btn btn-outline-success btn-sm" id="btnScanNavidrome" onclick="triggerNavidromeScan()">
               <i class="fas fa-sync me-1"></i>Trigger Navidrome Scan Now
+            </button>
+            <button type="button" class="btn btn-outline-warning btn-sm" id="btnFixNavidromeSplits" onclick="fixNavidromeSplits()">
+              <i class="fas fa-merge me-1"></i>Fix Album Splits Now
             </button>
             <div id="navidromeTestResult" class="ms-2"></div>
           </div>
@@ -808,6 +825,7 @@
         document.getElementById('setNavidromeUser').value = s.navidrome_user || '';
         document.getElementById('setNavidromeToken').value = s.navidrome_token || '';
         document.getElementById('setNavidromeAutoScan').checked = s.navidrome_auto_scan !== false;
+        document.getElementById('setNavidromeDbPath').value = s.navidrome_db_path || '';
 
         updateCookieStatusUI(s.cookies_status);
         setDirty(false);
@@ -1102,6 +1120,7 @@
       const curNavUser = document.getElementById('setNavidromeUser').value.trim();
       const curNavToken = document.getElementById('setNavidromeToken').value;
       const curNavAuto = document.getElementById('setNavidromeAutoScan').checked;
+      const curNavDb = document.getElementById('setNavidromeDbPath').value.trim();
       const curTheme = _currentTheme;
 
       const isChanged = (
@@ -1128,7 +1147,8 @@
         curNavUrl !== (_initialSettings.navidrome_url || '') ||
         curNavUser !== (_initialSettings.navidrome_user || '') ||
         curNavToken !== (_initialSettings.navidrome_token || '') ||
-        curNavAuto !== (_initialSettings.navidrome_auto_scan !== false)
+        curNavAuto !== (_initialSettings.navidrome_auto_scan !== false) ||
+        curNavDb !== (_initialSettings.navidrome_db_path || '')
       );
 
       setDirty(isChanged);
@@ -1249,6 +1269,7 @@
         navidrome_user: document.getElementById('setNavidromeUser').value.trim(),
         navidrome_token: document.getElementById('setNavidromeToken').value,
         navidrome_auto_scan: document.getElementById('setNavidromeAutoScan').checked,
+        navidrome_db_path: document.getElementById('setNavidromeDbPath').value.trim(),
       };
 
       try {
@@ -1358,6 +1379,36 @@
         showToast('Network error: ' + err.message, 'error');
       } finally {
         if (btn) btn.disabled = false;
+      }
+    }
+
+    async function fixNavidromeSplits() {
+      const btn = document.getElementById('btnFixNavidromeSplits');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Fixing...';
+      }
+      try {
+        const resp = await fetch('/api/navidrome/fix-splits', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+          if (!data.enabled) {
+            showToast('Split auto-repair is disabled — set the Navidrome database path first.', 'warning');
+          } else if (data.groups === 0) {
+            showToast('No split albums found — library is clean.', 'success');
+          } else {
+            showToast(`Merged ${data.merged_rows} split album row(s) (${data.groups} group(s), ${data.moved_files} files repointed).`, 'success');
+          }
+        } else {
+          showToast(data.error || 'Split repair failed', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-merge me-1"></i>Fix Album Splits Now';
+        }
       }
     }
 

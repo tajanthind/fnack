@@ -25,11 +25,11 @@ Stop Navidrome, then:
 or run it on a copy and swap it in. Afterwards start Navidrome and trigger a
 full library rescan (Settings -> Rescan) so it re-verifies everything.
 
-Only the `album` and `media_file` tables are modified; if the schema ever
-changes this script refuses to run rather than corrupt anything.
+Note: fnack also runs this automatically at every restart when the
+"navidrome_db_path" setting is configured (Settings -> Navidrome), so the
+manual run is only needed for an immediate one-off fix.
 """
 
-import sqlite3
 import sys
 
 
@@ -37,87 +37,19 @@ def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__)
         return 2
-    db_path = sys.argv[1]
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
+    # Import the shared implementation (works without a Flask app context).
+    sys.path.insert(0, __file__.rsplit("/", 2)[0])
+    from services.navidrome_service import consolidate_split_albums
 
-    # ---- schema guards ----------------------------------------------------
-    album_cols = {r[1] for r in cur.execute("PRAGMA table_info(album)")}
-    file_cols = {r[1] for r in cur.execute("PRAGMA table_info(media_file)")}
-    for need in ("id", "album_artist", "name", "song_count", "embed_art_path",
-                 "small_image_url", "large_image_url", "release_date"):
-        if need not in album_cols:
-            print(f"ERROR: unexpected Navidrome schema (album has no '{need}'). Refusing to touch it.")
-            return 1
-    for need in ("album_id", "missing"):
-        if need not in file_cols:
-            print(f"ERROR: unexpected Navidrome schema (media_file has no '{need}'). Refusing to touch it.")
-            return 1
-
-    groups = cur.execute(
-        "SELECT album_artist, name, COUNT(*) c FROM album "
-        "GROUP BY album_artist, name HAVING COUNT(*) > 1"
-    ).fetchall()
-    if not groups:
+    stats = consolidate_split_albums(sys.argv[1])
+    if stats["groups"] == 0:
         print("No split album rows found — nothing to do.")
         return 0
-
-    print(f"Found {len(groups)} split album group(s); consolidating...")
-    merged_rows = 0
-    moved_files = 0
-
-    for g in groups:
-        rows = cur.execute(
-            "SELECT id, embed_art_path, small_image_url, large_image_url, release_date, date "
-            "FROM album WHERE album_artist=? AND name=? ORDER BY song_count DESC",
-            (g["album_artist"], g["name"]),
-        ).fetchall()
-        if len(rows) < 2:
-            continue
-        canon = rows[0]
-        others = [r for r in rows[1:]]
-        other_ids = [r["id"] for r in others]
-        placeholders = ",".join("?" * len(other_ids))
-
-        # Repoint every media file to the canonical album row
-        cur.execute(
-            f"UPDATE media_file SET album_id=? WHERE album_id IN ({placeholders})",
-            [canon["id"]] + other_ids,
-        )
-        moved_files += cur.rowcount
-
-        # Fill the canonical row's art/date from the richest leftover
-        for o in others:
-            if not canon["embed_art_path"] and o["embed_art_path"]:
-                cur.execute("UPDATE album SET embed_art_path=? WHERE id=?", (o["embed_art_path"], canon["id"]))
-            for col in ("small_image_url", "large_image_url"):
-                if not canon[col] and o[col]:
-                    cur.execute(f"UPDATE album SET {col}=? WHERE id=?", (o[col], canon["id"]))
-            if not canon["release_date"] and o["release_date"]:
-                cur.execute("UPDATE album SET release_date=? WHERE id=?", (o["release_date"], canon["id"]))
-            if not canon["date"] and o["date"]:
-                cur.execute("UPDATE album SET date=? WHERE id=?", (o["date"], canon["id"]))
-
-        cur.execute(f"DELETE FROM album WHERE id IN ({placeholders})", other_ids)
-        merged_rows += len(others)
-
-        # Refresh the visible song count from the actual files
-        n = cur.execute(
-            "SELECT COUNT(*) c FROM media_file WHERE album_id=? AND missing=0", (canon["id"],)
-        ).fetchone()["c"]
-        cur.execute("UPDATE album SET song_count=? WHERE id=?", (n, canon["id"]))
-
-    # Rebuild the album full-text index so search stays consistent
-    try:
-        cur.execute("INSERT INTO album_fts(album_fts) VALUES('rebuild')")
-    except Exception:
-        pass  # some schemas rebuild FTS on the next scan
-
-    conn.commit()
-    conn.close()
-    print(f"Done: merged {merged_rows} split album row(s), repointed {moved_files} media file(s).")
+    print(
+        f"Done: merged {stats['merged_rows']} split album row(s) across "
+        f"{stats['groups']} group(s), repointed {stats['moved_files']} media file(s)."
+    )
     print("Start Navidrome and trigger a full rescan to re-verify.")
     return 0
 
