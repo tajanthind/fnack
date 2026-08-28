@@ -54,11 +54,29 @@ if [ -d "$VPN_DIR" ] && ls "$VPN_DIR"/*.ovpn > /dev/null 2>&1; then
     done
 elif [ -f "$VPN_DIR/wg0.conf" ]; then
     echo "[FNACK] VPN: starting WireGuard with $VPN_DIR/wg0.conf"
-    if ! WG_OUTPUT=$(wg-quick up "$VPN_DIR/wg0.conf" 2>&1); then
+    RESOLV_BACKUP=""
+    if [ -f /etc/resolv.conf ]; then
+        RESOLV_BACKUP=$(mktemp)
+        cp /etc/resolv.conf "$RESOLV_BACKUP"
+    fi
+    if WG_OUTPUT=$(wg-quick up "$VPN_DIR/wg0.conf" 2>&1); then
+        echo "[FNACK] VPN: WireGuard tunnel is up"
+        # wg-quick repoints /etc/resolv.conf at the VPN's DNS servers; if the
+        # peer handshake is incomplete those are unreachable and EVERY name
+        # lookup in the container fails ("Temporary failure in name
+        # resolution"), killing all downloads. Restore Docker's resolver —
+        # traffic still egresses through the tunnel (fresh IP), only DNS
+        # queries use the host resolver.
+        if [ -n "$RESOLV_BACKUP" ] && [ -f /etc/resolv.conf ]; then
+            cp "$RESOLV_BACKUP" /etc/resolv.conf
+            rm -f "$RESOLV_BACKUP"
+        fi
+    else
         echo "[FNACK] WARNING: WireGuard failed to start:" >&2
         echo "$WG_OUTPUT" | tail -6 >&2
         echo "[FNACK] Hint: the container must run with --cap-add=NET_ADMIN, --device=/dev/net/tun" >&2
         echo "[FNACK]       and --sysctl net.ipv4.conf.all.src_valid_mark=1 (see docker-compose.yml)." >&2
+        [ -n "$RESOLV_BACKUP" ] && rm -f "$RESOLV_BACKUP"
     fi
 fi
 

@@ -109,6 +109,37 @@ def get_vpn_status() -> dict:
     }
 
 
+def _restore_docker_dns() -> None:
+    """Keep the container's DNS working after wg-quick repoints /etc/resolv.conf.
+
+    wg-quick writes the VPN's DNS servers into /etc/resolv.conf; when the peer
+    handshake is incomplete those servers are unreachable and every name lookup
+    fails ("Temporary failure in name resolution"). We restore the original
+    resolver — the tunnel still routes traffic (fresh egress IP), only DNS
+    queries go through the host resolver.
+    """
+    try:
+        if not os.path.exists(_RESOLV_BACKUP):
+            return
+        with open(_RESOLV_BACKUP, "r", encoding="utf-8") as f:
+            content = f.read()
+        if not content.strip():
+            return
+        with open("/etc/resolv.conf", "w", encoding="utf-8") as f:
+            f.write(content)
+        logger.info("[VPN] Restored container DNS (host resolver) after tunnel up")
+    except Exception as e:
+        logger.warning("[VPN] Could not restore /etc/resolv.conf: %s", e)
+    finally:
+        try:
+            os.remove(_RESOLV_BACKUP)
+        except OSError:
+            pass
+
+
+_RESOLV_BACKUP = "/tmp/fnack-resolv-backup.conf"
+
+
 def start_vpn() -> Tuple[bool, str]:
     """Start the configured VPN (OpenVPN or WireGuard) in the background."""
     if _vpn_processes():
@@ -121,6 +152,13 @@ def start_vpn() -> Tuple[bool, str]:
         VPN_DIR.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         return False, f"Cannot create {VPN_DIR}: {e}"
+
+    # Back up the working Docker resolver before wg-quick can hijack it
+    try:
+        import shutil
+        shutil.copy2("/etc/resolv.conf", _RESOLV_BACKUP)
+    except Exception:
+        pass
 
     # OpenVPN takes precedence when present
     ovpn = _openvpn_configs()
@@ -148,13 +186,16 @@ def start_vpn() -> Tuple[bool, str]:
         r = subprocess.run(["wg-quick", "up", str(wg)], capture_output=True, text=True, timeout=60)
         if r.returncode == 0:
             logger.info("[VPN] WireGuard tunnel up via %s", wg.name)
+            _restore_docker_dns()
             _clear_spotiflac_breaker()
             return True, f"WireGuard connected via {wg.name}"
         err_text = (r.stderr or r.stdout or "").strip()[:300]
         logger.warning("[VPN] WireGuard failed to start via %s: %s", wg.name, err_text)
+        _restore_docker_dns()
         return False, f"WireGuard failed to start: {err_text}"
     except Exception as e:
         logger.warning("[VPN] WireGuard error via %s: %s", wg.name, e)
+        _restore_docker_dns()
         return False, f"WireGuard error: {e}"
 
 
