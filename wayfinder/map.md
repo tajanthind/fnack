@@ -37,16 +37,36 @@ unknown/regional tracks. The whole thing works reliably.
 
 <!-- one line per closed ticket; zoom the linked ticket for the detail -->
 
+- [Diagnose the 180 failing tracks and pick the highest-leverage fixes](tickets/diagnose-failing-tracks.md):
+  66% of failures are the SoundCloud search fallback producing junk — remove
+  the `scsearch2:` targets; AcoustID verification + VPN/cookies cover the rest.
+- [Explain and stop the phantom artists in Navidrome](tickets/phantom-artists.md):
+  composer/producer credits in tags become Navidrome artist rows — extend
+  `_tag_audio_file`'s strip list + normalizer check + a one-time cleanup
+  script + full rescan.
+- [Design the MusicBrainz catalogue integration](tickets/musicbrainz-integration.md):
+  enrichment-only (`musicbrainz_service.py` after discography fetch);
+  Deezer authoritative; regional negative cache; stale MB can only add;
+  1 req/s, fail-soft.
+- [Design optional AcoustID fingerprinting](tickets/acoustid-fingerprinting.md):
+  optional key (`acoustid_api_key`); fpcalc subprocess, no new pip deps;
+  verify-when-unsure (0.8 gate) + manual identify; regional no-match silent.
+- [Zero required authentication — audit and close gaps](tickets/zero-auth-audit.md):
+  no gaps — all human-facing surfaces unauthenticated; API key optional/M2M.
+- [Regional-artist catalogue fallback strategy](tickets/regional-artist-fallback.md):
+  keyless-disabled AcoustID by default; remove SoundCloud search fallback;
+  no-match changes nothing; identification auto-applies, mismatches get a
+  caution mark + "what it matched to", user keeps/deletes.
+
 ## Not yet specified
 
-- How the maintenance/merge policy should change once MusicBrainz facts land
-  (e.g., canonical title casing, year reconciliation between Deezer and
-  MusicBrainz release groups).
-- Whether AcoustID fingerprinting runs on every download or only when the
-  verifier is unsure / the track failed (fpcalc CPU cost per file).
-- Navidrome-side config change vs tag-stripping in fnack for hiding
-  songwriter artists — which is visible to the user, and whether both are
-  needed.
+- ~~How the maintenance/merge policy should change once MusicBrainz facts
+  land~~ → resolved: enrichment-only, Deezer authoritative.
+- ~~Whether AcoustID runs on every download or only when unsure~~ → resolved:
+  only when the verifier is unsure / on manual identify; optional
+  every-download setting deferred until the user judges performance.
+- ~~Navidrome config vs tag-stripping~~ → resolved: tag-stripping in fnack is
+  the fix; cleanup script + full rescan for existing rows.
 
 ## Out of scope
 
