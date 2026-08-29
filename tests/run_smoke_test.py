@@ -44,10 +44,11 @@ with app.app_context():
     track_id = t.id
 
     from plugins.manager import init_plugin_manager
+    from version import __version__
 
     manager = init_plugin_manager(
         plugins_dir=str(Path(__file__).resolve().parent.parent / "examples" / "plugins"),
-        core_version="0.2.37",
+        core_version=__version__,
     )
     manager.load_all()  # no enabled_ids filter -> enable everything discovered
     print("Loaded plugins:", manager.list_loaded())
