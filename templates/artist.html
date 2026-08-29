@@ -61,6 +61,9 @@
   </nav>
 
   <!-- Artist Content Container -->
+  <!-- Plugin UI slots (INTEGRATION.md §4): track_row_actions contributions render here;
+       track rows are client-rendered, so Phase 1 wires a JS-side slot fetch for per-track rows. -->
+  {{ plugin_slot('track_row_actions') }}
   <div id="artistPageContainer">
     <div class="container py-5 text-center text-secondary">
       <div class="spinner-border text-danger" role="status"></div>
