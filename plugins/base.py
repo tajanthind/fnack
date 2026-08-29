@@ -238,3 +238,73 @@ class EventHookPlugin(PluginBase):
     self.context.events.subscribe(event_name, callback). Useful for
     notifications, webhooks, and cross-cutting flags (see the
     example-quality-flag demo plugin)."""
+
+
+# --------------------------------------------------------------------------
+# HARNESS §3 additions: types designed into the enum from the start so the
+# manifest `type` schema doesn't change shape twice. Interfaces here are the
+# minimal contract each will need; full implementations land in later phases.
+# --------------------------------------------------------------------------
+
+class LyricsProviderPlugin(PluginBase):
+    """Look up lyrics for a track. Sibling of metadata_provider; the same
+    priority-chain pattern applies (LRCLIB / Genius / Musixmatch as separate
+    plugins)."""
+
+    priority: int = 100
+
+    @abstractmethod
+    def get_lyrics(self, track: TrackRef) -> Optional[str]:
+        """Return lyrics text, or None if this provider has nothing."""
+
+
+class StorageBackendPlugin(PluginBase):
+    """Where finished files land (local disk vs S3/rclone/network share).
+    Phase 1 keeps `context.fs` concrete-local; this interface is the future
+    abstraction point so power users aren't locked into local paths."""
+
+    @abstractmethod
+    def store(self, src_path: Path, relative_dest: str) -> tuple[bool, str]:
+        """Persist a finished file to this backend at `relative_dest`.
+        Returns (ok, error_or_path)."""
+
+    @abstractmethod
+    def retrieve(self, relative_path: str) -> Optional[Path]:
+        """Materialize a stored file locally for serving/tagging; returns the
+        local path or None."""
+
+
+class AuthProviderPlugin(PluginBase):
+    """Phase 4 stretch: SSO / reverse-proxy-header auth as a plugin (for
+    Authelia/Authentik deployments). Listed now so the manifest `type` enum
+    doesn't have to change shape twice. Do not implement until core auth is
+    stable."""
+
+    @abstractmethod
+    def authenticate(self, request_headers: dict) -> Optional[str]:
+        """Return the authenticated username, or None if unauthenticated."""
+
+
+class LibrarySourcePlugin(PluginBase):
+    """A source of artists/albums to monitor (the mirror of `downloader`,
+    which is a source of audio). E.g. a Lidarr-style integration that feeds
+    new artists into fnack's library."""
+
+    @abstractmethod
+    def list_artists(self) -> list[dict]:
+        """Return [{name, external_id, image_url?}, ...] to add/monitor."""
+
+    def poll(self) -> None:
+        """Optional: called periodically to discover new artists."""
+
+
+class ConflictResolverPlugin(PluginBase):
+    """Decides between duplicate/conflicting files (e.g. the same track
+    downloaded at two bitrates — which do we keep). Needs a decision
+    return-value, not just a pass/fail TaskResult, so it is its own narrow
+    interface rather than a generic maintenance job."""
+
+    @abstractmethod
+    def resolve(self, candidates: list[dict]) -> dict:
+        """`candidates` is [{file_path, format, bitrate, size_bytes, source}].
+        Return {"keep": <file_path>, "reason": "...", "delete": [paths]}."""

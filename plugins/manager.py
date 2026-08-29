@@ -121,6 +121,17 @@ class PluginManager:
         if isinstance(raw["type"], str):
             raw["type"] = [raw["type"]]
 
+        # HARNESS §3: warn (don't hard-fail) on types this core doesn't know —
+        # the manifest type enum is forward-compatible so a plugin built for a
+        # newer core still loads with a visible warning instead of breaking.
+        from plugins import VALID_TYPES
+        unknown = [t for t in raw["type"] if t not in VALID_TYPES]
+        if unknown:
+            logger.warning(
+                "Plugin %s declares unknown type(s) %s (this core knows: %s)",
+                raw.get("id"), unknown, sorted(VALID_TYPES),
+            )
+
         return PluginManifest(**raw)
 
     @staticmethod
