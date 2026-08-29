@@ -108,6 +108,7 @@ caution reason and contributes a badge to the track row. Copy it to start.
 | `auth_provider` | SSO / reverse-proxy auth (planned, Phase 4) | *interface lands with implementation* |
 | `library_source` | Source of artists/albums to monitor (planned) | *interface lands with implementation* |
 | `conflict_resolver` | Decide between duplicate/conflicting files (planned) | *interface lands with implementation* |
+| `recommendation` | Suggest artists/albums/tracks (planned) | *interface lands with implementation* |
 
 A plugin can be more than one type (e.g. `["scan_trigger", "ui_extension"]`).
 
