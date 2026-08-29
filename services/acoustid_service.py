@@ -38,6 +38,8 @@ DISPLAY_THRESHOLD = 0.4
 # AcoustID guideline: <= 3 requests/second. We pace generously to 1.2s.
 _MIN_INTERVAL = 1.2
 _last_request = 0.0
+_last_lookup_had_results = False
+_last_lookup_missing_metadata = False
 
 
 def _get_key() -> str:
@@ -77,16 +79,26 @@ def _parse_fpcalc(stdout: str) -> Optional[tuple]:
 
 
 def fingerprint_file(path: str) -> Optional[tuple]:
-    """Run fpcalc on a file. Returns (duration_seconds, fingerprint) or None."""
+    """Run fpcalc on a file. Returns (duration_seconds, fingerprint) or None.
+
+    The fingerprint is the COMPRESSED chromaprint format (fpcalc default,
+    base64) — AcoustID's API rejects the uncompressed '-raw' form (its
+    request line limit is ~8KB and raw fingerprints exceed it).
+    fpcalc may exit non-zero (3) on a decode hiccup (truncated last frame)
+    but still prints a perfectly usable fingerprint, so we parse stdout and
+    only give up when no fingerprint came out.
+    """
     try:
         r = subprocess.run(
-            ["fpcalc", "-length", "120", "-raw", path],
+            ["fpcalc", "-length", "120", path],
             capture_output=True, text=True, timeout=60,
         )
-        if r.returncode != 0:
-            logger.debug("[ACOUSTID] fpcalc failed: %s", (r.stderr or "").strip()[:200])
-            return None
-        return _parse_fpcalc(r.stdout)
+        parsed = _parse_fpcalc(r.stdout)
+        if parsed:
+            return parsed
+        logger.debug("[ACOUSTID] fpcalc produced no fingerprint (rc=%s): %s",
+                     r.returncode, (r.stderr or "").strip()[:200])
+        return None
     except Exception as e:
         logger.debug("[ACOUSTID] fpcalc error: %s", e)
         return None
@@ -118,6 +130,9 @@ def lookup(fingerprint: str, duration: Optional[float], limit: int = 5) -> list:
         return []
 
     out = []
+    global _last_lookup_had_results, _last_lookup_missing_metadata
+    _last_lookup_had_results = False
+    _last_lookup_missing_metadata = False
     for res in (data.get("results") or [])[:limit]:
         recs = []
         for rec in (res.get("recordings") or [])[:6]:
@@ -132,6 +147,17 @@ def lookup(fingerprint: str, duration: Optional[float], limit: int = 5) -> list:
             })
         if recs:
             out.append({"score": float(res.get("score") or 0.0), "recordings": recs})
+    # Diagnose "scores but no metadata" — the classic acoustid.org key-type issue
+    # (account/application key vs the client API key that carries metadata).
+    if data.get("results"):
+        _last_lookup_had_results = True
+        if not out:
+            _last_lookup_missing_metadata = True
+            logger.warning(
+                "[ACOUSTID] API returned match(es) but no recording metadata — the configured key "
+                "likely lacks metadata access. Use the application's CLIENT API key "
+                "(acoustid.org -> Applications), not the account/user key."
+            )
     return out
 
 

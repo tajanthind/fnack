@@ -1018,6 +1018,14 @@ def api_track_identify(track_id):
         logger.exception("[ACOUSTID] Identify failed")
         return jsonify({"error": f"Fingerprint lookup failed: {e}"}), 500
     if not candidates:
+        from services.acoustid_service import _last_lookup_had_results, _last_lookup_missing_metadata
+        if _last_lookup_missing_metadata:
+            return jsonify({
+                "candidates": [],
+                "message": "AcoustID matched the song but returned no metadata. Your key likely lacks "
+                           "metadata access — use the CLIENT API key from acoustid.org → Applications.",
+                "key_issue": True,
+            })
         return jsonify({"candidates": [], "message": "No fingerprint match found (common for regional/underground tracks)."})
     auto = next((c for c in candidates if c.get("score", 0) >= 0.8), None)
     return jsonify({"candidates": candidates, "auto_apply": auto})
