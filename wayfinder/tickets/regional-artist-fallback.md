@@ -15,10 +15,11 @@ catalogue/discography flow never depends on either service.
 
 - **AcoustID key**: strictly optional. Without a key the feature is disabled
   (no "Identify this file" action, no fingerprint lookups) and everything
-  else works unchanged. The user adds a free acoustid.org key later if they
-  want; ship it as an optional Settings field ("keyless disabled" by
-  default). Treat AcoustID as an evolving capability: ship it optional, let
-  the user judge performance, revisit reliance later.
+  else works unchanged. **Confirmed by the user: they will register a free
+  acoustid.org key if/when they want it** — ship as an optional Settings
+  field ("keyless disabled" by default). Treat AcoustID as an evolving
+  capability: ship it optional, let the user judge performance, revisit
+  reliance later.
 - **SoundCloud search fallback**: REMOVE the `scsearch2:` targets from the
   yt-dlp fallback (approved). Direct SoundCloud URL downloads stay.
 - **No MusicBrainz / no AcoustID match**: must change NOTHING — Deezer +
