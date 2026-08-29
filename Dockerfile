@@ -15,8 +15,10 @@ FROM python:3.11-slim-bookworm
 # bind-mounted file in Docker and fails with "Device or resource busy".)
 # nftables is used by wg-quick for the tunnel firewall rules (it falls back
 # to iptables-restore, which is not installed, when nft is missing).
+# libchromaprint-tools provides `fpcalc` for the optional AcoustID
+# fingerprinting feature.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb x11-utils procps curl unzip xz-utils ca-certificates openvpn wireguard-tools iproute2 openresolv nftables && \
+    apt-get install -y --no-install-recommends ffmpeg nodejs chromium xvfb x11-utils procps curl unzip xz-utils ca-certificates openvpn wireguard-tools iproute2 openresolv nftables libchromaprint-tools && \
     curl -fsSL https://nodejs.org/dist/v22.17.0/node-v22.17.0-linux-x64.tar.xz -o /tmp/node22.tar.xz && \
     tar -xJf /tmp/node22.tar.xz -C /usr/local --strip-components=1 && \
     rm -f /tmp/node22.tar.xz && \

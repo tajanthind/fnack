@@ -416,12 +416,11 @@ def download_track_ytdlp(
                 expanded.append(t)
         targets_to_try = expanded
 
-        # Add a single SoundCloud search fallback (quoted, most precise).
-        # SoundCloud searches for non-Western tracks usually return wrong
-        # songs/compilation mixes, which the verifier rejects anyway, so one
-        # attempt is enough — two just doubled the wasted time per failure.
-        clean_t = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", "", track_title).strip()
-        targets_to_try.append(f'scsearch2:"{artist_name}" "{clean_t}"')
+        # NOTE: no scsearch2: SoundCloud *search* fallback. For this library
+        # (regional Punjabi music and mainstream alike) SoundCloud searches
+        # return playlists/compilations and DjPunjab-style rips that the
+        # verifier always rejects — it was the #1 failure cause, wasting queue
+        # time per failed track. Direct SoundCloud URL downloads still work.
     elif not (target.startswith("http://") or target.startswith("https://") or target.startswith("ytsearch") or target.startswith("scsearch")):
         targets_to_try = [f"ytsearch1:{target}", f"scsearch1:{target}"]
     else:
@@ -440,11 +439,8 @@ def download_track_ytdlp(
                 expected_artist=artist_name,
                 expected_title=track_title,
                 max_duration_delta=max_duration_delta,
-                delete_on_failure=True,
+                delete_on_failure=False,
             )
-            if not v_ok:
-                logger.info("[YT-DLP] Candidate '%s' rejected (%s); trying next candidate...", cand_target, v_err)
-                return False
         else:
             # Duration check disabled: still reject a CONFIRMED wrong song via tags
             v_ok, v_err, _meta = verify_audio_file(
@@ -452,9 +448,26 @@ def download_track_ytdlp(
                 expected_duration_seconds=None,
                 expected_artist=artist_name,
                 expected_title=track_title,
-                delete_on_failure=True,
+                delete_on_failure=False,
             )
-            if not v_ok:
+        if not v_ok:
+            # AcoustID rescue: the tags may be wrong while the audio IS the
+            # right song (mislabeled uploads) — confirm before deleting.
+            rescued = False
+            try:
+                from services.acoustid_service import verify_download
+                res = verify_download(str(produced), artist_name, track_title,
+                                      expected_duration if check_duration else None)
+                if res["status"] == "match":
+                    rescued = True
+                    logger.info("[YT-DLP] AcoustID confirmed candidate '%s' (right file, wrong tags)", cand_target)
+            except Exception:
+                pass
+            if not rescued:
+                try:
+                    produced.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 logger.info("[YT-DLP] Candidate '%s' rejected (%s); trying next candidate...", cand_target, v_err)
                 return False
         logger.info("[YT-DLP] Successfully downloaded: %s (%d bytes)", produced.name, produced.stat().st_size)

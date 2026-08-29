@@ -94,6 +94,13 @@
             <li><strong>Deezer:</strong> <code>https://www.deezer.com/track/...</code></li>
           </ul>
         </div>
+        <div class="border-top border-secondary border-opacity-25 pt-2 mt-1">
+          <button type="button" class="btn btn-outline-info btn-sm" id="manualMatchIdentifyBtn" onclick="identifyTrackFile()">
+            <i class="fas fa-fingerprint me-1"></i>Identify this file (AcoustID)
+          </button>
+          <div id="manualMatchResults" class="mt-2"></div>
+          <div class="form-text text-secondary small mt-1">Fingerprints the file already on disk and looks it up on AcoustID — great for unknown/regional songs with missing or wrong tags. Requires the optional AcoustID key in Settings.</div>
+        </div>
       </div>
       <div class="modal-footer d-flex justify-content-end gap-2">
         <button type="button" class="btn btn-outline-secondary btn-sm" onclick="hideManualMatchModal()">Cancel</button>

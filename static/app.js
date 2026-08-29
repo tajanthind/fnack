@@ -562,6 +562,9 @@ function renderTrackRow(track, albumName = '') {
   const safeTitle = (track.title || '').replace(/'/g, "\\'");
   const safeAlbum = (albumName || '').replace(/'/g, "\\'");
   const safeArtist = (window._currentArtistName || '').replace(/'/g, "\\'");
+  let cautionInfo = null;
+  try { cautionInfo = track.caution_info ? JSON.parse(track.caution_info) : null; } catch (e) { cautionInfo = null; }
+  const cautionTitle = cautionInfo ? `Matched to '${cautionInfo.matched_title || '?'}' by ${(cautionInfo.matched_artists || []).join(', ') || '?'} (score ${cautionInfo.score})` : 'AcoustID: this file is a different song';
 
   return `
     <tr id="track_row_${track.id}" class="${!isMonitored ? 'track-disabled' : ''}">
@@ -581,6 +584,7 @@ function renderTrackRow(track, albumName = '') {
       <td class="text-secondary small font-monospace d-none-mobile" style="font-size:0.75rem;">${track.isrc || '—'}</td>
       <td id="track_status_${track.id}">
         ${statusBadgeHtml(track.status, track.error_message)}
+        ${track.caution ? `<div class="mt-1"><span class="badge badge-caution" title="${escapeHtml(cautionTitle)}"><i class="fas fa-exclamation-triangle me-1"></i>Caution: matched to '${escapeHtml(cautionInfo ? cautionInfo.matched_title || '?' : '?')}'</span></div>` : ''}
       </td>
       <td class="small text-secondary text-truncate d-none-mobile" style="max-width: 140px;" title="${escapeHtml(track.local_path || '')}">
         ${track.is_downloaded ? `<span class="badge bg-secondary text-uppercase">${track.file_format || 'FLAC'}</span> ${formatBytes(track.size_bytes)}` : '—'}
@@ -606,6 +610,14 @@ function renderTrackRow(track, albumName = '') {
           }
           ${track.is_downloaded ? `
             <button class="btn btn-sm btn-outline-danger btn-icon" title="Delete file" onclick="deleteTrack(${track.id}, '${escapeHtml(track.title)}')">
+              <i class="fas fa-trash"></i>
+            </button>` : ''
+          }
+          ${track.caution ? `
+            <button class="btn btn-sm btn-outline-success btn-icon" title="Keep — accept it as '${escapeHtml(cautionInfo && cautionInfo.matched_title ? cautionInfo.matched_title : '?')}' and re-tag" onclick="resolveCaution(${track.id}, 'keep')">
+              <i class="fas fa-check"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-danger btn-icon" title="Delete this mismatched file" onclick="resolveCaution(${track.id}, 'delete')">
               <i class="fas fa-trash"></i>
             </button>` : ''
           }
@@ -682,6 +694,106 @@ async function submitManualMatch() {
       submitBtn.disabled = false;
       submitBtn.innerHTML = '<i class="fas fa-download me-1"></i>Fetch & Replace';
     }
+  }
+}
+
+// ----- AcoustID: identify + caution resolution -----
+let _identifyResults = [];
+
+async function identifyTrackFile() {
+  const trackId = _currentManualMatchTrackId;
+  if (!trackId) return;
+  const resultsEl = document.getElementById('manualMatchResults');
+  const btn = document.getElementById('manualMatchIdentifyBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Fingerprinting...';
+  }
+  if (resultsEl) resultsEl.innerHTML = '<div class="text-secondary small py-2"><i class="fas fa-spinner fa-spin me-1"></i>Fingerprinting and looking up AcoustID...</div>';
+  try {
+    const resp = await fetch(`/api/track/${trackId}/identify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      if (resultsEl) resultsEl.innerHTML = `<div class="text-warning small py-2">${escapeHtml(data.error || 'Identify failed')}</div>`;
+      return;
+    }
+    _identifyResults = data.candidates || [];
+    if (data.auto_apply) {
+      // strong single match -> auto-apply
+      await applyIdentifyCandidate(data.auto_apply);
+      return;
+    }
+    if (_identifyResults.length === 0) {
+      if (resultsEl) resultsEl.innerHTML = `<div class="text-secondary small py-2">${escapeHtml(data.message || 'No match found')}</div>`;
+      return;
+    }
+    if (resultsEl) {
+      resultsEl.innerHTML = '<div class="small text-secondary py-1">Pick the match to apply:</div>' +
+        _identifyResults.map((c, i) => {
+          const artists = (c.artists || []).join(', ') || '?';
+          return `<div class="d-flex justify-content-between align-items-center border-bottom border-secondary border-opacity-25 py-1">
+            <div class="text-truncate"><span class="badge bg-secondary me-1" style="font-size:0.65rem;">${Math.round(c.score * 100)}%</span>
+              <span class="fw-semibold">${escapeHtml(c.title || '?')}</span>
+              <span class="text-secondary small"> — ${escapeHtml(artists)}</span></div>
+            <button class="btn btn-sm btn-outline-success btn-icon ms-2" title="Apply this match" onclick="applyIdentifyCandidate(_identifyResults[${i}])"><i class="fas fa-check"></i></button>
+          </div>`;
+        }).join('');
+    }
+  } catch (err) {
+    if (resultsEl) resultsEl.innerHTML = `<div class="text-danger small py-2">Network error: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-fingerprint me-1"></i>Identify this file';
+    }
+  }
+}
+
+async function applyIdentifyCandidate(candidate) {
+  const trackId = _currentManualMatchTrackId;
+  if (!trackId || !candidate) return;
+  try {
+    const resp = await fetch(`/api/track/${trackId}/identify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate }),
+    });
+    const data = await resp.json();
+    const resultsEl = document.getElementById('manualMatchResults');
+    if (resp.ok) {
+      if (resultsEl) resultsEl.innerHTML = `<div class="text-success small py-2">${escapeHtml(data.message || 'Applied')}</div>`;
+      showToast(data.message || 'Match applied', 'success');
+      const artistId = window._currentArtistId;
+      if (artistId) loadArtistDetailPage(artistId);
+    } else {
+      if (resultsEl) resultsEl.innerHTML = `<div class="text-danger small py-2">${escapeHtml(data.error || 'Apply failed')}</div>`;
+    }
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
+  }
+}
+
+async function resolveCaution(trackId, action) {
+  try {
+    const resp = await fetch(`/api/track/${trackId}/caution`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      showToast(data.message, 'success');
+      const artistId = window._currentArtistId;
+      if (artistId) loadArtistDetailPage(artistId);
+    } else {
+      showToast(data.error || 'Action failed', 'error');
+    }
+  } catch (err) {
+    showToast('Network error: ' + err.message, 'error');
   }
 }
 

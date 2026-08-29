@@ -271,6 +271,13 @@ def import_artist_folder(
         include_compilations=opts.get("include_compilations", False),
     )
 
+    # MusicBrainz enrichment (additive only, fail-soft, regional negative cache)
+    try:
+        from services.musicbrainz_service import enrich_albums
+        enrich_albums(disco.get("artist_name") or folder_name, disco.get("albums") or [])
+    except Exception:
+        logger.debug("[MB] enrichment skipped", exc_info=True)
+
     artist_name = disco["artist_name"]
     artist = Artist.query.filter_by(spotify_id=str(deezer_artist_id)).first()
     if not artist:
@@ -315,6 +322,14 @@ def import_artist_folder(
             )
             db.session.add(album)
             db.session.flush()
+        # MusicBrainz enrichment is additive-only
+        if a.get("mb_release_group_id"):
+            if not album.mb_release_group_id:
+                album.mb_release_group_id = a["mb_release_group_id"]
+            if not album.mb_title and a.get("mb_title"):
+                album.mb_title = a["mb_title"]
+            if not album.mb_year and a.get("mb_year"):
+                album.mb_year = a["mb_year"]
 
         for t in a.get("tracks", []):
             track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()

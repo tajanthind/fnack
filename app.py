@@ -377,6 +377,14 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
             include_compilations=options.get("include_compilations", False),
         )
 
+        # MusicBrainz enrichment (additive only; regional artists are
+        # negative-cached and never probed; fail-soft on any error).
+        try:
+            from services.musicbrainz_service import enrich_albums
+            enrich_albums(disco.get("artist_name") or artist.name, disco.get("albums") or [])
+        except Exception:
+            logger.debug("[MB] enrichment skipped", exc_info=True)
+
         with app.app_context():
             artist = db.session.get(Artist, artist_id)
             if not artist:
@@ -406,6 +414,14 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                         album.year = a["year"]
                     if a.get("record_type") and not album.record_type:
                         album.record_type = a["record_type"]
+                # MusicBrainz enrichment is additive-only
+                if a.get("mb_release_group_id"):
+                    if not album.mb_release_group_id:
+                        album.mb_release_group_id = a["mb_release_group_id"]
+                    if not album.mb_title and a.get("mb_title"):
+                        album.mb_title = a["mb_title"]
+                    if not album.mb_year and a.get("mb_year"):
+                        album.mb_year = a["mb_year"]
 
                 for t in a.get("tracks", []):
                     track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()
@@ -571,6 +587,8 @@ def api_get_artist(artist_id):
                 "size_bytes": t.size_bytes,
                 "error_message": t.error_message,
                 "is_unmatched": t.is_unmatched,
+                "caution": bool(getattr(t, "caution", False)),
+                "caution_info": getattr(t, "caution_info", None),
             })
 
         albums_data.append({
@@ -934,6 +952,158 @@ def api_track_manual_match(track_id):
         "message": f"Downloading audio from provided URL for '{track.title}'...",
         "track_id": track_id,
     }), 202
+
+
+@app.route("/api/track/<int:track_id>/identify", methods=["POST"])
+def api_track_identify(track_id):
+    """Fingerprint the track's current file and return AcoustID candidates
+    ('Identify this file'). Requires the optional acoustid_api_key.
+    With a 'candidate' body, applies that candidate (retags the file with the
+    matched identity and clears any caution flag) — the auto-apply path."""
+    import json as _json
+    from services.acoustid_service import is_enabled, identify
+    from services.queue_service import _tag_audio_file
+
+    data = request.get_json(silent=True) or {}
+    candidate = data.get("candidate")
+
+    with app.app_context():
+        t = db.session.get(Track, track_id)
+        if not t:
+            return jsonify({"error": "Track not found"}), 404
+        if not t.local_path or not os.path.isfile(t.local_path):
+            return jsonify({"error": "No audio file for this track"}), 400
+
+        if candidate:
+            matched_title = (candidate.get("title") or "").strip() or t.title
+            matched_artist = ((candidate.get("artists") or [""])[0]).strip() or (t.album.artist.name if t.album and t.album.artist else "")
+            if matched_artist:
+                artist = Artist.query.filter_by(name=matched_artist).first()
+                if not artist:
+                    artist = Artist(spotify_id=f"acoustid:{matched_artist}", name=matched_artist, source="manual")
+                    db.session.add(artist)
+                    db.session.flush()
+                t.artist_id = artist.id
+            if matched_title:
+                t.title = matched_title
+            t.caution = False
+            t.caution_info = None
+            fp = t.local_path
+            if fp and os.path.isfile(fp):
+                try:
+                    _tag_audio_file(
+                        Path(fp),
+                        artist=t.artist.name if t.artist else matched_artist,
+                        album=t.album.name if t.album else "",
+                        title=matched_title,
+                        track_num=t.track_number or 0,
+                        year=t.album.year if t.album else None,
+                        album_artist=t.artist.name if t.artist else matched_artist,
+                        disc_num=t.disc_number or 1,
+                        cover_bytes=None,
+                        genre=t.genre,
+                    )
+                except Exception:
+                    logger.exception("[ACOUSTID] Apply candidate retag failed")
+            db.session.commit()
+            socketio.emit("artist_updated", {"artist_id": t.artist_id})
+            return jsonify({"message": f"Applied: '{matched_title}' by {matched_artist or '?'} (re-tagged).", "applied": True})
+
+    if not is_enabled():
+        return jsonify({"error": "AcoustID is not configured (no api key). Add one in Settings to enable fingerprinting."}), 400
+
+    try:
+        candidates = identify(t.local_path)
+    except Exception as e:
+        logger.exception("[ACOUSTID] Identify failed")
+        return jsonify({"error": f"Fingerprint lookup failed: {e}"}), 500
+    if not candidates:
+        return jsonify({"candidates": [], "message": "No fingerprint match found (common for regional/underground tracks)."})
+    auto = next((c for c in candidates if c.get("score", 0) >= 0.8), None)
+    return jsonify({"candidates": candidates, "auto_apply": auto})
+
+
+@app.route("/api/track/<int:track_id>/caution", methods=["POST"])
+def api_track_caution(track_id):
+    """Resolve an AcoustID caution flag: action=keep (accept the matched song,
+    retag the file with what it actually is) or action=delete (remove the file
+    and mark the track missing)."""
+    import json as _json
+    from services.queue_service import _tag_audio_file
+
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip().lower()
+    if action not in ("keep", "delete"):
+        return jsonify({"error": "action must be 'keep' or 'delete'"}), 400
+
+    with app.app_context():
+        t = db.session.get(Track, track_id)
+        if not t:
+            return jsonify({"error": "Track not found"}), 404
+        if not t.caution:
+            return jsonify({"error": "This track has no caution flag"}), 400
+
+        info = {}
+        try:
+            info = _json.loads(t.caution_info or "{}")
+        except Exception:
+            pass
+        matched_title = info.get("matched_title") or t.title
+        matched_artists = info.get("matched_artists") or []
+        matched_artist = matched_artists[0] if matched_artists else (t.album.artist.name if t.album and t.album.artist else None)
+
+        if action == "delete":
+            fp = t.local_path
+            t.caution = False
+            t.caution_info = None
+            t.is_downloaded = False
+            t.status = "missing"
+            t.local_path = None
+            t.file_path = ""
+            t.size_bytes = 0
+            if fp and os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                except OSError:
+                    pass
+            db.session.commit()
+            socketio.emit("artist_updated", {"artist_id": t.artist_id})
+            return jsonify({"message": "File removed; track marked missing."})
+
+        # action == "keep": accept the matched identity, retag the file as what it actually is
+        if matched_artist:
+            artist = Artist.query.filter_by(name=matched_artist).first()
+            if not artist:
+                artist = Artist(spotify_id=f"acoustid:{matched_artist}", name=matched_artist, source="manual")
+                db.session.add(artist)
+                db.session.flush()
+            t.artist_id = artist.id
+        if matched_title:
+            t.title = matched_title
+        t.caution = False
+        t.caution_info = None
+
+        fp = t.local_path
+        if fp and os.path.isfile(fp):
+            album = t.album
+            try:
+                _tag_audio_file(
+                    Path(fp),
+                    artist=t.artist.name if t.artist else matched_artist or "",
+                    album=album.name if album else "",
+                    title=matched_title or t.title,
+                    track_num=t.track_number or 0,
+                    year=album.year if album else None,
+                    album_artist=t.artist.name if t.artist else matched_artist or "",
+                    disc_num=t.disc_number or 1,
+                    cover_bytes=None,
+                    genre=t.genre,
+                )
+            except Exception:
+                logger.exception("[ACOUSTID] Retag after keep failed")
+        db.session.commit()
+        socketio.emit("artist_updated", {"artist_id": t.artist_id})
+        return jsonify({"message": f"Kept as '{matched_title}' by {matched_artist or '?'} and re-tagged."})
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1412,6 +1582,8 @@ def api_settings():
             val = str(data["maintenance_interval"]).strip().lower()
             if val in _MAINTENANCE_INTERVALS:
                 _set_setting("maintenance_interval", val)
+        if "acoustid_api_key" in data:
+            _set_setting("acoustid_api_key", str(data["acoustid_api_key"]).strip())
         if "theme" in data:
             _set_setting("theme", str(data["theme"]).strip())
         if "spotify_client_id" in data:
@@ -1455,6 +1627,7 @@ def api_settings():
         "navidrome_auto_scan": _get_setting("navidrome_auto_scan", "true").lower() == "true",
         "navidrome_db_path": _get_setting("navidrome_db_path", ""),
         "maintenance_interval": _get_setting("maintenance_interval", "weekly"),
+        "acoustid_api_key": _get_setting("acoustid_api_key", ""),
     })
 
 
@@ -1605,6 +1778,27 @@ with app.app_context():
                 pass
             try:
                 conn.execute(db.text("ALTER TABLE tracks ADD COLUMN genre VARCHAR(128)"))
+            except Exception:
+                pass
+
+            # v0.2.34+: MusicBrainz enrichment columns (albums)
+            for col, ddl in [
+                ("mb_release_group_id", "VARCHAR(64)"),
+                ("mb_title", "VARCHAR(512)"),
+                ("mb_year", "INTEGER"),
+                ("mb_checked_at", "DATETIME"),
+            ]:
+                try:
+                    conn.execute(db.text(f"ALTER TABLE albums ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+            # v0.2.34+: AcoustID caution flag (tracks)
+            try:
+                conn.execute(db.text("ALTER TABLE tracks ADD COLUMN caution BOOLEAN DEFAULT 0"))
+            except Exception:
+                pass
+            try:
+                conn.execute(db.text("ALTER TABLE tracks ADD COLUMN caution_info TEXT"))
             except Exception:
                 pass
             conn.commit()

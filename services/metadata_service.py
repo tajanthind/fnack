@@ -540,11 +540,22 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
                     cur_album = _read_simple_tag(mf, ("album", "\xa9alb", "TALB"))
                     cur_albumartist = _read_simple_tag(mf, ("albumartist", "aART", "TPE2"))
                     # Per-track original/release dates (left by downloaders)
-                    # make Navidrome split one album into many — any file still
-                    # carrying them (or with a date different from the album
-                    # year) must be re-tagged, which strips them.
+                    # make Navidrome split one album into many, and
+                    # songwriter/producer credits invent phantom artists — any
+                    # file still carrying them (or with a date different from
+                    # the album year) must be re-tagged, which strips them.
+                    _CREDIT_KEYS = {
+                        "COMPOSER", "COMPOSER_ARTIST", "WRITER", "LYRICIST",
+                        "TEXTWRITER", "PRODUCER", "ARRANGER", "PERFORMER",
+                        "MUSICIANCREDITS", "ENGINEER", "MIXER", "PUBLISHER",
+                        "LABEL", "REMIXER", "CONDUCTOR", "TCOM", "TEXT",
+                    }
                     has_stray_dates = any(
                         k.upper() in {"ORIGINALDATE", "RELEASEDATE", "TDOR", "TDRL"}
+                        for k in getattr(mf, "keys", lambda: ())()
+                    )
+                    has_stray_credits = any(
+                        k.upper() in _CREDIT_KEYS or k.upper().startswith("TXXX:")
                         for k in getattr(mf, "keys", lambda: ())()
                     )
                     cur_date = _read_simple_tag(mf, ("date", "\xa9day", "TDRC"))
@@ -553,6 +564,7 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
                         cur_album == album_name
                         and cur_albumartist == artist_name
                         and not has_stray_dates
+                        and not has_stray_credits
                         and not date_mismatch
                     ):
                         stats["skipped"] += 1

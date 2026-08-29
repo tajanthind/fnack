@@ -127,6 +127,11 @@ def _tag_audio_file(
                     "MUSICBRAINZ_ALBUMID", "MUSICBRAINZ_TRACKID", "MUSICBRAINZ_ARTISTID",
                     "MUSICBRAINZ_RELEASEGROUPID", "MUSICBRAINZ_RELEASETRACKID",
                     "MUSICBRAINZ_ALBUMSTATUS", "MUSICBRAINZ_ALBUMTYPE",
+                    # Songwriter/producer/participant credits become phantom
+                    # artists in Navidrome — strip them everywhere.
+                    "COMPOSER", "COMPOSER_ARTIST", "WRITER", "LYRICIST", "TEXTWRITER",
+                    "PRODUCER", "ARRANGER", "PERFORMER", "MUSICIANCREDITS",
+                    "ENGINEER", "MIXER", "PUBLISHER", "LABEL", "REMIXER", "CONDUCTOR",
                 }:
                     del audio[k]
 
@@ -177,11 +182,13 @@ def _tag_audio_file(
                 audio.add_tags()
 
             tags = audio.tags
-            # Strip per-track release/original dates (Navidrome splits albums
-            # when songs carry different dates) before writing the uniform ones.
-            for fid in ("TDRL", "TDOR"):
+            # Strip per-track release/original dates and songwriter/participant
+            # credits (Navidrome splits albums by dates and invents phantom
+            # artists from composer/producer credits) before writing the
+            # uniform ones.
+            for fid in ("TDRL", "TDOR", "TCOM", "TEXT", "TPE3", "TPE4", "TENC", "TIT3"):
                 tags.delall(fid)
-            for k in [k for k in tags.keys() if k.startswith("TXXX:MusicBrainz")]:
+            for k in [k for k in tags.keys() if k.startswith("TXXX:")]:
                 tags.delall(k)
             if artist:
                 tags["TPE1"] = TPE1(encoding=3, text=artist)
@@ -211,10 +218,13 @@ def _tag_audio_file(
         elif ext in (".m4a", ".mp4", ".aac"):
             from mutagen.mp4 import MP4, MP4Cover
             audio = MP4(str(file_path))
-            # Per-track dates split albums in Navidrome — drop any date atoms
-            # (including iTunes-style ORIGINALDATE) before writing the uniform one.
+            # Per-track dates and songwriter credits split albums / invent
+            # phantom artists in Navidrome — drop any date/writer/custom
+            # iTunes atoms before writing the uniform ones.
             for k in list(audio.keys()):
-                if "day" in k.lower() or "date" in k.lower():
+                if "day" in k.lower() or "date" in k.lower() or "wrt" in k.lower():
+                    del audio[k]
+                if k.startswith("----:com.apple.itunes:"):
                     del audio[k]
             if artist:
                 audio["\xa9ART"] = [artist]
@@ -253,10 +263,17 @@ def _tag_audio_file(
                     audio = MutagenFile(str(file_path))
 
             if audio is not None:
-                # Strip per-track dates/IDs (Navidrome album splits) before
-                # writing the uniform album date.
+                # Strip per-track dates/IDs and songwriter/participant credits
+                # (Navidrome album splits + phantom artists) before writing the
+                # uniform album date.
                 for k in list(audio.keys()):
-                    if k.upper() in {"ORIGINALDATE", "RELEASEDATE", "TDOR", "TDRL"}:
+                    if k.upper() in {
+                        "ORIGINALDATE", "RELEASEDATE", "TDOR", "TDRL",
+                        "COMPOSER", "COMPOSER_ARTIST", "WRITER", "LYRICIST",
+                        "TEXTWRITER", "PRODUCER", "ARRANGER", "PERFORMER",
+                        "MUSICIANCREDITS", "ENGINEER", "MIXER", "PUBLISHER",
+                        "LABEL", "REMIXER", "CONDUCTOR",
+                    }:
                         del audio[k]
                 if artist:
                     audio["artist"] = [artist]
@@ -412,6 +429,61 @@ def queue_artist_missing(app: Flask, artist_id: int, source: str = "manual") -> 
     return count
 
 
+def _verify_or_rescue(app, downloaded_file, expected_duration, artist_name, track_title,
+                      max_duration_delta, reject_mismatches, enable_duration_check):
+    """Verify a downloaded file; on failure, try AcoustID to rescue it.
+
+    Returns (v_ok, v_err, meta, caution_info_or_None):
+      * v_ok True,  caution None  -> verified (or AcoustID-confirmed "right
+                                     file, wrong tags" — finalize retags it)
+      * v_ok False, caution set   -> AcoustID says it is a DIFFERENT song:
+                                     keep the file, caller flags the track
+                                     with `caution_info` (user decides later)
+      * v_ok False, caution None  -> normal rejection; file deleted per
+                                     reject_mismatches
+    """
+    from services.acoustid_service import verify_download
+
+    v_ok, v_err, meta = verify_audio_file(
+        downloaded_file,
+        expected_duration_seconds=expected_duration if enable_duration_check else None,
+        expected_artist=artist_name,
+        expected_title=track_title,
+        max_duration_delta=max_duration_delta,
+        delete_on_failure=False,
+    )
+    if v_ok:
+        return True, v_err, meta, None
+
+    # Verification failed — try AcoustID before giving up / deleting
+    try:
+        res = verify_download(
+            str(downloaded_file), artist_name, track_title,
+            expected_duration if enable_duration_check else None,
+        )
+    except Exception:
+        res = {"status": "unknown", "info": None}
+
+    if res["status"] == "match":
+        logger.info("[QUEUE] AcoustID confirmed '%s - %s' (right file, wrong tags) — accepting", artist_name, track_title)
+        return True, "AcoustID confirmed (fingerprint match)", meta, None
+    if res["status"] == "mismatch":
+        logger.warning(
+            "[QUEUE] AcoustID mismatch for '%s - %s': matched to %r — keeping file, flagging for user",
+            artist_name, track_title, (res["info"] or {}).get("matched_title"),
+        )
+        return False, "AcoustID mismatch (different song)", meta, res["info"]
+
+    # Unknown / no fingerprint: normal rejection
+    if reject_mismatches:
+        try:
+            if os.path.isfile(downloaded_file):
+                os.remove(downloaded_file)
+        except OSError:
+            pass
+    return False, v_err, meta, None
+
+
 def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
     """Worker task for a single track download job."""
     with app.app_context():
@@ -462,6 +534,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         # When the duration check is disabled, skip the duration comparison entirely
         # (any valid audio file is accepted) while keeping basic file validation.
         verify_expected_duration = expected_duration if enable_duration_check else None
+        flagged_caution = None  # set when AcoustID flags a kept-but-different file
 
         # Auto-resolve ISRC and genre from Deezer when missing
         track_genre = track.genre or None
@@ -631,19 +704,23 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 )
                 if ok and downloaded_file:
                     # Step 3: Verify audio file with strict duration + tag checking
-                    v_ok, v_err, meta = verify_audio_file(
-                        downloaded_file,
-                        expected_duration_seconds=verify_expected_duration,
-                        expected_artist=artist_name,
-                        expected_title=track_title,
-                        max_duration_delta=max_duration_delta,
-                        delete_on_failure=reject_mismatches,
+                    # (with optional AcoustID rescue: confirm wrong-tags files,
+                    # flag different-song files for the user instead of deleting)
+                    v_ok, v_err, meta, flagged = _verify_or_rescue(
+                        app, downloaded_file, verify_expected_duration,
+                        artist_name, track_title, max_duration_delta,
+                        reject_mismatches, enable_duration_check,
                     )
                     if v_ok:
                         verified_file = downloaded_file
                         file_meta = meta
                     else:
-                        failure_reasons.append(f"SpotiFLAC verification failed: {v_err}")
+                        if flagged:
+                            flagged_caution = flagged
+                            verified_file = downloaded_file  # keep file; user decides
+                            file_meta = meta
+                        else:
+                            failure_reasons.append(f"SpotiFLAC verification failed: {v_err}")
                 else:
                     failure_reasons.append(f"SpotiFLAC failed: {err}")
         elif not enable_spotiflac and not verified_file:
@@ -667,19 +744,21 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 check_duration=enable_duration_check,
             )
             if ok and downloaded_file:
-                v_ok, v_err, meta = verify_audio_file(
-                    downloaded_file,
-                    expected_duration_seconds=verify_expected_duration,
-                    expected_artist=artist_name,
-                    expected_title=track_title,
-                    max_duration_delta=max_duration_delta,
-                    delete_on_failure=reject_mismatches,
+                v_ok, v_err, meta, flagged = _verify_or_rescue(
+                    app, downloaded_file, verify_expected_duration,
+                    artist_name, track_title, max_duration_delta,
+                    reject_mismatches, enable_duration_check,
                 )
                 if v_ok:
                     verified_file = downloaded_file
                     file_meta = meta
                 else:
-                    failure_reasons.append(f"yt-dlp verification failed: {v_err}")
+                    if flagged:
+                        flagged_caution = flagged
+                        verified_file = downloaded_file
+                        file_meta = meta
+                    else:
+                        failure_reasons.append(f"yt-dlp verification failed: {v_err}")
             else:
                 failure_reasons.append(f"yt-dlp failed: {err}")
         elif not enable_ytdlp and not verified_file:
@@ -718,20 +797,24 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     except shutil.SameFileError:
                         logger.info("[QUEUE] Work file and destination are the same file for '%s - %s'; already in place", artist_name, track_title)
 
-                # Embed clean metadata tags with album artist and optional artwork to guarantee seamless Navidrome indexing
-                _tag_audio_file(
-                    final_dest,
-                    artist=artist_name,
-                    album=album_name,
-                    title=track_title,
-                    track_num=track_num,
-                    year=album_year,
-                    album_artist=artist_name,
-                    disc_num=disc_num_val,
-                    total_tracks=total_tracks_val,
-                    cover_bytes=cover_bytes if embed_cover_setting else None,
-                    genre=track_genre,
-                )
+                # Embed clean metadata tags with album artist and optional artwork to guarantee seamless Navidrome indexing.
+                # EXCEPT AcoustID-flagged files: the audio is a DIFFERENT song, so we
+                # deliberately keep its original tags (Navidrome shows what it really
+                # is) and let the user keep/delete via the caution flag.
+                if not flagged_caution:
+                    _tag_audio_file(
+                        final_dest,
+                        artist=artist_name,
+                        album=album_name,
+                        title=track_title,
+                        track_num=track_num,
+                        year=album_year,
+                        album_artist=artist_name,
+                        disc_num=disc_num_val,
+                        total_tracks=total_tracks_val,
+                        cover_bytes=cover_bytes if embed_cover_setting else None,
+                        genre=track_genre,
+                    )
                 rel_path = str(final_dest.relative_to(music_dir))
 
                 if track_rec:
@@ -749,6 +832,10 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                         track_rec.duration = file_meta.get("duration") or expected_duration
                     track_rec.bitrate = file_meta.get("bitrate")
                     track_rec.error_message = None
+                    if flagged_caution:
+                        import json as _json
+                        track_rec.caution = True
+                        track_rec.caution_info = _json.dumps(flagged_caution)
 
                 if job:
                     job.status = "completed"

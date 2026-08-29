@@ -601,6 +601,19 @@
           </button>
         </div>
 
+        <!-- AcoustID (optional fingerprinting) -->
+        <div class="mb-3">
+          <label class="form-label fw-bold small">AcoustID API Key <span class="badge bg-secondary ms-1">Optional</span></label>
+          <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input font-monospace" id="setAcoustidKey" placeholder="(leave empty to disable fingerprinting)" style="max-width: 340px;">
+          <div class="form-text text-secondary small">
+            Free key from <code>acoustid.org</code>. Without it, fingerprint
+            verification and "Identify this file" are disabled and everything
+            else works unchanged. With it: fnack confirms downloaded songs that
+            have wrong tags, flags files that turned out to be a different song
+            (you decide keep/delete), and can identify unknown regional tracks.
+          </div>
+        </div>
+
         <!-- Music Storage Path -->
         <div class="mb-3">
           <label class="form-label fw-bold small">Music Storage Path</label>
@@ -847,6 +860,7 @@
         document.getElementById('setNavidromeAutoScan').checked = s.navidrome_auto_scan !== false;
         document.getElementById('setNavidromeDbPath').value = s.navidrome_db_path || '';
         document.getElementById('setMaintenanceInterval').value = s.maintenance_interval || 'weekly';
+        document.getElementById('setAcoustidKey').value = s.acoustid_api_key || '';
 
         updateCookieStatusUI(s.cookies_status);
         setDirty(false);
@@ -1149,6 +1163,7 @@
       const curNavAuto = document.getElementById('setNavidromeAutoScan').checked;
       const curNavDb = document.getElementById('setNavidromeDbPath').value.trim();
       const curMaintInt = document.getElementById('setMaintenanceInterval').value;
+      const curAcoustidKey = document.getElementById('setAcoustidKey').value.trim();
       const curTheme = _currentTheme;
 
       const isChanged = (
@@ -1177,7 +1192,8 @@
         curNavToken !== (_initialSettings.navidrome_token || '') ||
         curNavAuto !== (_initialSettings.navidrome_auto_scan !== false) ||
         curNavDb !== (_initialSettings.navidrome_db_path || '') ||
-        curMaintInt !== (_initialSettings.maintenance_interval || 'weekly')
+        curMaintInt !== (_initialSettings.maintenance_interval || 'weekly') ||
+        curAcoustidKey !== (_initialSettings.acoustid_api_key || '')
       );
 
       setDirty(isChanged);
@@ -1300,6 +1316,7 @@
         navidrome_auto_scan: document.getElementById('setNavidromeAutoScan').checked,
         navidrome_db_path: document.getElementById('setNavidromeDbPath').value.trim(),
         maintenance_interval: document.getElementById('setMaintenanceInterval').value,
+        acoustid_api_key: document.getElementById('setAcoustidKey').value.trim(),
       };
 
       try {

@@ -60,6 +60,12 @@ class Album(db.Model):
     size_bytes = db.Column(db.BigInteger, default=0, nullable=False)
     local_path = db.Column(db.Text, nullable=True)
 
+    # MusicBrainz enrichment (additive only — Deezer stays authoritative)
+    mb_release_group_id = db.Column(db.String(64), nullable=True, index=True)
+    mb_title = db.Column(db.String(512), nullable=True)
+    mb_year = db.Column(db.Integer, nullable=True)
+    mb_checked_at = db.Column(db.DateTime, nullable=True)
+
     artist = db.relationship("Artist", back_populates="albums")
     tracks = db.relationship(
         "Track",
@@ -97,6 +103,10 @@ class Track(db.Model):
     size_bytes = db.Column(db.BigInteger, default=0, nullable=False)
     local_path = db.Column(db.Text, nullable=True)
     is_unmatched = db.Column(db.Boolean, default=False, nullable=False)
+
+    # AcoustID caution flag: file kept but AcoustID says it's a different song.
+    caution = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    caution_info = db.Column(db.Text, nullable=True)  # what AcoustID matched it to
 
     album = db.relationship("Album", back_populates="tracks")
 
@@ -139,3 +149,15 @@ class AppSetting(db.Model):
 
     key = db.Column(db.String(64), primary_key=True)
     value = db.Column(db.String(256), nullable=False)
+
+
+class MusicBrainzCache(db.Model):
+    """Throttled cache of MusicBrainz lookups (respects the 1 req/s etiquette)."""
+
+    __tablename__ = "musicbrainz_cache"
+
+    query = db.Column(db.String(256), primary_key=True)   # normalized lookup key
+    kind = db.Column(db.String(16), nullable=False)        # artist | album
+    found = db.Column(db.Boolean, nullable=False)          # found vs not-found
+    payload = db.Column(db.Text, nullable=True)            # JSON result
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
