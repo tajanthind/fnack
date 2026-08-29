@@ -74,6 +74,10 @@ phase.
 - [Decide: priority-override UI](tickets/plugin-priority-ui.md):
   numeric priority input per plugin row (writes `priority_override`); no
   drag-reorder in Phase 1.
+- [Design: Phase 1 bundled plugin manifests + Settings → Plugins UI](tickets/plugin-phase-1-design.md):
+  research — full manifest inventory, plugin class skeletons, auto-install
+  flow, UI structure, behavior-preservation callouts (findings in
+  `research/phase-1-bundled-plugins-design.md`).
 
 ## Roadmap (execution carried into the map)
 
