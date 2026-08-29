@@ -1022,9 +1022,10 @@ def api_track_identify(track_id):
         if _last_lookup_missing_metadata:
             return jsonify({
                 "candidates": [],
-                "message": "AcoustID matched the song but returned no metadata. Your key likely lacks "
-                           "metadata access — use the CLIENT API key from acoustid.org → Applications.",
-                "key_issue": True,
+                "message": "AcoustID matched the song (fingerprint found) but that cluster has no "
+                           "MusicBrainz recording linked — the key works fine. This is normal for "
+                           "regional / remix / underground tracks not yet in MusicBrainz.",
+                "key_issue": False,
             })
         return jsonify({"candidates": [], "message": "No fingerprint match found (common for regional/underground tracks)."})
     auto = next((c for c in candidates if c.get("score", 0) >= 0.8), None)

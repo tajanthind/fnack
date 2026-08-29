@@ -147,16 +147,18 @@ def lookup(fingerprint: str, duration: Optional[float], limit: int = 5) -> list:
             })
         if recs:
             out.append({"score": float(res.get("score") or 0.0), "recordings": recs})
-    # Diagnose "scores but no metadata" — the classic acoustid.org key-type issue
-    # (account/application key vs the client API key that carries metadata).
+    # "Scores but no metadata": the key is fine (verified live — the same key
+    # returns full recordings for clusters that have MusicBrainz links). The
+    # matched cluster itself has 0 linked recordings, which is normal for
+    # regional / remix / underground tracks absent from MusicBrainz.
     if data.get("results"):
         _last_lookup_had_results = True
         if not out:
             _last_lookup_missing_metadata = True
             logger.warning(
-                "[ACOUSTID] API returned match(es) but no recording metadata — the configured key "
-                "likely lacks metadata access. Use the application's CLIENT API key "
-                "(acoustid.org -> Applications), not the account/user key."
+                "[ACOUSTID] API matched the fingerprint but the cluster has no MusicBrainz "
+                "recording linked (score %.3f) — expected for regional/remix/underground "
+                "tracks; the configured key is fine." % (data["results"][0].get("score") or 0.0)
             )
     return out
 
