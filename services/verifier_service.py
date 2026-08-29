@@ -154,10 +154,19 @@ def _check_artist(actual_artist: str, expected_artist: str) -> bool:
 
 
 def _artist_in_text(text: str, expected_artist: str) -> bool:
-    """Check whether the expected primary artist appears in a free-form title string."""
+    """Check whether the expected primary artist appears in a free-form title string.
+
+    Uses a RAW normalization (parenthetical feat. clauses kept) because that is
+    exactly where featured artists appear: 'Love Runs Out (feat. G-Eazy & Sasha
+    Alex Sloan)' must confirm 'G-Eazy' even though the primary artist is
+    'Martin Garrix'.
+    """
     exp = _primary_artist(expected_artist)
     if not exp:
         return False
+    raw = re.sub(r"[^a-z0-9]+", "", unicodedata.normalize("NFKD", str(text)).lower())
+    if exp in raw:
+        return True
     return exp in _norm_text(text).replace(" ", "")
 
 
