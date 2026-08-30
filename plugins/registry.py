@@ -115,6 +115,12 @@ class PluginRegistry:
                 entry["source_repo_name"] = repo.name
                 entry["installed_version"] = installed_ids.get(entry.get("id"))
                 entry["bundled"] = entry.get("id") in bundled_ids and entry.get("id") not in tombstoned
+                # Brief 6 §4: annotate compat so the Marketplace can grey out
+                # incompatible plugins with a reason (min_core_version /
+                # api_version from the entry's version payload, if present).
+                vinfo = (entry.get("versions") or {}).get(entry.get("latest_version")) or {}
+                entry["min_core_version"] = vinfo.get("min_core_version") or entry.get("min_core_version")
+                entry["api_version"] = vinfo.get("api_version") or entry.get("api_version")
                 merged[entry["id"]] = entry
         return list(merged.values())
 
@@ -182,6 +188,25 @@ class PluginRegistry:
                 if entry.get("id") == plugin_id:
                     return entry, repo.id
         raise RegistryError(f"{plugin_id} not found in any added repository")
+
+    def latest_versions(self) -> dict[str, str]:
+        """{plugin_id: latest_version} across every enabled repository's
+        cached index (newest wins for duplicates). Used by the Installed
+        list to flag update_available (Brief 6 §3)."""
+        out: dict[str, str] = {}
+        for repo in PluginRepository.query.filter_by(enabled=True).all():
+            if not repo.cached_index_json:
+                continue
+            try:
+                index = json.loads(repo.cached_index_json)
+            except Exception:
+                continue
+            for entry in index.get("plugins", []):
+                pid = entry.get("id")
+                lv = entry.get("latest_version")
+                if pid and lv:
+                    out[pid] = lv
+        return out
 
     def _download(self, url: str) -> bytes:
         resp = requests.get(url, timeout=REQUEST_TIMEOUT)

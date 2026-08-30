@@ -1718,10 +1718,19 @@ async function loadPluginsPage() {
                data-plugin="${escapeHtml(p.id)}" value="${p.priority_override ?? p.priority}"
                title="Priority (lower = tried first); clears on empty" onchange="savePluginPriority('${escapeHtml(p.id)}', this.value)">`
           : `<span class="text-secondary small">${p.priority ?? '—'}</span>`;
-        const hasSettings = (p.settings_schema || []).length > 0;
+        // Brief 6 §4: a plugin that failed to load still shows, badged with
+        // the reason (version mismatch -> "Unsupported").
+        const loadErr = p.load_error;
+        const unsupported = loadErr && /requires (api_version|fnack >=)/.test(loadErr);
+        const loadBadge = loadErr
+          ? (unsupported
+              ? `<div class="badge bg-danger-subtle text-danger mt-1" title="${escapeHtml(loadErr)}">Unsupported — ${escapeHtml(loadErr)}</div>`
+              : `<div class="badge bg-warning-subtle text-warning mt-1" title="${escapeHtml(loadErr)}">Failed to load — ${escapeHtml(loadErr)}</div>`)
+          : '';
+        const hasSettings = !loadErr && (p.settings_schema || []).length > 0;
         const settingsBtn = hasSettings
           ? `<button class="btn btn-sm btn-outline-info btn-icon" title="Settings" onclick="openPluginSettings('${escapeHtml(p.id)}', '${escapeHtml(p.name)}')"><i class="fas fa-cog"></i></button>`
-          : '';
+          : (loadErr ? `<button class="btn btn-sm btn-outline-secondary btn-icon" disabled title="Settings unavailable (${escapeHtml(loadErr)})"><i class="fas fa-cog"></i></button>` : '');
         // Uninstall available for ALL plugins (official bundled included) —
         // the server records a tombstone so bundled ones stay uninstalled
         // across reboots.
@@ -1732,6 +1741,7 @@ async function loadPluginsPage() {
             <div class="text-secondary small font-monospace">${escapeHtml(p.id)}</div>
             ${p.description ? `<div class="text-muted small mt-1 text-truncate" style="max-width: 340px;" title="${escapeHtml(p.description)}">${escapeHtml(p.description)}</div>` : ''}
             ${healthBadge}
+            ${loadBadge}
           </td>
           <td class="text-secondary small">${escapeHtml(p.version)}</td>
           <td>${pluginTrustBadge(p.trust_level)}</td>
@@ -1739,6 +1749,7 @@ async function loadPluginsPage() {
           <td>${prioInput}</td>
           <td class="text-end">
             ${settingsBtn}
+            ${p.update_available ? `<button class="btn btn-sm btn-outline-warning btn-icon" title="Update to v${escapeHtml(p.latest_version)}" onclick="updatePlugin('${escapeHtml(p.id)}')"><i class="fas fa-arrow-up"></i></button>` : ''}
             ${uninstallBtn}
             ${p.enabled
               ? `<button class="btn btn-sm btn-outline-danger btn-icon" title="Disable" onclick="setPluginEnabled('${escapeHtml(p.id)}', false)"><i class="fas fa-power-off"></i></button>`
@@ -1755,13 +1766,19 @@ async function loadPluginsPage() {
     container.innerHTML = html;
     // Keep the schema index for the settings modal (per-plugin settings UI).
     _pluginSchemas = {};
-    for (const p of plugins) _pluginSchemas[p.id] = p.settings_schema || [];
+    _pluginActions = {};
+    _pluginStatusFn = {};
+    for (const p of plugins) {
+      _pluginSchemas[p.id] = p.settings_schema || [];
+      _pluginActions[p.id] = p.actions || [];
+    }
   } catch (e) {
     container.innerHTML = `<div class="alert alert-danger">Error loading plugins: ${escapeHtml(e.message)}</div>`;
   }
 }
 
 let _pluginSchemas = {};
+let _pluginActions = {};
 
 // Per-plugin settings modal — each plugin gets its own settings form rendered
 // from its declared settings_schema (user requirement: no global settings).
@@ -1811,7 +1828,59 @@ async function openPluginSettings(pluginId, pluginName) {
       }
     }
     if (!form) form = '<div class="text-secondary small">This plugin has no configurable settings.</div>';
-    document.getElementById('confirmModalBody').innerHTML = form;
+    const actions = _pluginActions[pluginId] || [];
+    let actionsHtml = '';
+    if (actions.length) {
+      const btns = actions.map(a => {
+        const style = a.style === 'danger' ? 'btn-outline-danger' : (a.style === 'success' ? 'btn-success' : 'btn-brand');
+        return `<button class="btn btn-sm ${style} me-2 plugin-action-btn" data-plugin="${escapeHtml(pluginId)}" data-action="${escapeHtml(a.id)}">${escapeHtml(a.label || a.id)}</button>`;
+      }).join('');
+      actionsHtml = `<div class="mt-3 pt-3 border-top border-secondary border-opacity-25 d-flex flex-wrap align-items-center gap-2">${btns}
+        <span class="plugin-action-msg text-secondary small"></span></div>`;
+    }
+    const statusArea = `<div class="plugin-status-area mt-2 text-secondary small"></div>`;
+    document.getElementById('confirmModalBody').innerHTML = form + actionsHtml + statusArea;
+    // Live status: best-effort — only shows if the plugin exposes status().
+    (async () => {
+      try {
+        const r = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/status`);
+        if (!r.ok) return;
+        const st = await r.json();
+        const el = document.getElementById('confirmModalBody').querySelector('.plugin-status-area');
+        if (el) {
+          const bits = [];
+          if (st.running !== undefined) bits.push(`<span class="badge ${st.running ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">${st.running ? 'Running' : 'Stopped'}</span>`);
+          if (st.public_ip) bits.push(`public IP <strong>${escapeHtml(String(st.public_ip))}</strong>`);
+          if (st.type) bits.push(String(st.type));
+          if (bits.length) el.innerHTML = bits.join(' &nbsp;·&nbsp; ');
+        }
+      } catch (e) { /* no status method — ignore */ }
+    })();
+    // Wire action buttons.
+    document.querySelectorAll('#confirmModalBody .plugin-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const actionId = btn.dataset.action;
+        const msgEl = document.getElementById('confirmModalBody').querySelector('.plugin-action-msg');
+        if (msgEl) msgEl.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Running...';
+        try {
+          const r = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/action/${encodeURIComponent(actionId)}`, { method: 'POST' });
+          const d = await r.json();
+          if (msgEl) msgEl.innerHTML = escapeHtml(d.message || (r.ok ? 'OK' : d.error || 'Failed'));
+          if (msgEl) msgEl.className = 'plugin-action-msg small ' + (r.ok ? 'text-success' : 'text-danger');
+          // Refresh the status area after the action.
+          const sr = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/status`).catch(() => null);
+          if (sr && sr.ok) {
+            const st = await sr.json();
+            const el = document.getElementById('confirmModalBody').querySelector('.plugin-status-area');
+            if (el && st.running !== undefined) {
+              el.innerHTML = `<span class="badge ${st.running ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">${st.running ? 'Running' : 'Stopped'}</span>` + (st.public_ip ? ` &nbsp;·&nbsp; public IP <strong>${escapeHtml(String(st.public_ip))}</strong>` : '');
+            }
+          }
+        } catch (e) {
+          if (msgEl) { msgEl.textContent = 'Error: ' + e.message; msgEl.className = 'plugin-action-msg small text-danger'; }
+        }
+      });
+    });
   } catch (e) {
     document.getElementById('confirmModalBody').innerHTML = `<div class="alert alert-danger">Error: ${escapeHtml(e.message)}</div>`;
   }
@@ -1909,10 +1978,36 @@ async function savePluginSettings(pluginId) {
 // Phase 3: Marketplace + Repositories tabs
 // ============================================================
 
+function _semverCmp(a, b) {
+  const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0) ? 1 : -1;
+  }
+  return 0;
+}
+
+// Brief 6 §4: real compatibility check for the Marketplace. Returns
+// {compatible: bool, reason: string}. Core = _FNACK_CORE_VERSION; plugin
+// api_version is ^1.0 style (major-compatible).
+function pluginCompat(entry) {
+  const core = window._FNACK_CORE_VERSION || '0.0.0';
+  const minCore = entry.min_core_version;
+  if (minCore && _semverCmp(core, minCore) < 0) {
+    return { compatible: false, reason: `requires core ≥ ${minCore}, you're on ${core}` };
+  }
+  const api = entry.api_version || '^1.0';
+  const m = /^\^?(\d+)/.exec(api);
+  if (m && m[1] !== '1') {
+    return { compatible: false, reason: `requires plugin API ${api}, core provides 1.0.0` };
+  }
+  return { compatible: true, reason: '' };
+}
+
 function pluginCompatBadge(entry) {
-  // entry: {min_core_version?, api_version?} — core is v0.2.x, api 1.0
-  const ok = true; // the registry already validated on install; badge is informational
-  return '<span class="badge bg-success-subtle text-success">Compatible</span>';
+  const c = pluginCompat(entry);
+  if (c.compatible) return '<span class="badge bg-success-subtle text-success">Compatible</span>';
+  return `<span class="badge bg-danger-subtle text-danger" title="${escapeHtml(c.reason)}">Unsupported</span>`;
 }
 
 async function loadMarketplacePage() {
@@ -1935,8 +2030,12 @@ async function loadMarketplacePage() {
       const installedV = installedVersions[e.id] || e.installed_version;
       const bundled = e.bundled;
       const hasUpdate = installedV && e.latest_version && installedV !== e.latest_version;
+      const compat = pluginCompat(e);
       let action = '';
-      if (bundled) {
+      if (!compat.compatible) {
+        // Brief 6 §4: incompatible — show it, grey it out, explain why.
+        action = `<span class="badge bg-danger-subtle text-danger" title="${escapeHtml(compat.reason)}">Unsupported — ${escapeHtml(compat.reason)}</span>`;
+      } else if (bundled) {
         action = '<span class="badge bg-secondary-subtle text-secondary">Installed (bundled)</span>';
       } else if (installedV && !hasUpdate) {
         action = `<span class="badge bg-success-subtle text-success">Installed v${escapeHtml(installedV)}</span>`;
@@ -2092,6 +2191,24 @@ async function removeRepository(repoId) {
       showToast('Network error: ' + e.message, 'danger');
     }
   }, 'Remove', 'btn-danger');
+}
+
+// Brief 6 §3: update an installed (marketplace) plugin to its repo's latest.
+async function updatePlugin(pluginId) {
+  showConfirmModal(`Update ${pluginId}`,
+    'Update this plugin to the latest version from its repository? Your plugin settings will be kept.',
+    async () => {
+      try {
+        const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/update`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) { showToast(data.error || 'Update failed', 'danger'); return; }
+        showToast(`Updated ${pluginId} to v${data.version}`, 'success');
+        hideConfirmModal();
+        loadPluginsPage();
+      } catch (e) {
+        showToast('Network error: ' + e.message, 'danger');
+      }
+    }, 'Update', 'btn-warning');
 }
 
 // Uninstall action on the Installed tab (available for ALL plugins).

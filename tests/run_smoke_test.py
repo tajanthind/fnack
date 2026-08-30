@@ -66,6 +66,23 @@ with app.app_context():
         "    def download(self, track, dest_dir, options): return DownloadResult(success=True)\n"
     )
 
+    # Brief 6 §4 fixture: a bundled plugin whose min_core_version is far above
+    # the running core — it must FAIL to load but still appear in the list
+    # with a load_error (Unsupported state), not vanish silently.
+    bad_plugin_dir = bundled_fixture / "fnack.requires-newer-core"
+    bad_plugin_dir.mkdir(parents=True, exist_ok=True)
+    (bad_plugin_dir / "plugin.json").write_text(
+        '{"id":"fnack.requires-newer-core","name":"Needs Newer Core","version":"1.0.0",'
+        '"type":["event_hook"],"api_version":"^1.0","min_core_version":"99.0.0",'
+        '"entry_point":"plugin:NeedsNewerCore","author":"fnack",'
+        '"description":"test mismatch","permissions":[],'
+        '"settings_schema":[],"ui":{"slots":[]},"dependencies":{},"trust_level":"official"}'
+    )
+    (bad_plugin_dir / "plugin.py").write_text(
+        "from plugins.base import EventHookPlugin\n"
+        "class NeedsNewerCore(EventHookPlugin): pass\n"
+    )
+
     manager = init_plugin_manager(
         plugins_dir=str(Path(__file__).resolve().parent.parent / "examples" / "plugins"),
         bundled_plugins_dir=str(bundled_fixture),
@@ -144,6 +161,23 @@ with app.app_context():
     listed = manager.list_loaded()
     assert "description" in listed[0], "list_loaded() must expose description"
     assert isinstance(listed[0]["description"], str)
+
+    # Brief 6 §2: actions field surfaces (and defaults to []).
+    assert "actions" in listed[0], "list_loaded() must expose actions"
+
+    # Brief 6 §4: the version-mismatch fixture appears with a load_error
+    # (Unsupported), NOT silently vanished.
+    by_id = {p["id"]: p for p in manager.list_loaded()}
+    assert "fnack.requires-newer-core" in by_id, \
+        "version-mismatch plugin must still appear in the list"
+    assert by_id["fnack.requires-newer-core"]["load_error"], \
+        "version-mismatch plugin must carry a load_error reason"
+    assert "requires fnack" in by_id["fnack.requires-newer-core"]["load_error"]
+
+    # Brief 6 §3: updating a bundled plugin is refused (they update with the
+    # fnack image).
+    r = client.post("/api/plugins/fnack.spotiflac/update")
+    assert r.status_code == 400
 
     # Phase 3/4: bundled install/uninstall guards. Installing an ACTIVE
     # bundled id from a repo is refused; uninstalling a bundled id is now

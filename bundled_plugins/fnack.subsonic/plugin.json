@@ -2,18 +2,28 @@
   "id": "fnack.subsonic",
   "name": "Subsonic API",
   "version": "1.0.0",
-  "type": ["server_extension"],
+  "type": [
+    "server_extension"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:SubsonicPlugin",
   "author": "fnack",
   "description": "Exposes fnack's library as a Subsonic server (Symfonium/DSub/Sublime Music). Auth via the fnack API key; open if no key set.",
   "homepage": "",
-  "permissions": ["settings"],
-  "settings_schema": [
-    {"key": "enabled", "type": "boolean", "default": "false"}
+  "permissions": [
+    "settings"
   ],
-  "ui": {"slots": []},
+  "settings_schema": [
+    {
+      "key": "enabled",
+      "type": "boolean",
+      "default": "false"
+    }
+  ],
+  "ui": {
+    "slots": []
+  },
   "dependencies": {},
   "trust_level": "official"
 }

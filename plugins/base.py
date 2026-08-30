@@ -87,6 +87,11 @@ class PluginManifest:
     permissions: list[str] = field(default_factory=list)
     settings_schema: list[dict] = field(default_factory=list)
     ui: dict = field(default_factory=dict)
+    # Brief 6 §2: imperative commands (not settings) rendered as buttons in
+    # the settings modal, e.g. [{"id": "start", "label": "Start"}]. Each id
+    # maps to a method of the same name (snake_cased) on the plugin instance,
+    # invoked via POST /api/plugins/<id>/action/<action_id>.
+    actions: list[dict] = field(default_factory=list)
     dependencies: dict = field(default_factory=dict)
     trust_level: str = "community"          # "official" | "verified" | "community"
 

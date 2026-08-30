@@ -110,6 +110,17 @@ phase.
   and import_service.py at `6f4d043`); audit's old-version reading was a
   stale GitHub blob.
 
+- [Phase 6: unified plugin-settings modal, in-place updates, version-mismatch state, descriptions](tickets/plugin-phase-6-unified-settings-modal.md):
+  §1 all three (VPN/Navidrome/Subsonic) confirmed on ONE render path
+  (settings_tab slot); §2 unified modal — file schema type, manifest
+  `actions` array + /action/<id> route, /status endpoint, VPN/Navidrome/
+  Subsonic migrated, zero inline cards; §3 in-place update (bundled refuse —
+  they update with the image; marketplace plugins update independently,
+  settings survive); §4 visible 'Unsupported — requires core ≥ X, you're on
+  Y' for version-incompatible plugins (load_error in list + greyed
+  Marketplace); §5 descriptions confirmed on Installed + Marketplace.
+  Live-verified end to end.
+
 
 ## Roadmap (execution carried into the map)
 
