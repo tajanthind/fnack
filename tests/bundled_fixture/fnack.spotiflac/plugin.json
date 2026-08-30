@@ -1,0 +1,1 @@
+{"id":"fnack.spotiflac","name":"SpotiFLAC","version":"1.0.0","type":["downloader"],"api_version":"^1.0","min_core_version":"0.2.0","entry_point":"plugin:SpotiFLACDownloader","author":"fnack","description":"test bundled","permissions":["network"],"settings_schema":[],"ui":{"slots":[]},"dependencies":{},"trust_level":"official"}

@@ -46,8 +46,22 @@ with app.app_context():
     from plugins.manager import init_plugin_manager
     from version import __version__
 
+    # A fake "bundled" plugin dir so the Phase 3 bundled guards (install/
+    # uninstall refusal) have a bundled id to match against.
+    bundled_fixture = Path(__file__).resolve().parent / "bundled_fixture"
+    bundled_plugin_dir = bundled_fixture / "fnack.spotiflac"
+    bundled_plugin_dir.mkdir(parents=True, exist_ok=True)
+    (bundled_plugin_dir / "plugin.json").write_text(
+        '{"id":"fnack.spotiflac","name":"SpotiFLAC","version":"1.0.0",'
+        '"type":["downloader"],"api_version":"^1.0","min_core_version":"0.2.0",'
+        '"entry_point":"plugin:SpotiFLACDownloader","author":"fnack",'
+        '"description":"test bundled","permissions":["network"],'
+        '"settings_schema":[],"ui":{"slots":[]},"dependencies":{},"trust_level":"official"}'
+    )
+
     manager = init_plugin_manager(
         plugins_dir=str(Path(__file__).resolve().parent.parent / "examples" / "plugins"),
+        bundled_plugins_dir=str(bundled_fixture),
         core_version=__version__,
     )
     manager.load_all()  # no enabled_ids filter -> enable everything discovered
@@ -114,5 +128,24 @@ with app.app_context():
     print("Grouped:", r.status_code, list((r.json or {}).keys()))
     assert r.status_code == 200 and "event_hook" in (r.json or {})
     assert "ui_extension" in (r.json or {})
+
+    # Phase 3: bundled guards — installing or uninstalling a bundled id is
+    # refused server-side (bundled plugins auto-install on boot).
+    r = client.post("/api/plugins/install", json={"plugin_id": "fnack.spotiflac"})
+    print("Install bundled (refused):", r.status_code, r.json)
+    assert r.status_code == 400 and "bundled" in (r.json.get("error") or "").lower()
+
+    r = client.post("/api/plugins/fnack.spotiflac/uninstall")
+    print("Uninstall bundled (refused):", r.status_code, r.json)
+    assert r.status_code == 400
+
+    # Phase 3: marketplace/repositories endpoints exist and are well-formed.
+    r = client.get("/api/plugins/marketplace")
+    print("Marketplace:", r.status_code, r.json)
+    assert r.status_code == 200 and isinstance(r.json, list)
+
+    r = client.get("/api/plugins/repositories")
+    print("Repositories:", r.status_code, r.json)
+    assert r.status_code == 200 and isinstance(r.json, list)
 
 print("\nSMOKE TEST PASSED")

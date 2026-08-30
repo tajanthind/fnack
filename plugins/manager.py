@@ -109,6 +109,11 @@ class PluginManager:
             return []
         return self._plugin_dirs(self.bundled_plugins_dir)
 
+    def bundled_ids(self) -> set[str]:
+        """Plugin ids that ship bundled in the image (never uninstallable,
+        never installable from a repo)."""
+        return {d.name for d in self.discover_bundled()}
+
     def load_all(self, enabled_ids: Optional[set[str]] = None) -> None:
         """`enabled_ids` normally comes from InstalledPlugin.enabled rows in
         the DB; pass None to enable everything discovered (useful in tests)."""
@@ -381,6 +386,7 @@ class PluginManager:
         return "\n".join(f for f in fragments if f)
 
     def list_loaded(self) -> list[dict]:
+        bundled_ids = self.bundled_ids()
         return [
             {
                 "id": p.manifest.id,
@@ -392,6 +398,7 @@ class PluginManager:
                 "consecutive_failures": p.consecutive_failures,
                 "priority": self._effective_priority(p),
                 "priority_override": p.priority_override,
+                "bundled": p.manifest.id in bundled_ids,
                 # Per-plugin settings (user requirement): expose the declared
                 # schema so the UI can render each plugin's own settings form.
                 "settings_schema": p.manifest.settings_schema or [],

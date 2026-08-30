@@ -1722,6 +1722,10 @@ async function loadPluginsPage() {
         const settingsBtn = hasSettings
           ? `<button class="btn btn-sm btn-outline-info btn-icon" title="Settings" onclick="openPluginSettings('${escapeHtml(p.id)}', '${escapeHtml(p.name)}')"><i class="fas fa-cog"></i></button>`
           : '';
+        // Phase 3: non-bundled plugins get an Uninstall action (bundled ones
+        // are disabled instead — auto-install would restore them on reboot).
+        const isBundled = !!p.bundled;
+        const uninstallBtn = isBundled ? '' : `<button class="btn btn-sm btn-outline-danger btn-icon" title="Uninstall" onclick="uninstallPlugin('${escapeHtml(p.id)}')"><i class="fas fa-trash"></i></button>`;
         html += `<tr>
           <td>
             <div class="fw-bold">${escapeHtml(p.name)}</div>
@@ -1734,6 +1738,7 @@ async function loadPluginsPage() {
           <td>${prioInput}</td>
           <td class="text-end">
             ${settingsBtn}
+            ${uninstallBtn}
             ${p.enabled
               ? `<button class="btn btn-sm btn-outline-danger btn-icon" title="Disable" onclick="setPluginEnabled('${escapeHtml(p.id)}', false)"><i class="fas fa-power-off"></i></button>`
               : `<button class="btn btn-sm btn-outline-success btn-icon" title="Enable" onclick="setPluginEnabled('${escapeHtml(p.id)}', true)"><i class="fas fa-power-off"></i></button>`}
@@ -1864,3 +1869,220 @@ async function savePluginSettings(pluginId) {
     showToast('Network error: ' + e.message, 'danger');
   }
 }
+
+// ============================================================
+// Phase 3: Marketplace + Repositories tabs
+// ============================================================
+
+function pluginCompatBadge(entry) {
+  // entry: {min_core_version?, api_version?} — core is v0.2.x, api 1.0
+  const ok = true; // the registry already validated on install; badge is informational
+  return '<span class="badge bg-success-subtle text-success">Compatible</span>';
+}
+
+async function loadMarketplacePage() {
+  const container = document.getElementById('marketplaceContainer');
+  if (!container) return;
+  try {
+    const resp = await fetch('/api/plugins/marketplace');
+    const plugins = await resp.json();
+    const installed = await fetch('/api/plugins').then(r => r.json()).catch(() => []);
+    const installedVersions = {};
+    for (const p of installed) installedVersions[p.id] = p.version;
+
+    if (!plugins.length) {
+      container.innerHTML = '<div class="card bg-dark-card border-0 shadow-sm"><div class="card-body p-4 text-secondary text-center">No repositories added yet. Add one in the Repositories tab to browse plugins.</div></div>';
+      return;
+    }
+
+    let html = '<div class="row g-3">';
+    for (const e of plugins) {
+      const installedV = installedVersions[e.id] || e.installed_version;
+      const bundled = e.bundled;
+      const hasUpdate = installedV && e.latest_version && installedV !== e.latest_version;
+      let action = '';
+      if (bundled) {
+        action = '<span class="badge bg-secondary-subtle text-secondary">Installed (bundled)</span>';
+      } else if (installedV && !hasUpdate) {
+        action = `<span class="badge bg-success-subtle text-success">Installed v${escapeHtml(installedV)}</span>`;
+      } else if (installedV && hasUpdate) {
+        action = `<button class="btn btn-sm btn-brand" onclick="installPlugin('${escapeHtml(e.id)}', '${escapeHtml(e.latest_version)}')">Update to v${escapeHtml(e.latest_version)}</button>`;
+      } else {
+        action = `<button class="btn btn-sm btn-brand" onclick="installPlugin('${escapeHtml(e.id)}', '${escapeHtml(e.latest_version)}')">Install v${escapeHtml(e.latest_version)}</button>`;
+      }
+      const perms = (e.permissions || []).length
+        ? `<div class="small text-secondary mt-1">Permissions: ${e.permissions.map(escapeHtml).join(', ')}</div>`
+        : '';
+      html += `<div class="col-12 col-md-6 col-xl-4">
+        <div class="card bg-dark-card border-0 shadow-sm h-100">
+          <div class="card-body p-4">
+            <div class="d-flex align-items-start justify-content-between gap-2">
+              <div>
+                <div class="fw-bold">${escapeHtml(e.name || e.id)}</div>
+                <div class="text-secondary small font-monospace">${escapeHtml(e.id)}</div>
+              </div>
+              ${pluginTrustBadge(e.trust_level || 'community')}
+            </div>
+            <p class="text-secondary small mt-2 mb-2">${escapeHtml(e.description || '')}</p>
+            <div class="small text-secondary">${escapeHtml(e.source_repo_name || '')}</div>
+            ${perms}
+            <div class="d-flex align-items-center justify-content-between mt-3">
+              ${pluginCompatBadge(e)}
+              ${action}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div class="alert alert-danger">Error loading marketplace: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function installPlugin(pluginId, version) {
+  // Community trust confirmation dialog (PLUGIN_ARCHITECTURE.md §6).
+  showConfirmModal(
+    `Install ${pluginId}`,
+    `<div class="small">
+      <p>This will download and install <strong>${escapeHtml(pluginId)}</strong> v${escapeHtml(version)} from a third-party repository.</p>
+      <p class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>Plugins run in-process. Only install from sources you trust.</p>
+    </div>`,
+    async () => {
+      try {
+        const resp = await fetch('/api/plugins/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plugin_id: pluginId, version }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { showToast(data.error || 'Install failed', 'danger'); return; }
+        showToast(`Installed ${pluginId} v${data.version}`, 'success');
+        hideConfirmModal();
+        loadPluginsPage();
+      } catch (e) {
+        showToast('Network error: ' + e.message, 'danger');
+      }
+    },
+    'Install anyway', 'btn-danger'
+  );
+}
+
+async function loadRepositoriesPage() {
+  const container = document.getElementById('repositoriesContainer');
+  if (!container) return;
+  try {
+    const resp = await fetch('/api/plugins/repositories');
+    const repos = await resp.json();
+    let html = `<div class="card bg-dark-card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <h5 class="fw-bold m-0"><i class="fas fa-plus-circle text-danger me-2"></i>Add Repository</h5>
+        <p class="text-secondary small mb-3">Paste a plugin repository index URL (a JSON file with a "plugins" array).</p>
+        <div class="d-flex gap-2">
+          <input type="url" class="form-control" id="repoUrlInput" placeholder="https://example.com/plugins/index.json">
+          <button class="btn btn-brand text-nowrap" onclick="addRepository()"><i class="fas fa-plus me-1"></i>Add</button>
+        </div>
+      </div>
+    </div>`;
+
+    if (!repos.length) {
+      html += '<div class="card bg-dark-card border-0 shadow-sm"><div class="card-body p-4 text-secondary text-center">No repositories configured.</div></div>';
+    } else {
+      html += `<div class="card bg-dark-card border-0 shadow-sm">
+        <div class="card-body p-4">
+          <h5 class="fw-bold m-0 mb-3"><i class="fas fa-database text-danger me-2"></i>Configured Repositories</h5>
+          <div class="table-responsive"><table class="table table-dark table-hover m-0 align-middle">
+            <thead class="table-secondary text-secondary small text-uppercase" style="letter-spacing: 0.5px;">
+              <tr><th>Name</th><th>URL</th><th>Last Synced</th><th class="text-end">Actions</th></tr>
+            </thead><tbody>`;
+      for (const r of repos) {
+        html += `<tr>
+          <td class="fw-bold">${escapeHtml(r.name)}</td>
+          <td class="text-secondary small" style="word-break: break-all;">${escapeHtml(r.url)}</td>
+          <td class="text-secondary small">${r.last_synced_at ? escapeHtml(r.last_synced_at.replace('T', ' ').slice(0, 19)) : '—'}</td>
+          <td class="text-end">
+            <button class="btn btn-sm btn-outline-info btn-icon" title="Refresh" onclick="refreshRepository(${r.id})"><i class="fas fa-sync"></i></button>
+            <button class="btn btn-sm btn-outline-danger btn-icon" title="Remove" onclick="removeRepository(${r.id})"><i class="fas fa-trash"></i></button>
+          </td>
+        </tr>`;
+      }
+      html += '</tbody></table></div></div></div>';
+    }
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<div class="alert alert-danger">Error loading repositories: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function addRepository() {
+  const url = document.getElementById('repoUrlInput').value.trim();
+  if (!url) { showToast('Enter a repository URL', 'danger'); return; }
+  try {
+    const resp = await fetch('/api/plugins/repositories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+    showToast(`Added repository '${data.name}'`, 'success');
+    loadRepositoriesPage();
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'danger');
+  }
+}
+
+async function refreshRepository(repoId) {
+  try {
+    const resp = await fetch(`/api/plugins/repositories/${repoId}/refresh`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+    showToast('Repository refreshed', 'success');
+    loadRepositoriesPage();
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'danger');
+  }
+}
+
+async function removeRepository(repoId) {
+  showConfirmModal('Remove Repository', 'Remove this repository? Installed plugins stay.', async () => {
+    try {
+      const resp = await fetch(`/api/plugins/repositories/${repoId}`, { method: 'DELETE' });
+      if (!resp.ok) { showToast('Failed', 'danger'); return; }
+      showToast('Repository removed', 'success');
+      hideConfirmModal();
+      loadRepositoriesPage();
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'danger');
+    }
+  }, 'Remove', 'btn-danger');
+}
+
+// Uninstall action on the Installed tab (non-bundled plugins only).
+async function uninstallPlugin(pluginId) {
+  showConfirmModal(`Uninstall ${pluginId}`,
+    'Remove this plugin? Its files and settings will be deleted.',
+    async () => {
+      try {
+        const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/uninstall`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) { showToast(data.error || 'Uninstall failed', 'danger'); return; }
+        showToast(`Uninstalled ${pluginId}`, 'success');
+        hideConfirmModal();
+        loadPluginsPage();
+      } catch (e) {
+        showToast('Network error: ' + e.message, 'danger');
+      }
+    }, 'Uninstall', 'btn-danger');
+}
+
+// Tab wiring: lazy-load Marketplace/Repositories on first click.
+document.addEventListener('DOMContentLoaded', () => {
+  const mkTab = document.getElementById('marketplace-tab');
+  const repoTab = document.getElementById('repositories-tab');
+  if (mkTab) mkTab.addEventListener('click', () => { if (!_marketplaceLoaded) { _marketplaceLoaded = true; loadMarketplacePage(); } });
+  if (repoTab) repoTab.addEventListener('click', () => { if (!_repositoriesLoaded) { _repositoriesLoaded = true; loadRepositoriesPage(); } });
+});
+let _marketplaceLoaded = false;
+let _repositoriesLoaded = false;

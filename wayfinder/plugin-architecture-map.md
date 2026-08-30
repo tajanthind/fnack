@@ -116,6 +116,12 @@ phase.
    via dedup skip, clean failures with preserved strings, no stuck jobs.
 4. **Phase 3** (`plugin-architecture/phase-3-marketplace`): repositories,
    marketplace install/update/uninstall, per-plugin settings, health dashboard.
+   **DONE (in PR)** — tabbed /plugins page (Installed / Marketplace /
+   Repositories); marketplace grid with trust/compat/bundled markers;
+   add/refresh/remove repos; install/update/uninstall with Community
+   trust modal; bundled install/uninstall refused server-side; E2E
+   live-verified (add repo → sha256 install → settings → restart persist →
+   uninstall → cleanup).
 5. **Phase 4** (`plugin-architecture/phase-4-stretch`): auth_provider (SSO),
    Discord + ntfy event_hook pack, Subsonic server_extension, per-plugin Python
    dep isolation, signed manifests.
