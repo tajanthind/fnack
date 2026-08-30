@@ -15,6 +15,9 @@ from services.vpn_service import get_vpn_status, start_vpn, stop_vpn
 
 
 class VPNPluginImpl(VPNPlugin):
+    def on_load(self):
+        self.context.ui.register_slot("settings_tab", self._render_settings_tab)
+
     def start(self) -> tuple[bool, str]:
         return start_vpn()
 
