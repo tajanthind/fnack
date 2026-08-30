@@ -2020,12 +2020,19 @@ with app.app_context():
             pid = manifest.get("id")
             if not pid or InstalledPlugin.query.get(pid):
                 continue
+            # auth_provider plugins are strictly opt-in (zero-required-auth is
+            # the standing constraint) — auto-install them DISABLED so fnack
+            # stays fully open until the user explicitly enables one.
+            types = manifest.get("type", [])
+            if isinstance(types, str):
+                types = [types]
+            default_enabled = "auth_provider" not in types
             db.session.add(InstalledPlugin(
                 id=pid,
                 name=manifest.get("name", pid),
                 version=manifest.get("version", "0.0.0"),
-                type=",".join(manifest.get("type", [])),
-                enabled=True,
+                type=",".join(types),
+                enabled=default_enabled,
                 trust_level="official",
                 source_repo_id=None,
                 manifest_json=_json.dumps(manifest),
