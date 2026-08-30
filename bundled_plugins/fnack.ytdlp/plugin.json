@@ -1,0 +1,21 @@
+{
+  "id": "fnack.ytdlp",
+  "name": "yt-dlp",
+  "version": "1.0.0",
+  "type": ["downloader"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:YtDlpDownloader",
+  "author": "fnack",
+  "description": "YouTube/YouTube Music fallback downloader. Also serves the legacy spotdl entry point (alias).",
+  "homepage": "",
+  "permissions": ["network", "filesystem:downloads"],
+  "settings_schema": [
+    {"key": "format", "type": "select", "options": ["opus", "flac", "mp3"], "default": "opus"},
+    {"key": "audio_source", "type": "select", "options": ["youtube", "youtube_music"], "default": "youtube_music"},
+    {"key": "cookies_path", "type": "string", "default": "/config/cookies.txt"}
+  ],
+  "ui": {"slots": []},
+  "dependencies": {},
+  "trust_level": "official"
+}

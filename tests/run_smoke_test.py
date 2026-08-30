@@ -73,6 +73,7 @@ with app.app_context():
 
     # Exercise settings get/set + on_settings_changed
     from plugins.api import build_plugins_blueprint
+    from plugins.models import InstalledPlugin
     from plugins.registry import PluginRegistry
 
     registry = PluginRegistry(manager)
@@ -91,5 +92,27 @@ with app.app_context():
     r = client.post("/api/plugins/dev.fnack.example-quality-flag/disable")
     print("Disable:", r.status_code, r.json)
     assert manager.list_loaded()[0]["enabled"] is False
+
+    # Phase 1: enable creates the missing InstalledPlugin row (persists across
+    # restart) — the live finding from the Phase 0 validation run.
+    r = client.post("/api/plugins/dev.fnack.example-quality-flag/enable")
+    print("Enable (row creation):", r.status_code, r.json)
+    assert r.status_code == 200
+    row = db.session.get(InstalledPlugin, "dev.fnack.example-quality-flag")
+    assert row is not None and row.enabled is True, "enable must persist an InstalledPlugin row"
+
+    # Phase 1: priority override endpoint + grouped listing
+    r = client.post("/api/plugins/dev.fnack.example-quality-flag/priority", json={"priority": 7})
+    print("Priority POST:", r.status_code, r.json)
+    assert r.status_code == 200 and r.json.get("priority") == 7
+    assert manager.list_loaded()[0]["priority_override"] == 7
+
+    r = client.post("/api/plugins/dev.fnack.example-quality-flag/priority", json={"priority": None})
+    assert r.status_code == 200 and r.json.get("priority") is None
+
+    r = client.get("/api/plugins/grouped")
+    print("Grouped:", r.status_code, list((r.json or {}).keys()))
+    assert r.status_code == 200 and "event_hook" in (r.json or {})
+    assert "ui_extension" in (r.json or {})
 
 print("\nSMOKE TEST PASSED")

@@ -102,6 +102,13 @@ def main() -> int:
                     f"{expected:.1f}s (delta {delta:.1f}s > {max_delta:.1f}s tolerance). "
                     "File kept on disk; delete or re-download to fix."
                 )
+                # Phase 1 (scale-to-millions): track flipped to missing → −1 downloaded.
+                try:
+                    from services.counters_service import on_track_downloaded
+                    if t.album_id and t.album and t.album.artist_id:
+                        on_track_downloaded(t.album.artist_id, is_downloaded=False)
+                except Exception:
+                    pass
                 print(
                     f"[MISMATCH] track {t.id} '{t.title[:45]}' -> {t.local_path} "
                     f"(got {actual:.1f}s, official {expected:.1f}s)"

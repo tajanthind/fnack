@@ -99,6 +99,13 @@ phase.
    Plugins UI (grouped list, enable/disable, priority override), scale-to-millions
    (denormalized artist counters, paginated `/api/artists`, FTS5 if LIKE scans
    found). Behavior-preserving.
+   **DONE (in PR)** — 13 bundled plugins auto-install (official/enabled,
+   correct chain order: spotiflac p10, ytdlp p50, deezer p10 → musicbrainz p20
+   → spotify p30 → itunes p40); /plugins top-level page (grouped list, toggle,
+   numeric priority → priority_override persisted across restart); Artist
+   counters denormalized + backfilled (match GROUP BY ground truth), /api/artists
+   paginated, /api/queue capped; health-log buffered flush; priority-override
+   row-creation fix verified live. FTS5 deferred (no user-facing LIKE scans).
 3. **Phase 2** (`plugin-architecture/phase-2-pipeline-cutover`): replace
    hardcoded spotiflac→ytdlp and metadata call sequences with plugin chains.
 4. **Phase 3** (`plugin-architecture/phase-3-marketplace`): repositories,
@@ -109,7 +116,10 @@ phase.
 
 ## Not yet specified
 
-- Phase 3/4 details beyond the spec (§5, §11) — blocked on Phases 0–1 landing.
+- Phase 2 pipeline-cutover mechanics (INTEGRATION.md §6) — now ticketed:
+  [Design: Phase 2 — cut the queue + metadata pipelines over to plugin chains](tickets/plugin-phase-2-design.md)
+  (research in progress; implementation after PR #2 merges).
+- Phase 3/4 details beyond the spec (§5, §11) — blocked on Phases 0–2 landing.
 - Exact `context.*` additions needed by specific service migrations (raised per
   service during Phase 1, per HARNESS §5.5).
 - Whether `scan_trigger`/`fingerprint` need user-facing priority ordering

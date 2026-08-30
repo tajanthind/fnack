@@ -160,6 +160,14 @@ class MusicFolderHandler(FileSystemEventHandler):
                     track.size_bytes = 0
                     track.progress = 0.0
 
+                    # Phase 1 (scale-to-millions): track flipped to missing → −1 downloaded.
+                    try:
+                        from services.counters_service import on_track_downloaded
+                        if track.album_id and track.album and track.album.artist_id:
+                            on_track_downloaded(track.album.artist_id, is_downloaded=False)
+                    except Exception:
+                        logger.debug("[SCALE] counter update skipped", exc_info=True)
+
                     album = track.album
                     if album:
                         tracks = album.tracks.all()

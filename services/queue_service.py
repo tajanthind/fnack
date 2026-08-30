@@ -861,6 +861,17 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     album_rec.size_bytes = sum(t.size_bytes or 0 for t in album_tracks)
                     album_rec.local_path = str(dest_dir)
 
+                # Phase 1 (scale-to-millions): keep the denormalized per-artist
+                # counters in sync. Counters follow album.artist_id — the same
+                # grouping the old GROUP BY used. Guard False→True so
+                # re-downloads of an already-downloaded track don't double-count.
+                try:
+                    from services.counters_service import on_track_downloaded
+                    if album_rec and album_rec.artist_id and not track_rec.is_downloaded:
+                        on_track_downloaded(album_rec.artist_id, is_downloaded=True)
+                except Exception:
+                    logger.debug("[QUEUE] counter update skipped", exc_info=True)
+
                 db.session.commit()
                 logger.info("[QUEUE] Download succeeded for '%s - %s' -> %s", artist_name, track_title, final_dest)
 
@@ -1327,6 +1338,15 @@ def download_manual_match_track(
                 active_job.status = "completed"
                 active_job.progress = 100.0
                 active_job.error_message = None
+
+            # Phase 1 (scale-to-millions): guard False→True so counters only
+            # move when the flag actually changes (research §2.3).
+            try:
+                from services.counters_service import on_track_downloaded
+                if album_rec and album_rec.artist_id and not track_rec.is_downloaded:
+                    on_track_downloaded(album_rec.artist_id, is_downloaded=True)
+            except Exception:
+                logger.debug("[QUEUE] counter update skipped", exc_info=True)
 
             if album_rec:
                 album_tracks = album_rec.tracks.all()

@@ -1,0 +1,19 @@
+{
+  "id": "fnack.acoustid",
+  "name": "AcoustID Fingerprinting",
+  "version": "1.0.0",
+  "type": ["fingerprint"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:AcoustIDFingerprinter",
+  "author": "fnack",
+  "description": "Optional acoustic verification: confirms a download is the right song, identifies unknown/regional tracks, flags mismatches. Keyless = disabled (silent no-op).",
+  "homepage": "",
+  "permissions": ["network", "filesystem:music"],
+  "settings_schema": [
+    {"key": "api_key", "type": "secret", "required": false}
+  ],
+  "ui": {"slots": []},
+  "dependencies": {},
+  "trust_level": "official"
+}

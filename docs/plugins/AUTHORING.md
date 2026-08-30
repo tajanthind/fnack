@@ -58,7 +58,9 @@ To install it manually:
 1. Create the folder `/config/plugins/com.example.my-plugin/` (inside fnack's
    config volume).
 2. Put `plugin.json` and `plugin.py` in it.
-3. Restart fnack (or in a future release, install via Settings → Plugins).
+3. Restart fnack. The plugin is discovered on boot and appears in
+   Settings → Plugins; **enable it there once** so the enabled state persists
+   (an enable creates the `InstalledPlugin` row that survives restarts).
 
 On boot you'll see `fnack.plugins.manager` log lines about loading
 `com.example.my-plugin`. When any track finishes downloading, your `on_load`
@@ -169,6 +171,12 @@ class MyDownloader(DownloaderPlugin):
 `track` is a `TrackRef` dataclass: `id`, `title`, `artist_name`, `album_name`,
 `isrc`, `duration`, `spotify_url`, `deezer_id`, `disc_number`,
 `track_number` — read-only, no ORM.
+
+**Priority is user-adjustable.** The `priority` class attribute is the
+manifest default. Users can override it per-install from Settings → Plugins
+(the numeric input writes `InstalledPlugin.priority_override`); fnack sorts
+by the override when set, falling back to your declared priority. Overrides
+persist across restarts.
 
 ### `metadata_provider`
 
@@ -359,6 +367,29 @@ Never render raw/unescaped user input into slot HTML.
    health log — the app never crashes because of you.
 4. While disabled, your `on_disable()` runs (release timers/sockets). Fix the
    bug, then re-enable from Settings → Plugins.
+5. **Settings → Plugins** (`/plugins` page) lists installed plugins grouped by
+   type, with name/version/trust badge/enabled status/health and an
+   enable/disable toggle. A manually-installed plugin appears there once
+   discovered; enabling it persists an `InstalledPlugin` row so the enable
+   survives restart. Downloaders/metadata providers also show a numeric
+   **priority** input (writes `priority_override`; empty = manifest default).
+
+**REST API** (used by the page, also callable directly):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/plugins` | All loaded plugins with enabled/trust/priority |
+| `GET /api/plugins/grouped` | Same, grouped by type |
+| `POST /api/plugins/<id>/enable` \| `disable` | Toggle (persists row) |
+| `POST /api/plugins/<id>/priority` | `{"priority": N}` or `null` to clear override |
+| `GET/POST /api/plugins/<id>/settings` | Per-plugin key/value settings |
+| `GET /api/plugins/<id>/health` | failures/last_error/last_run_at |
+| `POST /api/plugins/<id>/uninstall` | Remove (Phase 3 marketplace flow) |
+
+**Bundled plugins** ship inside the fnack image at `/app/bundled_plugins/<id>/`
+and are auto-installed on startup (trust `official`, enabled by default) — no
+user action needed. A user install under `/config/plugins/<id>/` wins over the
+bundled copy of the same id.
 
 ---
 

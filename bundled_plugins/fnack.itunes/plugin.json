@@ -1,0 +1,17 @@
+{
+  "id": "fnack.itunes",
+  "name": "iTunes Search API",
+  "version": "1.0.0",
+  "type": ["metadata_provider"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:ITunesProvider",
+  "author": "fnack",
+  "description": "iTunes Search API fallback for album-track metadata.",
+  "homepage": "",
+  "permissions": ["network"],
+  "settings_schema": [],
+  "ui": {"slots": []},
+  "dependencies": {},
+  "trust_level": "official"
+}

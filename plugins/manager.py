@@ -20,6 +20,7 @@ import json
 import logging
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -48,11 +49,26 @@ class LoadedPlugin:
         self.module_path = module_path
         self.enabled = False
         self.consecutive_failures = 0
+        self.priority_override: Optional[int] = None  # user override, from InstalledPlugin.priority_override
+
+    def refresh_from_db(self) -> None:
+        """Pull persisted per-install state (priority_override) from the DB."""
+        try:
+            from plugins.models import InstalledPlugin
+            from models import db
+            row = db.session.get(InstalledPlugin, self.manifest.id)
+            if row is not None:
+                self.priority_override = row.priority_override
+        except Exception:
+            logger.debug("Could not refresh plugin state for %s", self.manifest.id, exc_info=True)
 
 
 class PluginManager:
-    def __init__(self, plugins_dir: str | Path = "/config/plugins", core_version: str = "0.0.0"):
+    def __init__(self, plugins_dir: str | Path = "/config/plugins",
+                 bundled_plugins_dir: str | Path | None = None,
+                 core_version: str = "0.0.0"):
         self.plugins_dir = Path(plugins_dir)
+        self.bundled_plugins_dir = Path(bundled_plugins_dir) if bundled_plugins_dir else None
         self.core_version = core_version
         self.event_bus = EventBus()
         self.ui_slot_registry: dict[str, list] = {}
@@ -68,10 +84,26 @@ class PluginManager:
 
     # -- discovery & loading -------------------------------------------------
 
-    def discover(self) -> list[Path]:
-        if not self.plugins_dir.exists():
+    def _plugin_dirs(self, root: Path) -> list[Path]:
+        if not root.exists():
             return []
-        return [p for p in self.plugins_dir.iterdir() if p.is_dir() and (p / "plugin.json").exists()]
+        return [p for p in root.iterdir() if p.is_dir() and (p / "plugin.json").exists()]
+
+    def discover(self) -> list[Path]:
+        """All plugin directories: bundled (image-baked, official) first, then
+        user-installed under /config/plugins. Bundled dirs never shadow a
+        user install of the same id — the user dir wins (later in the list)."""
+        dirs: list[Path] = []
+        if self.bundled_plugins_dir is not None:
+            dirs.extend(self._plugin_dirs(self.bundled_plugins_dir))
+        dirs.extend(self._plugin_dirs(self.plugins_dir))
+        return dirs
+
+    def discover_bundled(self) -> list[Path]:
+        """Only the image-baked bundled plugin dirs."""
+        if self.bundled_plugins_dir is None:
+            return []
+        return self._plugin_dirs(self.bundled_plugins_dir)
 
     def load_all(self, enabled_ids: Optional[set[str]] = None) -> None:
         """`enabled_ids` normally comes from InstalledPlugin.enabled rows in
@@ -109,6 +141,7 @@ class PluginManager:
         with self._lock:
             self._plugins[manifest.id] = loaded
 
+        loaded.refresh_from_db()  # pull priority_override + any persisted state
         self.call_safe(loaded, "on_load")
         return loaded
 
@@ -233,6 +266,7 @@ class PluginManager:
                 result = method(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 - untrusted plugin code
             loaded.consecutive_failures += 1
+            self._buffer_health(loaded, error=str(exc)[:500])
             logger.exception("Plugin '%s'.%s failed (%d consecutive)",
                               loaded.manifest.id, method_name, loaded.consecutive_failures)
             if loaded.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
@@ -241,7 +275,50 @@ class PluginManager:
             return None
         else:
             loaded.consecutive_failures = 0
+            self._buffer_health(loaded, error=None)
             return result
+
+    # -- health bookkeeping: buffered, never per-hook commits ----------------
+    # SQLite is single-writer even in WAL mode; the plugin health log must not
+    # issue its own db.session.commit() on every hook call (that would add
+    # write-lock contention scaling with plugin count). We buffer in memory and
+    # flush piggybacked on core's existing commit points via flush_health().
+    # See wayfinder/research/scale-to-millions.md §4.
+
+    def _buffer_health(self, loaded: LoadedPlugin, error: Optional[str]) -> None:
+        buf = getattr(self, "_health_buffer", None)
+        if buf is None:
+            buf = {}
+            self._health_buffer = buf
+        buf[loaded.manifest.id] = {
+            "consecutive_failures": loaded.consecutive_failures,
+            "last_error": error,
+            "last_run_at": time.time(),
+        }
+
+    def flush_health(self) -> None:
+        """Write buffered health rows to InstalledPlugin in ONE commit.
+        Call from core's existing commit points (queue_service) or a periodic
+        timer — never from inside plugin hook calls."""
+        buf = getattr(self, "_health_buffer", None)
+        if not buf:
+            return
+        try:
+            from plugins.models import InstalledPlugin
+            from models import db
+            for plugin_id, h in buf.items():
+                row = db.session.get(InstalledPlugin, plugin_id)
+                if row is None:
+                    continue
+                row.consecutive_failures = h["consecutive_failures"]
+                row.last_error = h["last_error"]
+                if h.get("last_run_at"):
+                    from datetime import datetime, timezone
+                    row.last_run_at = datetime.fromtimestamp(h["last_run_at"], tz=timezone.utc)
+            db.session.commit()
+            buf.clear()
+        except Exception:
+            logger.exception("Plugin health flush failed")
 
     def _default_scheduler_hook(self, seconds: float, fn) -> None:
         try:
@@ -252,32 +329,37 @@ class PluginManager:
 
     # -- typed accessors used by core (queue_service, metadata_service, ...) -
 
+    def _effective_priority(self, loaded) -> int:
+        """User-facing priority_override when set, else the manifest priority."""
+        override = getattr(loaded, "priority_override", None)
+        if override is not None:
+            try:
+                return int(override)
+            except (TypeError, ValueError):
+                pass
+        return int(getattr(loaded.instance, "priority", 100) or 100)
+
+    def _ordered(self, base_cls_name: str) -> list:
+        from plugins import base as _base
+        cls = getattr(_base, base_cls_name)
+        plugins = [p for p in self._plugins.values()
+                   if p.enabled and isinstance(p.instance, cls)]
+        return [p.instance for p in sorted(plugins, key=lambda p: self._effective_priority(p))]
+
     def get_downloaders(self) -> list:
-        from plugins.base import DownloaderPlugin
-        plugins = [p.instance for p in self._plugins.values()
-                   if p.enabled and isinstance(p.instance, DownloaderPlugin)]
-        return sorted(plugins, key=lambda p: p.priority)
+        return self._ordered("DownloaderPlugin")
 
     def get_metadata_providers(self) -> list:
-        from plugins.base import MetadataProviderPlugin
-        plugins = [p.instance for p in self._plugins.values()
-                   if p.enabled and isinstance(p.instance, MetadataProviderPlugin)]
-        return sorted(plugins, key=lambda p: p.priority)
+        return self._ordered("MetadataProviderPlugin")
 
     def get_fingerprint_plugins(self) -> list:
-        from plugins.base import FingerprintPlugin
-        return [p.instance for p in self._plugins.values()
-                if p.enabled and isinstance(p.instance, FingerprintPlugin)]
+        return self._ordered("FingerprintPlugin")
 
     def get_scan_triggers(self) -> list:
-        from plugins.base import ScanTriggerPlugin
-        return [p.instance for p in self._plugins.values()
-                if p.enabled and isinstance(p.instance, ScanTriggerPlugin)]
+        return self._ordered("ScanTriggerPlugin")
 
     def get_library_tasks(self) -> list:
-        from plugins.base import LibraryTaskPlugin
-        return [p.instance for p in self._plugins.values()
-                if p.enabled and isinstance(p.instance, LibraryTaskPlugin)]
+        return self._ordered("LibraryTaskPlugin")
 
     def get_ui_slot_html(self, slot_name: str, context_data: dict) -> str:
         """Called by the `plugin_slot()` Jinja helper (see INTEGRATION.md)."""
@@ -301,6 +383,8 @@ class PluginManager:
                 "enabled": p.enabled,
                 "trust_level": p.manifest.trust_level,
                 "consecutive_failures": p.consecutive_failures,
+                "priority": self._effective_priority(p),
+                "priority_override": p.priority_override,
             }
             for p in self._plugins.values()
         ]
@@ -311,7 +395,10 @@ class PluginManager:
 plugin_manager: Optional[PluginManager] = None
 
 
-def init_plugin_manager(plugins_dir: str, core_version: str) -> PluginManager:
+def init_plugin_manager(plugins_dir: str, core_version: str,
+                        bundled_plugins_dir: str | Path | None = None) -> PluginManager:
     global plugin_manager
-    plugin_manager = PluginManager(plugins_dir=plugins_dir, core_version=core_version)
+    plugin_manager = PluginManager(plugins_dir=plugins_dir,
+                                   bundled_plugins_dir=bundled_plugins_dir,
+                                   core_version=core_version)
     return plugin_manager

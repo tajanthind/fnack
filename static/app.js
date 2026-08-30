@@ -1631,3 +1631,172 @@ document.addEventListener('DOMContentLoaded', () => {
     addCancel.addEventListener('click', hideAddArtistModal);
   }
 });
+// ============================================================
+// Plugins page (Settings → Plugins equivalent, top-level /plugins)
+// ============================================================
+
+const PLUGIN_TYPE_LABELS = {
+  downloader: 'Downloaders',
+  metadata_provider: 'Metadata Providers',
+  lyrics_provider: 'Lyrics Providers',
+  fingerprint: 'Fingerprinting',
+  scan_trigger: 'Scan Triggers',
+  library_task: 'Library Tasks',
+  vpn: 'VPN',
+  storage_backend: 'Storage Backends',
+  server_extension: 'Server Extensions',
+  ui_extension: 'UI Extensions',
+  event_hook: 'Event Hooks',
+  auth_provider: 'Auth Providers',
+  library_source: 'Library Sources',
+  conflict_resolver: 'Conflict Resolvers',
+  recommendation: 'Recommendations',
+};
+
+const PRIORITY_TYPES = new Set(['downloader', 'metadata_provider', 'lyrics_provider']);
+
+function pluginTrustBadge(trust) {
+  if (trust === 'official') return '<span class="badge bg-success-subtle text-success">Official</span>';
+  if (trust === 'verified') return '<span class="badge bg-info-subtle text-info">Verified</span>';
+  return '<span class="badge bg-secondary-subtle text-secondary">Community</span>';
+}
+
+async function loadPluginsPage() {
+  const container = document.getElementById('pluginsPageContainer');
+  if (!container) return;
+  try {
+    const resp = await fetch('/api/plugins');
+    const plugins = await resp.json();
+    const healthMap = {};
+    await Promise.all(plugins.map(async (p) => {
+      try {
+        const hr = await fetch(`/api/plugins/${encodeURIComponent(p.id)}/health`);
+        if (hr.ok) healthMap[p.id] = await hr.json();
+      } catch (e) { /* no health row yet */ }
+    }));
+
+    // Group by type (a plugin with multiple types appears once per type)
+    const grouped = {};
+    for (const p of plugins) {
+      for (const t of p.type || []) {
+        if (!grouped[t]) grouped[t] = [];
+        grouped[t].push({ ...p, health: healthMap[p.id] });
+      }
+    }
+
+    const typeOrder = ['downloader', 'metadata_provider', 'fingerprint', 'scan_trigger',
+      'library_task', 'vpn', 'event_hook', 'server_extension', 'ui_extension',
+      'lyrics_provider', 'storage_backend', 'auth_provider', 'library_source',
+      'conflict_resolver', 'recommendation'];
+
+    let html = '';
+    for (const t of typeOrder) {
+      const items = grouped[t];
+      if (!items || !items.length) continue;
+      html += `<div class="card bg-dark-card border-0 shadow-sm mb-4">
+        <div class="card-body p-4">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <h5 class="fw-bold m-0"><i class="fas fa-cubes text-danger me-2"></i>${PLUGIN_TYPE_LABELS[t] || t}</h5>
+            <span class="badge bg-secondary-subtle text-secondary">${items.length}</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-dark table-hover m-0 align-middle">
+              <thead class="table-secondary text-secondary small text-uppercase" style="letter-spacing: 0.5px;">
+                <tr><th>Plugin</th><th>Version</th><th>Trust</th><th>Status</th><th>Priority</th><th class="text-end">Actions</th></tr>
+              </thead>
+              <tbody>`;
+      for (const p of items) {
+        const h = p.health || {};
+        const status = p.enabled
+          ? `<span class="badge bg-success-subtle text-success">Enabled</span>`
+          : `<span class="badge bg-secondary-subtle text-secondary">Disabled</span>`;
+        const healthBadge = h.last_error
+          ? `<div class="small text-danger mt-1" title="${escapeHtml(h.last_error)}">⚠ ${h.consecutive_failures || 0} failures</div>`
+          : (p.consecutive_failures ? `<div class="small text-warning mt-1">${p.consecutive_failures} recent failures</div>` : '');
+        const prioInput = PRIORITY_TYPES.has(t)
+          ? `<input type="number" min="1" class="form-control form-control-sm plugin-priority" style="width: 80px;"
+               data-plugin="${escapeHtml(p.id)}" value="${p.priority_override ?? p.priority}"
+               title="Priority (lower = tried first); clears on empty" onchange="savePluginPriority('${escapeHtml(p.id)}', this.value)">`
+          : `<span class="text-secondary small">${p.priority ?? '—'}</span>`;
+        html += `<tr>
+          <td>
+            <div class="fw-bold">${escapeHtml(p.name)}</div>
+            <div class="text-secondary small font-monospace">${escapeHtml(p.id)}</div>
+            ${healthBadge}
+          </td>
+          <td class="text-secondary small">${escapeHtml(p.version)}</td>
+          <td>${pluginTrustBadge(p.trust_level)}</td>
+          <td>${status}</td>
+          <td>${prioInput}</td>
+          <td class="text-end">
+            ${p.enabled
+              ? `<button class="btn btn-sm btn-outline-danger btn-icon" title="Disable" onclick="setPluginEnabled('${escapeHtml(p.id)}', false)"><i class="fas fa-power-off"></i></button>`
+              : `<button class="btn btn-sm btn-outline-success btn-icon" title="Enable" onclick="setPluginEnabled('${escapeHtml(p.id)}', true)"><i class="fas fa-power-off"></i></button>`}
+          </td>
+        </tr>`;
+      }
+      html += `</tbody></table></div></div></div>`;
+    }
+
+    if (!html) {
+      html = '<div class="card bg-dark-card border-0 shadow-sm"><div class="card-body p-4 text-secondary text-center">No plugins installed. Bundled plugins appear here automatically.</div></div>';
+    }
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<div class="alert alert-danger">Error loading plugins: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function setPluginEnabled(pluginId, enabled) {
+  try {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/${enabled ? 'enable' : 'disable'}`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+    showToast(`${enabled ? 'Enabled' : 'Disabled'} ${pluginId}`, 'success');
+    loadPluginsPage();
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'danger');
+  }
+}
+
+async function savePluginPriority(pluginId, value) {
+  const priority = value === '' ? null : parseInt(value, 10);
+  if (priority !== null && (isNaN(priority) || priority < 1)) {
+    showToast('Priority must be a positive number', 'danger');
+    loadPluginsPage();
+    return;
+  }
+  try {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/priority`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priority }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+    showToast(`Priority updated for ${pluginId}`, 'success');
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'danger');
+  }
+}
+
+// Settings-tab forms contributed by plugins call this (e.g. fnack.navidrome).
+async function savePluginSettings(pluginId) {
+  const payload = {};
+  document.querySelectorAll(`[id^="plugin-${pluginId}-"]`).forEach((el) => {
+    const key = el.id.replace(`plugin-${pluginId}-`, '');
+    payload[key] = el.value;
+  });
+  try {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+    showToast('Plugin settings saved', 'success');
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'danger');
+  }
+}

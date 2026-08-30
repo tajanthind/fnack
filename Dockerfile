@@ -43,6 +43,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN chmod +x /app/entrypoint.sh
 
+# Bundled first-party plugins (Phase 1): baked into the image at a fixed path
+# so startup auto-installs them (PHASE1 §3) without any marketplace visit.
+COPY bundled_plugins /app/bundled_plugins
+
 # WireGuard-in-Docker shim: Docker mounts /proc/sys/net/ipv4/conf/* read-only,
 # so wg-quick's src_valid_mark write fails and it tears the tunnel down. The
 # shim (installed first in PATH) no-ops those writes; the value itself is set

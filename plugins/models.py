@@ -45,6 +45,11 @@ class InstalledPlugin(db.Model):
     last_error = db.Column(db.Text, nullable=True)
     last_run_at = db.Column(db.DateTime, nullable=True)
 
+    # User-facing priority override (Phase 1): when set, ordered getters sort
+    # by this instead of the manifest's declared `priority`. Nullable — NULL
+    # means "use the manifest priority".
+    priority_override = db.Column(db.Integer, nullable=True)
+
 
 class PluginSetting(db.Model):
     __tablename__ = "plugin_settings"
