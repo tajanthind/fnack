@@ -2082,6 +2082,24 @@ with app.app_context():
     db.session.commit()
     get_api_key(app)
 
+    # Phase 4: register server_extension plugin blueprints (Subsonic API, etc.).
+    # Each enabled ServerExtensionPlugin gets a fresh Flask Blueprint scoped to
+    # its manifest id; register_routes() populates it. Must run inside the app
+    # context so blueprints attach to this app.
+    try:
+        from plugins.base import ServerExtensionPlugin
+        from flask import Blueprint as _FlaskBlueprint
+        for _loaded in plugin_manager._plugins.values():  # noqa: SLF001 - internal, same package
+            if not _loaded.enabled or not isinstance(_loaded.instance, ServerExtensionPlugin):
+                continue
+            _bp = _FlaskBlueprint(f"plugin_{_loaded.manifest.id.replace('.', '_').replace('-', '_')}",
+                                  __name__, url_prefix="")
+            _loaded.instance.register_routes(_bp)
+            app.register_blueprint(_bp)
+            logger.info("[PLUGINS] Registered server_extension routes for %s", _loaded.manifest.id)
+    except Exception:
+        logger.exception("[PLUGINS] Could not register server_extension blueprints")
+
 # Start background services
 socketio.start_background_task(start_queue_worker, app, socketio)
 socketio.start_background_task(start_folder_watcher, app, socketio)
