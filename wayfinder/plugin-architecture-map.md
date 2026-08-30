@@ -116,7 +116,10 @@ phase.
 
 ## Not yet specified
 
-- Phase 3/4 details beyond the spec (§5, §11) — blocked on Phases 0–1 landing.
+- Phase 2 pipeline-cutover mechanics (INTEGRATION.md §6) — now ticketed:
+  [Design: Phase 2 — cut the queue + metadata pipelines over to plugin chains](tickets/plugin-phase-2-design.md)
+  (research in progress; implementation after PR #2 merges).
+- Phase 3/4 details beyond the spec (§5, §11) — blocked on Phases 0–2 landing.
 - Exact `context.*` additions needed by specific service migrations (raised per
   service during Phase 1, per HARNESS §5.5).
 - Whether `scan_trigger`/`fingerprint` need user-facing priority ordering
