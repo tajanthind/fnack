@@ -1730,6 +1730,7 @@ async function loadPluginsPage() {
           <td>
             <div class="fw-bold">${escapeHtml(p.name)}</div>
             <div class="text-secondary small font-monospace">${escapeHtml(p.id)}</div>
+            ${p.description ? `<div class="text-muted small mt-1 text-truncate" style="max-width: 340px;" title="${escapeHtml(p.description)}">${escapeHtml(p.description)}</div>` : ''}
             ${healthBadge}
           </td>
           <td class="text-secondary small">${escapeHtml(p.version)}</td>
@@ -1793,6 +1794,16 @@ async function openPluginSettings(pluginId, pluginName) {
       } else if (f.type === 'secret') {
         form += `<div class="mb-3"><label class="form-label small text-secondary">${label}</label>
           <input type="password" class="form-control plugin-settings-field" id="ps-${escapeHtml(key)}" data-key="${escapeHtml(key)}" value="${escapeHtml(String(val))}" placeholder="••••••••"${req}></div>`;
+      } else if (f.type === 'file' || f.type === 'secret_file') {
+        // Reusable per-plugin file upload (Brief 4 §3): each plugin stores
+        // its OWN copy in its private data dir. The input name carries the
+        // schema key so savePluginSettings can upload it.
+        const currentPath = val && val !== '<redacted>' ? String(val) : '';
+        form += `<div class="mb-3"><label class="form-label small text-secondary">${label}</label>
+          <input type="file" class="form-control plugin-settings-file" id="ps-${escapeHtml(key)}"
+                 data-key="${escapeHtml(key)}" data-plugin="${escapeHtml(pluginId)}"${req}>
+          ${currentPath ? `<div class="text-secondary small mt-1">Current: <code>${escapeHtml(currentPath)}</code></div>` : ''}
+          <div class="text-secondary small mt-1">Upload replaces this plugin's private copy (never shared with other plugins).</div></div>`;
       } else {
         const inputType = f.type === 'number' ? 'number' : 'text';
         form += `<div class="mb-3"><label class="form-label small text-secondary">${label}</label>
@@ -1849,6 +1860,25 @@ async function savePluginSettings(pluginId) {
     if (el.type === 'checkbox') payload[key] = el.checked ? 'true' : 'false';
     else payload[key] = el.value;
   });
+  // Reusable per-plugin file uploads (Brief 4 §3): upload each selected file
+  // to the plugin's private copy, then record the stored path in the payload.
+  const fileInputs = document.querySelectorAll(`#confirmModalBody .plugin-settings-file`);
+  for (const el of fileInputs) {
+    const key = el.dataset.key;
+    if (!key || !el.files || !el.files[0]) continue;
+    const fd = new FormData();
+    fd.append('file', el.files[0]);
+    fd.append('key', key);
+    try {
+      const up = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/file`, { method: 'POST', body: fd });
+      const upData = await up.json();
+      if (!up.ok) { showToast(upData.error || 'Upload failed', 'danger'); return; }
+      payload[key] = upData.path;
+    } catch (e) {
+      showToast('File upload error: ' + e.message, 'danger');
+      return;
+    }
+  }
   // Plugin-contributed settings_tab forms (e.g. fnack.navidrome, fnack.subsonic).
   const cleanId = pluginId.replace(/\./g, '\\.');
   const idPrefix1 = `plugin-${pluginId}-`;

@@ -462,6 +462,8 @@ class PluginManager:
                 # Per-plugin settings (user requirement): expose the declared
                 # schema so the UI can render each plugin's own settings form.
                 "settings_schema": p.manifest.settings_schema or [],
+                # Brief 5 §4: surface the manifest description on /plugins.
+                "description": p.manifest.description or "",
             }
             for p in self._plugins.values()
         ]

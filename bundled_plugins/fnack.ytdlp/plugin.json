@@ -13,6 +13,7 @@
   "settings_schema": [
     {"key": "format", "type": "select", "options": ["opus", "flac", "mp3"], "default": "opus"},
     {"key": "audio_source", "type": "select", "options": ["youtube", "youtube_music"], "default": "youtube_music"},
+    {"key": "cookies_file", "type": "file", "description": "Upload cookies.txt (per-plugin private copy; never shared)"},
     {"key": "cookies_path", "type": "string", "default": "/config/cookies.txt"}
   ],
   "ui": {"slots": []},

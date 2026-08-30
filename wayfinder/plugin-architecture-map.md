@@ -97,6 +97,19 @@ phase.
   release. Verified identical today (all 17 plugins byte-for-byte). The
   auto-seeded official repo URL points at the fnack-plugins `index.json`.
 
+- [Phase 5: Settings-surface gaps (VPN/yt-dlp), plugin descriptions, reconciliation verification](tickets/plugin-phase-5-settings-and-descriptions.md):
+  §1 metadata-chain fix confirmed live on main (stale-blob audit artifact);
+  VPN gets a custom settings_tab (upload/start/stop/status via core /api/vpn
+  routes, Option B — schema-only can't express file+actions+status); yt-dlp
+  cookies_file via the reusable per-plugin file upload; plugin descriptions
+  surfaced on /plugins (API + Installed-row render; Marketplace already had
+  it). Ported the prior-session VPN/file-upload work that had missed the
+  PR #6 merge. Live-verified end to end.
+- [Verify: metadata-chain fix from PR #6 is live on main](tickets/plugin-metadata-chain-live-verification.md):
+  confirmed intact (per-provider keying + served_by + try/except in app.py
+  and import_service.py at `6f4d043`); audit's old-version reading was a
+  stale GitHub blob.
+
 
 ## Roadmap (execution carried into the map)
 

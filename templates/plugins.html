@@ -97,6 +97,10 @@
             <div class="mt-2">Loading plugins...</div>
           </div>
         </div>
+        <!-- Custom plugin panels (settings_tab slots) render below the list —
+             e.g. the VPN upload/start/stop panel. Schema-based settings live
+             in each plugin's Settings modal instead. -->
+        {{ plugin_slot('settings_tab') }}
       </div>
       <div class="tab-pane fade" id="marketplace-pane" role="tabpanel">
         <div id="marketplaceContainer">

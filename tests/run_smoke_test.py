@@ -140,6 +140,11 @@ with app.app_context():
     assert r.status_code == 200 and "event_hook" in (r.json or {})
     assert "ui_extension" in (r.json or {})
 
+    # Brief 5 §4: the loaded-plugin listing exposes the manifest description.
+    listed = manager.list_loaded()
+    assert "description" in listed[0], "list_loaded() must expose description"
+    assert isinstance(listed[0]["description"], str)
+
     # Phase 3/4: bundled install/uninstall guards. Installing an ACTIVE
     # bundled id from a repo is refused; uninstalling a bundled id is now
     # ALLOWED (records a tombstone so auto-install won't resurrect it).
