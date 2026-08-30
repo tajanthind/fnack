@@ -140,15 +140,27 @@ with app.app_context():
     assert r.status_code == 200 and "event_hook" in (r.json or {})
     assert "ui_extension" in (r.json or {})
 
-    # Phase 3: bundled guards — installing or uninstalling a bundled id is
-    # refused server-side (bundled plugins auto-install on boot).
+    # Phase 3/4: bundled install/uninstall guards. Installing an ACTIVE
+    # bundled id from a repo is refused; uninstalling a bundled id is now
+    # ALLOWED (records a tombstone so auto-install won't resurrect it).
     r = client.post("/api/plugins/install", json={"plugin_id": "fnack.spotiflac"})
-    print("Install bundled (refused):", r.status_code, r.json)
+    print("Install active bundled (refused):", r.status_code, r.json)
     assert r.status_code == 400 and "bundled" in (r.json.get("error") or "").lower()
 
     r = client.post("/api/plugins/fnack.spotiflac/uninstall")
-    print("Uninstall bundled (refused):", r.status_code, r.json)
-    assert r.status_code == 400
+    print("Uninstall bundled (allowed, tombstones):", r.status_code, r.json)
+    assert r.status_code == 200
+
+    # After uninstall, the tombstone exists (auto-install will skip it).
+    from models import AppSetting
+    assert db.session.get(AppSetting, "plugin.uninstalled.fnack.spotiflac") is not None, \
+        "uninstall must record a tombstone for bundled plugins"
+
+    # Reinstall after uninstall is permitted (no crash; 200 if a repo exists
+    # for it, 400 otherwise).
+    r = client.post("/api/plugins/install", json={"plugin_id": "fnack.spotiflac"})
+    print("Reinstall bundled after uninstall:", r.status_code, r.json)
+    assert r.status_code in (200, 400)
 
     # Phase 3: marketplace/repositories endpoints exist and are well-formed.
     r = client.get("/api/plugins/marketplace")

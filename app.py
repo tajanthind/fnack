@@ -2034,6 +2034,11 @@ with app.app_context():
             pid = manifest.get("id")
             if not pid or InstalledPlugin.query.get(pid):
                 continue
+            # User-uninstalled bundled plugins stay gone (tombstone set by the
+            # uninstall endpoint); don't resurrect them on boot.
+            if db.session.get(AppSetting, f"plugin.uninstalled.{pid}"):
+                logger.info("[PLUGINS] Skipping auto-install of %s (uninstalled by user)", pid)
+                continue
             # auth_provider plugins are strictly opt-in (zero-required-auth is
             # the standing constraint) — auto-install them DISABLED so fnack
             # stays fully open until the user explicitly enables one.

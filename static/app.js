@@ -1722,10 +1722,10 @@ async function loadPluginsPage() {
         const settingsBtn = hasSettings
           ? `<button class="btn btn-sm btn-outline-info btn-icon" title="Settings" onclick="openPluginSettings('${escapeHtml(p.id)}', '${escapeHtml(p.name)}')"><i class="fas fa-cog"></i></button>`
           : '';
-        // Phase 3: non-bundled plugins get an Uninstall action (bundled ones
-        // are disabled instead — auto-install would restore them on reboot).
-        const isBundled = !!p.bundled;
-        const uninstallBtn = isBundled ? '' : `<button class="btn btn-sm btn-outline-danger btn-icon" title="Uninstall" onclick="uninstallPlugin('${escapeHtml(p.id)}')"><i class="fas fa-trash"></i></button>`;
+        // Uninstall available for ALL plugins (official bundled included) —
+        // the server records a tombstone so bundled ones stay uninstalled
+        // across reboots.
+        const uninstallBtn = `<button class="btn btn-sm btn-outline-danger btn-icon" title="Uninstall" onclick="uninstallPlugin('${escapeHtml(p.id)}', ${!!p.bundled})"><i class="fas fa-trash"></i></button>`;
         html += `<tr>
           <td>
             <div class="fw-bold">${escapeHtml(p.name)}</div>
@@ -2064,10 +2064,13 @@ async function removeRepository(repoId) {
   }, 'Remove', 'btn-danger');
 }
 
-// Uninstall action on the Installed tab (non-bundled plugins only).
-async function uninstallPlugin(pluginId) {
+// Uninstall action on the Installed tab (available for ALL plugins).
+async function uninstallPlugin(pluginId, isBundled = false) {
+  const warn = isBundled
+    ? 'This is an official bundled plugin. Uninstalling removes it from fnack (it will NOT come back on reboot) until you reinstall it from the Marketplace or Settings.'
+    : 'Remove this plugin? Its files and settings will be deleted.';
   showConfirmModal(`Uninstall ${pluginId}`,
-    'Remove this plugin? Its files and settings will be deleted.',
+    warn,
     async () => {
       try {
         const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/uninstall`, { method: 'POST' });
