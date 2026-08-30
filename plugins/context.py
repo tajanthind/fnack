@@ -60,6 +60,45 @@ class LibraryContext:
         rows = Track.query.filter_by(status="missing").limit(limit).all()
         return [{"id": t.id, "title": t.title, "isrc": t.isrc} for t in rows]
 
+    def list_artists(self) -> list[dict]:
+        """All artists (for Subsonic-style server extensions)."""
+        from models import Artist
+        return [{"id": a.id, "name": a.name, "image_url": a.image_url}
+                for a in Artist.query.order_by(Artist.name).all()]
+
+    def list_albums(self, artist_id: Optional[int] = None, limit: int = 500) -> list[dict]:
+        """Albums, optionally filtered by artist (Subsonic album list)."""
+        from models import Album
+        q = Album.query
+        if artist_id:
+            q = q.filter_by(artist_id=artist_id)
+        rows = q.order_by(Album.name).limit(limit).all()
+        return [{"id": a.id, "name": a.name, "year": a.year,
+                 "artist_id": a.artist_id, "cover_url": a.cover_url,
+                 "is_downloaded": a.is_downloaded} for a in rows]
+
+    def list_tracks(self, album_id: Optional[int] = None, limit: int = 1000) -> list[dict]:
+        """Tracks, optionally filtered by album (Subsonic song list)."""
+        from models import Track
+        q = Track.query
+        if album_id:
+            q = q.filter_by(album_id=album_id)
+        rows = q.order_by(Track.disc_number, Track.track_number).limit(limit).all()
+        return [{"id": t.id, "title": t.title, "album_id": t.album_id,
+                 "artist_id": t.artist_id, "track_number": t.track_number,
+                 "disc_number": t.disc_number, "duration": t.duration,
+                 "file_path": t.file_path, "local_path": t.local_path,
+                 "is_downloaded": t.is_downloaded, "bitrate": t.bitrate,
+                 "size_bytes": t.size_bytes} for t in rows]
+
+    def get_api_key(self) -> str:
+        """The configured M2M API key ('' if unset). Exposed so server-
+        extension plugins (e.g. Subsonic) can authenticate clients against
+        the same key without touching models directly."""
+        from models import AppSetting, db
+        row = db.session.get(AppSetting, "api_key")
+        return (row.value or "").strip() if row else ""
+
     def update_track_status(self, track_id: int, status: str, error_message: str = None) -> None:
         from models import Track, db
         t = db.session.get(Track, track_id)

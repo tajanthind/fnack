@@ -1,0 +1,20 @@
+{
+  "id": "fnack.reverse-proxy-auth",
+  "name": "Reverse-Proxy Auth",
+  "version": "1.0.0",
+  "type": ["auth_provider"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:ReverseProxyAuth",
+  "author": "fnack",
+  "description": "Optional: authenticate users via a trusted reverse-proxy header (Authelia/Authentik). fnack stays fully open until this plugin is ENABLED.",
+  "homepage": "",
+  "permissions": ["settings"],
+  "settings_schema": [
+    {"key": "header_name", "type": "string", "default": "X-Forwarded-User"},
+    {"key": "trusted_proxy", "type": "string", "default": ""}
+  ],
+  "ui": {"slots": []},
+  "dependencies": {},
+  "trust_level": "official"
+}

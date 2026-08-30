@@ -103,6 +103,48 @@ def inject_plugin_slot_helper():
         return Markup(plugin_manager.get_ui_slot_html(slot_name, context_data))
     return {"plugin_slot": plugin_slot}
 
+
+@app.before_request
+def _plugin_auth_guard():
+    """Phase 4 optional auth (auth_provider plugins). ZERO-REQUIRED-AUTH is
+    the standing constraint: this guard only activates when at least one
+    auth_provider plugin is installed AND enabled. With none, fnack stays
+    fully open (unchanged). The existing M2M API key still works when a
+    provider is active (X-API-Key short-circuits to the same identity)."""
+    from plugins.manager import plugin_manager as _pm
+    if _pm is None:
+        return None
+    providers = [p for p in _pm._plugins.values()  # noqa: SLF001 - internal
+                 if p.enabled and getattr(p.instance, "authenticate", None)]
+    if not providers:
+        return None  # zero auth_providers enabled -> fully open
+
+    # Health + static assets stay open (probes/UX).
+    if request.path.startswith("/health") or request.path.startswith("/static"):
+        return None
+
+    from flask import g
+    # M2M API key short-circuit.
+    api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization", "").replace("Bearer ", "")
+    from models import AppSetting
+    if api_key:
+        setting = db.session.get(AppSetting, "api_key")
+        if setting and setting.value and api_key == setting.value:
+            g.fnack_user = "api-key"
+            return None
+
+    headers = {k: v for k, v in request.headers.items()}
+    for p in providers:
+        try:
+            user = p.instance.authenticate(headers)
+        except Exception:
+            logger.exception("[AUTH] auth_provider %s failed", p.manifest.id)
+            continue
+        if user:
+            g.fnack_user = user
+            return None
+    return jsonify({"error": "Unauthorized"}), 401
+
 _db_dir = Path(os.environ.get("CONFIG_DIR", "/config"))
 if not _db_dir.exists() and not os.environ.get("SQLALCHEMY_DATABASE_URI"):
     _fallback_config = Path(__file__).resolve().parent / "config"

@@ -787,6 +787,20 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     flagged_caution = flagged
                     verified_file = downloaded_file  # keep file; user decides
                     file_meta = meta
+                    # Plugin framework (Phase 4): notify webhook plugins when
+                    # AcoustID flags a kept-but-different file.
+                    try:
+                        from plugins.manager import plugin_manager
+                        if plugin_manager is not None:
+                            plugin_manager.event_bus.emit(
+                                "track.caution_flagged",
+                                track_id=track_id,
+                                matched_title=flagged.get("matched_title"),
+                                matched_artist=(flagged.get("matched_artists") or [None])[0],
+                                score=flagged.get("score"),
+                            )
+                    except Exception:
+                        logger.debug("[QUEUE] plugin caution event skipped", exc_info=True)
                     break
                 failure_reasons.append(f"{dl.manifest.name} verification failed: {v_err}")
             else:
@@ -912,6 +926,12 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     from plugins.manager import plugin_manager
                     if plugin_manager is not None:
                         plugin_manager.event_bus.emit("track.after_download", track_id=track_id)
+                        plugin_manager.event_bus.emit(
+                            "queue.job_completed",
+                            job_id=job_id, track_id=track_id,
+                            title=track_title, artist_name=artist_name,
+                            album_name=album_name,
+                        )
                 except Exception:
                     logger.debug("[QUEUE] plugin event emission skipped (plugin_manager not ready)", exc_info=True)
 
@@ -959,6 +979,20 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     job.progress = 0.0
                     job.error_message = combined_err
                 db.session.commit()
+
+                # Plugin framework (Phase 4): additive event emission for
+                # webhook/notification plugins (queue.job_failed).
+                try:
+                    from plugins.manager import plugin_manager
+                    if plugin_manager is not None:
+                        plugin_manager.event_bus.emit(
+                            "queue.job_failed",
+                            job_id=job_id, track_id=track_id,
+                            title=track_title, artist_name=artist_name,
+                            album_name=album_name, error=combined_err,
+                        )
+                except Exception:
+                    logger.debug("[QUEUE] plugin job_failed event skipped", exc_info=True)
 
                 logger.warning("[QUEUE] Download failed for '%s - %s': %s", artist_name, track_title, combined_err)
                 socketio.emit("download_progress", {
