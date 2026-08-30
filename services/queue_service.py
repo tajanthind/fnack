@@ -765,7 +765,10 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                                                 "progress": 35.0 if _dl_idx == 0 else 60.0,
                                                 "status": "downloading"})
             logger.info("[QUEUE] Attempting %s for '%s - %s'", dl.manifest.name, artist_name, track_title)
-            result = _pm.call_safe(loaded, "download", track_ref, tmp_work_dir, options)
+            # Downloads need a long timeout (10s default would kill mid-download).
+            from plugins.manager import DOWNLOAD_HOOK_TIMEOUT
+            result = _pm.call_safe(loaded, "download", track_ref, tmp_work_dir, options,
+                                   timeout=DOWNLOAD_HOOK_TIMEOUT)
             if result and result.success and result.file_path:
                 downloaded_file = result.file_path
                 # Step 3: Verify audio file with strict duration + tag checking

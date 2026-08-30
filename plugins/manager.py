@@ -36,6 +36,10 @@ logger = logging.getLogger("fnack.plugins.manager")
 
 MAX_CONSECUTIVE_FAILURES = 5
 DEFAULT_HOOK_TIMEOUT = 10.0
+# Downloads legitimately take minutes (network fetch + verify); the 10s
+# default would kill a real download mid-flight. The queue passes this for
+# `download` calls, matching the old 180s service-level timeouts.
+DOWNLOAD_HOOK_TIMEOUT = 600.0
 
 
 class PluginLoadError(Exception):
@@ -264,7 +268,10 @@ class PluginManager:
                     result = method(*args, **kwargs)
             except ImportError:
                 result = method(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - untrusted plugin code
+        except BaseException as exc:  # noqa: BLE001 - untrusted plugin code
+            # NOTE: catch BaseException, NOT Exception — gevent.Timeout derives
+            # from BaseException, and a hung plugin must be counted + auto-disabled
+            # here rather than propagating out and killing the worker greenlet.
             loaded.consecutive_failures += 1
             self._buffer_health(loaded, error=str(exc)[:500])
             logger.exception("Plugin '%s'.%s failed (%d consecutive)",
