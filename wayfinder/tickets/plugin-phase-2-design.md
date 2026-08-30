@@ -2,6 +2,10 @@
 
 wayfinder:research
 
+## Resolution
+
+RESOLVED (research) — findings written to `wayfinder/research/phase-2-pipeline-cutover.md`. The cutover is a call-site swap, not a behavior change: Steps 2–4 of `_process_track_job` become a `plugin_manager.get_downloaders()` loop (spotiflac p10 → ytdlp p50) with per-downloader `_verify_or_rescue` inside the loop (preserves rescue semantics + which failure surfaces first); `resolve_spotify_url` stays core before the chain; settings fall back to legacy AppSetting rows; metadata sync/import call `get_metadata_providers()` (deezer p10 authoritative) + MusicBrainz enrich as core glue with pacing preserved. Behavior-preservation checklist + top-5 risks documented (error-string drift, rate-limit skip wording, can_handle gates, verify-per-engine, settings fallback).
+
 ## Question
 
 PLUGIN_ARCHITECTURE.md §10 Phase 2 + INTEGRATION.md §6: replace the hardcoded
