@@ -259,22 +259,48 @@ def import_artist_folder(
     if not deezer_artist_id:
         return {"error": f"Could not resolve Deezer artist for folder '{folder_name}'"}
 
-    # Fetch discography
-    disco = get_artist_discography(
-        deezer_artist_id,
-        filter_remixes=opts.get("filter_remixes", True),
-        filter_lofi=opts.get("filter_lofi", True),
-        filter_live=opts.get("filter_live", True),
-        filter_compilations=opts.get("filter_compilations", True),
-        include_albums=opts.get("include_albums", True),
-        include_singles=opts.get("include_singles", True),
-        include_compilations=opts.get("include_compilations", False),
-    )
+    # Fetch discography (Phase 2: through the deezer-batch plugin chain when
+    # enabled, else the direct call — behavior-preserving).
+    disco = None
+    try:
+        from plugins.manager import plugin_manager as _pm
+        if _pm is not None:
+            for provider in _pm.get_metadata_providers():
+                if provider.manifest.id != "fnack.deezer-batch":
+                    continue
+                d = provider.get_artist_discography(str(deezer_artist_id))
+                if d and d.get("albums"):
+                    disco = d
+                break
+    except Exception:
+        logger.debug("[DEEZER] plugin chain skipped, using direct call", exc_info=True)
+    if not disco:
+        disco = get_artist_discography(
+            deezer_artist_id,
+            filter_remixes=opts.get("filter_remixes", True),
+            filter_lofi=opts.get("filter_lofi", True),
+            filter_live=opts.get("filter_live", True),
+            filter_compilations=opts.get("filter_compilations", True),
+            include_albums=opts.get("include_albums", True),
+            include_singles=opts.get("include_singles", True),
+            include_compilations=opts.get("include_compilations", False),
+        )
 
     # MusicBrainz enrichment (additive only, fail-soft, regional negative cache)
     try:
-        from services.musicbrainz_service import enrich_albums
-        enrich_albums(disco.get("artist_name") or folder_name, disco.get("albums") or [])
+        enriched = False
+        from plugins.manager import plugin_manager as _pm2
+        if _pm2 is not None:
+            for provider in _pm2.get_metadata_providers():
+                if provider.manifest.id == "fnack.musicbrainz" and hasattr(provider, "enrich"):
+                    provider.enrich(disco.get("artist_name") or folder_name, disco.get("albums") or [])
+                    enriched = True
+                if provider.manifest.id != "fnack.musicbrainz":
+                    continue
+                break
+        if not enriched:
+            from services.musicbrainz_service import enrich_albums
+            enrich_albums(disco.get("artist_name") or folder_name, disco.get("albums") or [])
     except Exception:
         logger.debug("[MB] enrichment skipped", exc_info=True)
 

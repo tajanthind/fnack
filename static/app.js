@@ -1718,6 +1718,10 @@ async function loadPluginsPage() {
                data-plugin="${escapeHtml(p.id)}" value="${p.priority_override ?? p.priority}"
                title="Priority (lower = tried first); clears on empty" onchange="savePluginPriority('${escapeHtml(p.id)}', this.value)">`
           : `<span class="text-secondary small">${p.priority ?? '—'}</span>`;
+        const hasSettings = (p.settings_schema || []).length > 0;
+        const settingsBtn = hasSettings
+          ? `<button class="btn btn-sm btn-outline-info btn-icon" title="Settings" onclick="openPluginSettings('${escapeHtml(p.id)}', '${escapeHtml(p.name)}')"><i class="fas fa-cog"></i></button>`
+          : '';
         html += `<tr>
           <td>
             <div class="fw-bold">${escapeHtml(p.name)}</div>
@@ -1729,6 +1733,7 @@ async function loadPluginsPage() {
           <td>${status}</td>
           <td>${prioInput}</td>
           <td class="text-end">
+            ${settingsBtn}
             ${p.enabled
               ? `<button class="btn btn-sm btn-outline-danger btn-icon" title="Disable" onclick="setPluginEnabled('${escapeHtml(p.id)}', false)"><i class="fas fa-power-off"></i></button>`
               : `<button class="btn btn-sm btn-outline-success btn-icon" title="Enable" onclick="setPluginEnabled('${escapeHtml(p.id)}', true)"><i class="fas fa-power-off"></i></button>`}
@@ -1742,8 +1747,57 @@ async function loadPluginsPage() {
       html = '<div class="card bg-dark-card border-0 shadow-sm"><div class="card-body p-4 text-secondary text-center">No plugins installed. Bundled plugins appear here automatically.</div></div>';
     }
     container.innerHTML = html;
+    // Keep the schema index for the settings modal (per-plugin settings UI).
+    _pluginSchemas = {};
+    for (const p of plugins) _pluginSchemas[p.id] = p.settings_schema || [];
   } catch (e) {
     container.innerHTML = `<div class="alert alert-danger">Error loading plugins: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+let _pluginSchemas = {};
+
+// Per-plugin settings modal — each plugin gets its own settings form rendered
+// from its declared settings_schema (user requirement: no global settings).
+async function openPluginSettings(pluginId, pluginName) {
+  showConfirmModal(`Settings — ${escapeHtml(pluginName)}`,
+    '<div class="text-secondary small py-2"><i class="fas fa-spinner fa-spin me-1"></i>Loading settings...</div>',
+    async () => { await savePluginSettings(pluginId); },
+    'Save', 'btn-brand');
+  try {
+    const [schema, current] = await Promise.all([
+      Promise.resolve(_pluginSchemas[pluginId] || []),
+      fetch(`/api/plugins/${encodeURIComponent(pluginId)}/settings`).then(r => r.json()).catch(() => ({})),
+    ]);
+    let form = '';
+    for (const f of schema) {
+      const key = f.key || '';
+      const val = (current[key] !== undefined ? current[key] : (f.default !== undefined ? f.default : '')) ?? '';
+      const label = escapeHtml(f.key || '');
+      const req = f.required ? ' required' : '';
+      if (f.type === 'boolean') {
+        form += `<div class="form-check mb-3">
+          <input class="form-check-input plugin-settings-field" type="checkbox" id="ps-${escapeHtml(key)}" data-key="${escapeHtml(key)}" ${val === true || val === 'true' ? 'checked' : ''}>
+          <label class="form-check-label small" for="ps-${escapeHtml(key)}">${label}</label>
+        </div>`;
+      } else if (f.type === 'select') {
+        const opts = (f.options || []).map(o =>
+          `<option value="${escapeHtml(String(o))}" ${String(o) === String(val) ? 'selected' : ''}>${escapeHtml(String(o))}</option>`).join('');
+        form += `<div class="mb-3"><label class="form-label small text-secondary">${label}</label>
+          <select class="form-select plugin-settings-field" id="ps-${escapeHtml(key)}" data-key="${escapeHtml(key)}">${opts}</select></div>`;
+      } else if (f.type === 'secret') {
+        form += `<div class="mb-3"><label class="form-label small text-secondary">${label}</label>
+          <input type="password" class="form-control plugin-settings-field" id="ps-${escapeHtml(key)}" data-key="${escapeHtml(key)}" value="${escapeHtml(String(val))}" placeholder="••••••••"${req}></div>`;
+      } else {
+        const inputType = f.type === 'number' ? 'number' : 'text';
+        form += `<div class="mb-3"><label class="form-label small text-secondary">${label}</label>
+          <input type="${inputType}" class="form-control plugin-settings-field" id="ps-${escapeHtml(key)}" data-key="${escapeHtml(key)}" value="${escapeHtml(String(val))}"${req}></div>`;
+      }
+    }
+    if (!form) form = '<div class="text-secondary small">This plugin has no configurable settings.</div>';
+    document.getElementById('confirmModalBody').innerHTML = form;
+  } catch (e) {
+    document.getElementById('confirmModalBody').innerHTML = `<div class="alert alert-danger">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -1783,6 +1837,14 @@ async function savePluginPriority(pluginId, value) {
 // Settings-tab forms contributed by plugins call this (e.g. fnack.navidrome).
 async function savePluginSettings(pluginId) {
   const payload = {};
+  // Generic per-plugin settings form (rendered from settings_schema).
+  document.querySelectorAll(`#confirmModalBody .plugin-settings-field`).forEach((el) => {
+    const key = el.dataset.key;
+    if (!key) return;
+    if (el.type === 'checkbox') payload[key] = el.checked ? 'true' : 'false';
+    else payload[key] = el.value;
+  });
+  // Plugin-contributed settings_tab forms (e.g. fnack.navidrome).
   document.querySelectorAll(`[id^="plugin-${pluginId}-"]`).forEach((el) => {
     const key = el.id.replace(`plugin-${pluginId}-`, '');
     payload[key] = el.value;
@@ -1796,6 +1858,8 @@ async function savePluginSettings(pluginId) {
     const data = await resp.json();
     if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
     showToast('Plugin settings saved', 'success');
+    hideConfirmModal();
+    loadPluginsPage();
   } catch (e) {
     showToast('Network error: ' + e.message, 'danger');
   }

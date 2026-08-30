@@ -687,63 +687,85 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         else:
             spotify_url = None
 
-        # Step 2: Primary Downloader -> SpotiFLAC with rate limiter pacing.
-        # If the upstream 429 circuit breaker is open (providers rate-limiting),
-        # skip SpotiFLAC entirely and let the yt-dlp fallback run instead.
-        if not verified_file and enable_spotiflac and spotify_url and job_id not in cancel_requested_jobs:
-            if is_spotiflac_rate_limited():
-                logger.info("[QUEUE] SpotiFLAC 429 circuit breaker active; using yt-dlp fallback for '%s - %s'", artist_name, track_title)
-                failure_reasons.append("SpotiFLAC skipped (upstream rate limit circuit breaker)")
-            else:
-                socketio.emit("download_progress", {"job_id": job_id, "track_id": track_id, "progress": 35.0, "status": "downloading"})
-                ok, downloaded_file, err = download_track_spotiflac(
-                    spotify_url,
-                    tmp_work_dir,
-                    quality=quality_setting,
-                    rate_limit_delay=spotiflac_delay,
-                )
-                if ok and downloaded_file:
-                    # Step 3: Verify audio file with strict duration + tag checking
-                    # (with optional AcoustID rescue: confirm wrong-tags files,
-                    # flag different-song files for the user instead of deleting)
-                    v_ok, v_err, meta, flagged = _verify_or_rescue(
-                        app, downloaded_file, verify_expected_duration,
-                        artist_name, track_title, max_duration_delta,
-                        reject_mismatches, enable_duration_check,
-                    )
-                    if v_ok:
-                        verified_file = downloaded_file
-                        file_meta = meta
-                    else:
-                        if flagged:
-                            flagged_caution = flagged
-                            verified_file = downloaded_file  # keep file; user decides
-                            file_meta = meta
-                        else:
-                            failure_reasons.append(f"SpotiFLAC verification failed: {v_err}")
-                else:
-                    failure_reasons.append(f"SpotiFLAC failed: {err}")
-        elif not enable_spotiflac and not verified_file:
-            logger.info("[QUEUE] SpotiFLAC disabled in settings, skipping for '%s - %s'", artist_name, track_title)
+        # Steps 2-4: Downloader plugin chain (Phase 2 — PLUGIN_ARCHITECTURE.md
+        # §10 Phase 2 + INTEGRATION.md §6). Priority-sorted plugins replace the
+        # old hardcoded spotiflac → yt-dlp sequence; each plugin is verified
+        # right after its download (preserves the AcoustID rescue semantics and
+        # which failure surfaces first). Settings still gate each engine via
+        # the legacy enable_* toggles; a plugin disabled in Settings → Plugins
+        # is skipped by get_downloaders() itself.
+        from plugins.base import TrackRef
+        from plugins.manager import plugin_manager as _pm
 
-        # Step 4: Fallback Downloader -> yt-dlp with candidate scoring, cookies.txt & YouTube Music prioritization
-        if not verified_file and enable_ytdlp and job_id not in cancel_requested_jobs:
-            socketio.emit("download_progress", {"job_id": job_id, "track_id": track_id, "progress": 60.0, "status": "downloading"})
-            logger.info("[QUEUE] Attempting yt-dlp candidate search for '%s - %s'", artist_name, track_title)
+        track_ref = TrackRef(
+            id=track_id,
+            title=track_title,
+            artist_name=artist_name,
+            album_name=album_name,
+            isrc=isrc,
+            duration=expected_duration,
+            spotify_url=spotify_url,
+            deezer_id=track_deezer_id,
+            disc_number=track.disc_number or 1,
+            track_number=track_num,
+        )
 
-            ok, downloaded_file, err = download_track_ytdlp(
-                f"{artist_name} - {track_title}",
-                tmp_work_dir,
-                output_format=fallback_format,
-                artist_name=artist_name,
-                track_title=track_title,
-                expected_duration=expected_duration,
-                cookies_path=cookies_path,
-                prefer_youtube_music=prefer_yt_music,
-                max_duration_delta=max_duration_delta,
-                check_duration=enable_duration_check,
-            )
-            if ok and downloaded_file:
+        downloaders = _pm.get_downloaders() if _pm else []
+        engine_gates = {
+            "fnack.spotiflac": enable_spotiflac,
+            "fnack.ytdlp": enable_ytdlp,
+            "fnack.spotdl": enable_ytdlp,  # spotdl is an alias of the yt-dlp plugin
+        }
+        enabled_any = any(
+            engine_gates.get(dl.manifest.id, True) for dl in downloaders
+        )
+
+        for _dl_idx, dl in enumerate(downloaders):
+            if job_id in cancel_requested_jobs:
+                break
+            if not engine_gates.get(dl.manifest.id, True):
+                logger.info("[QUEUE] %s disabled in settings, skipping for '%s - %s'",
+                            dl.manifest.name, artist_name, track_title)
+                continue
+            if dl.is_rate_limited():
+                logger.info("[QUEUE] %s rate-limited; trying next downloader for '%s - %s'",
+                            dl.manifest.name, artist_name, track_title)
+                failure_reasons.append(f"{dl.manifest.name} skipped (upstream rate limit circuit breaker)")
+                continue
+            if not dl.can_handle(track_ref):
+                continue
+
+            loaded = _pm._plugins[dl.manifest.id]  # noqa: SLF001 - internal, same package
+            # Build the options dict from the plugin's own settings with the
+            # legacy AppSetting fallback (behavior-preserving for existing users).
+            options = {}
+            try:
+                options["quality"] = dl.context.settings.get("quality") or quality_setting
+                options["delay"] = dl.context.settings.get("delay") or spotiflac_delay
+            except Exception:
+                options["quality"] = quality_setting
+                options["delay"] = spotiflac_delay
+            try:
+                options["format"] = dl.context.settings.get("format") or fallback_format
+                options["audio_source"] = dl.context.settings.get("audio_source") or ("youtube" if not prefer_yt_music else "youtube_music")
+                options["cookies_path"] = dl.context.settings.get("cookies_path") or cookies_path
+            except Exception:
+                options["format"] = fallback_format
+                options["audio_source"] = "youtube_music" if prefer_yt_music else "youtube"
+                options["cookies_path"] = cookies_path
+
+            # Preserve the old UI feel: 35% for the primary (first) downloader,
+            # 60% for fallbacks.
+            socketio.emit("download_progress", {"job_id": job_id, "track_id": track_id,
+                                                "progress": 35.0 if _dl_idx == 0 else 60.0,
+                                                "status": "downloading"})
+            logger.info("[QUEUE] Attempting %s for '%s - %s'", dl.manifest.name, artist_name, track_title)
+            result = _pm.call_safe(loaded, "download", track_ref, tmp_work_dir, options)
+            if result and result.success and result.file_path:
+                downloaded_file = result.file_path
+                # Step 3: Verify audio file with strict duration + tag checking
+                # (with optional AcoustID rescue: confirm wrong-tags files,
+                # flag different-song files for the user instead of deleting)
                 v_ok, v_err, meta, flagged = _verify_or_rescue(
                     app, downloaded_file, verify_expected_duration,
                     artist_name, track_title, max_duration_delta,
@@ -752,19 +774,19 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 if v_ok:
                     verified_file = downloaded_file
                     file_meta = meta
-                else:
-                    if flagged:
-                        flagged_caution = flagged
-                        verified_file = downloaded_file
-                        file_meta = meta
-                    else:
-                        failure_reasons.append(f"yt-dlp verification failed: {v_err}")
+                    break
+                if flagged:
+                    flagged_caution = flagged
+                    verified_file = downloaded_file  # keep file; user decides
+                    file_meta = meta
+                    break
+                failure_reasons.append(f"{dl.manifest.name} verification failed: {v_err}")
             else:
-                failure_reasons.append(f"yt-dlp failed: {err}")
-        elif not enable_ytdlp and not verified_file:
-            logger.info("[QUEUE] yt-dlp disabled in settings, skipping for '%s - %s'", artist_name, track_title)
-            if not enable_spotiflac:
-                failure_reasons.append("Both SpotiFLAC and yt-dlp engines are disabled in settings")
+                err = (result.error if result else "download returned no result")
+                failure_reasons.append(f"{dl.manifest.name} failed: {err}")
+
+        if not verified_file and not enabled_any:
+            failure_reasons.append("Both SpotiFLAC and yt-dlp engines are disabled in settings")
 
         if job_id in cancel_requested_jobs:
             _handle_cancellation(app, socketio, job_id, track_id, tmp_work_dir)

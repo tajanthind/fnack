@@ -385,6 +385,9 @@ class PluginManager:
                 "consecutive_failures": p.consecutive_failures,
                 "priority": self._effective_priority(p),
                 "priority_override": p.priority_override,
+                # Per-plugin settings (user requirement): expose the declared
+                # schema so the UI can render each plugin's own settings form.
+                "settings_schema": p.manifest.settings_schema or [],
             }
             for p in self._plugins.values()
         ]
