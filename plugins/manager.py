@@ -59,6 +59,12 @@ class PluginManager:
         self._plugins: dict[str, LoadedPlugin] = {}
         self._lock = threading.Lock()
         self._scheduler_hook = self._default_scheduler_hook
+        # Ensure the install dir exists so manual installs (INTEGRATION.md §7)
+        # and the registry have somewhere to write.
+        try:
+            self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            logger.debug("Could not create plugins dir %s", self.plugins_dir)
 
     # -- discovery & loading -------------------------------------------------
 
