@@ -13,11 +13,30 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal smoke-test deps
+        run: |
+          pip install --quiet flask flask-sqlalchemy requests "packaging>=23.0"
+
+      - name: Run plugin framework smoke test
+        run: python tests/run_smoke_test.py
+
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    needs: smoke-test
 
     steps:
       - name: Checkout repository

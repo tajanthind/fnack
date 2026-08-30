@@ -73,3 +73,6 @@ logs/
 .DS_Store
 Thumbs.db
 fnack-logs.txt
+
+# Plugin framework: installed plugin data dirs (never committed)
+config/plugins/*/data/

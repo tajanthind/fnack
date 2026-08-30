@@ -93,6 +93,9 @@
   <!-- Main Container -->
   <div class="container-fluid px-4 py-4">
 
+    <!-- Plugin UI slots (INTEGRATION.md §4): dashboard_widget contributions render here -->
+    {{ plugin_slot('dashboard_widget') }}
+
     <!-- Stats Bar (Artists Managed, Tracks Downloaded, Total Failed Songs, Total Catalogue Size) -->
     <div class="row g-3 mb-4">
       <div class="col-6 col-md-3">

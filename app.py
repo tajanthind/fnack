@@ -30,6 +30,8 @@ from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO, emit
 
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
+import plugins.models  # noqa: F401 — registers the plugin tables with `db` (INTEGRATION.md §2)
+from plugins.manager import init_plugin_manager  # noqa: E402 — plugin framework (Phase 0)
 from services.deezer_service import (
     get_artist_discography,
     get_artist_info,
@@ -92,6 +94,15 @@ def _json_404_handler(e):
 def inject_app_context():
     return {"app_version": __version__}
 
+
+@app.context_processor
+def inject_plugin_slot_helper():
+    """Jinja helper for UI slots (INTEGRATION.md §4): {{ plugin_slot('slot', track=track) }}."""
+    def plugin_slot(slot_name: str, **context_data):
+        from markupsafe import Markup
+        return Markup(plugin_manager.get_ui_slot_html(slot_name, context_data))
+    return {"plugin_slot": plugin_slot}
+
 _db_dir = Path(os.environ.get("CONFIG_DIR", "/config"))
 if not _db_dir.exists() and not os.environ.get("SQLALCHEMY_DATABASE_URI"):
     _fallback_config = Path(__file__).resolve().parent / "config"
@@ -123,6 +134,14 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 
 db.init_app(app)
 socketio = SocketIO(app, async_mode="gevent", cors_allowed_origins="*")
+
+# Plugin framework (INTEGRATION.md §3): create the manager now so the
+# `plugin_slot` context processor and queue event emissions can reference it.
+# load_all() runs inside the startup app_context block below.
+plugin_manager = init_plugin_manager(
+    plugins_dir=str(Path(os.environ.get("CONFIG_DIR", "/config")) / "plugins"),
+    core_version=__version__,
+)
 
 # Structured logging configuration
 logging.basicConfig(
@@ -1764,6 +1783,16 @@ def _periodic_discography_sync_loop():
 # Database initialization and startup
 with app.app_context():
     db.create_all()
+    # Plugin framework (INTEGRATION.md §2/§3): load installed plugins whose
+    # InstalledPlugin.enabled is True, then register the REST blueprint.
+    from plugins.registry import PluginRegistry
+    from plugins.api import build_plugins_blueprint
+    from plugins.models import InstalledPlugin
+
+    enabled_ids = {p.id for p in InstalledPlugin.query.filter_by(enabled=True).all()}
+    plugin_manager.load_all(enabled_ids=enabled_ids)
+    plugin_registry = PluginRegistry(plugin_manager)
+    app.register_blueprint(build_plugins_blueprint(plugin_manager, plugin_registry))
     # Create SQLite performance indexes & schema migrations
     try:
         with db.engine.connect() as conn:

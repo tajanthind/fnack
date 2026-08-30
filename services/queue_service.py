@@ -836,6 +836,16 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                         import json as _json
                         track_rec.caution = True
                         track_rec.caution_info = _json.dumps(flagged_caution)
+                    elif not flagged_caution:
+                        # Plugin framework (INTEGRATION.md §5): additive event emission
+                        # on successful verification (not for AcoustID-flagged files —
+                        # those are a different song, not verified).
+                        try:
+                            from plugins.manager import plugin_manager
+                            if plugin_manager is not None:
+                                plugin_manager.event_bus.emit("track.verified", track_id=track_id)
+                        except Exception:
+                            logger.debug("[QUEUE] plugin verified-event emission skipped", exc_info=True)
 
                 if job:
                     job.status = "completed"
@@ -853,6 +863,16 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
 
                 db.session.commit()
                 logger.info("[QUEUE] Download succeeded for '%s - %s' -> %s", artist_name, track_title, final_dest)
+
+                # Plugin framework (INTEGRATION.md §5): additive event emission —
+                # no existing behavior changes; event_hook/fingerprint plugins can
+                # react to real downloads.
+                try:
+                    from plugins.manager import plugin_manager
+                    if plugin_manager is not None:
+                        plugin_manager.event_bus.emit("track.after_download", track_id=track_id)
+                except Exception:
+                    logger.debug("[QUEUE] plugin event emission skipped (plugin_manager not ready)", exc_info=True)
 
                 # Clean up superseded files for this exact track position (e.g. an
                 # old .opus replaced by a lossless .flac). This runs AFTER the DB
