@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fnack — Plugins</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('fnack_theme') || 'onyx-dark';
+      const isLight = savedTheme.includes('light');
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      document.documentElement.setAttribute('data-bs-theme', isLight ? 'light' : 'dark');
+    })();
+  </script>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <nav class="navbar navbar-custom sticky-top">
+    <div class="container-fluid d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center gap-3">
+        <a class="brand-logo" href="/">
+          <i class="fas fa-compact-disc text-danger"></i>
+          <span>fnack</span>
+        </a>
+        <div class="d-none d-md-flex align-items-center gap-1 ms-3">
+          <a href="/" class="nav-link-custom"><i class="fas fa-th-large me-1"></i>Library</a>
+          <a href="/import" class="nav-link-custom"><i class="fas fa-file-import me-1"></i>Import</a>
+          <a href="/queue" class="nav-link-custom"><i class="fas fa-tasks me-1"></i>Activity</a>
+          <a href="/plugins" class="nav-link-custom active"><i class="fas fa-puzzle-piece me-1"></i>Plugins</a>
+          <a href="/settings" class="nav-link-custom"><i class="fas fa-cog me-1"></i>Settings</a>
+        </div>
+      </div>
+
+      <!-- Fast Search Bar -->
+      <div class="search-wrapper mx-2 flex-grow-1" style="max-width: 480px;">
+        <div class="search-input-group">
+          <i class="fas fa-search search-icon"></i>
+          <input type="text" class="form-control search-input" id="artistSearch"
+                 placeholder="Search artist to add (e.g. Rick Astley, Dulla, The Weeknd)..." autocomplete="off">
+          <div class="spinner-border spinner-border-sm text-secondary search-spinner d-none" id="searchSpinner" role="status"></div>
+        </div>
+        <div class="search-dropdown d-none" id="searchDropdown"></div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container py-4" style="max-width: 900px; padding-bottom: 100px;">
+
+    <!-- Page Header -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4 pb-2 border-bottom border-secondary border-opacity-25">
+      <div>
+        <div class="d-flex align-items-center gap-2">
+          <h3 class="fw-bold m-0"><i class="fas fa-puzzle-piece text-danger me-2"></i>Plugins</h3>
+          <span class="badge bg-secondary-subtle text-secondary font-monospace">v{{ app_version }}</span>
+        </div>
+        <p class="text-secondary small m-0 mt-1">Bundled and third-party plugins. Enable, disable, and set priority for downloaders & metadata providers.</p>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <button id="refreshPluginsBtn" class="btn btn-save-prominent btn-sm d-flex align-items-center gap-2" onclick="loadPluginsPage()">
+          <i class="fas fa-sync"></i>
+          <span>Refresh</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="pluginsPageContainer">
+      <div class="container py-5 text-center text-secondary">
+        <div class="spinner-border text-danger" role="status"></div>
+        <div class="mt-2">Loading plugins...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer" style="z-index: 2100;"></div>
+
+  <!-- Mobile Bottom Navigation Bar -->
+  <div class="mobile-bottom-nav">
+    <a href="/" class="mobile-nav-link"><i class="fas fa-th-large"></i><span>Library</span></a>
+    <a href="/import" class="mobile-nav-link"><i class="fas fa-file-import"></i><span>Import</span></a>
+    <a href="/queue" class="mobile-nav-link"><i class="fas fa-tasks"></i><span>Activity</span></a>
+    <a href="/plugins" class="mobile-nav-link active"><i class="fas fa-puzzle-piece"></i><span>Plugins</span></a>
+    <a href="/settings" class="mobile-nav-link"><i class="fas fa-cog"></i><span>Settings</span></a>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script>
+    loadPluginsPage();
+  </script>
+</body>
+</html>

@@ -503,6 +503,14 @@ def import_artist_folder(
     artist.sync_status = "ready"
     artist.sync_error = None
 
+    # Phase 1 (scale-to-millions): albums/tracks were inserted and files
+    # matched — recompute the denormalized per-artist counters once.
+    try:
+        from services.counters_service import recompute_artist
+        recompute_artist(artist.id)
+    except Exception:
+        logger.debug("[SCALE] counter recompute skipped", exc_info=True)
+
     db.session.commit()
     logger.info("[IMPORT] Imported artist '%s': %d local files matched, %d unmatched", artist_name, matched_count, len(unmatched_files))
 

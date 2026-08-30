@@ -27,6 +27,10 @@ from services.queue_service import _sanitize, _tag_audio_file
 
 logger = logging.getLogger("fnack.metadata")
 
+# Artists whose albums/tracks a merge pass touched (for the denormalized
+# per-artist counter recompute — scale-to-millions research §2.3).
+_MERGE_TOUCHED: set = set()
+
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
 MUSIC_ROOT = Path(os.environ.get("MUSIC_DIR", "/music"))
 
@@ -103,6 +107,13 @@ def _merge_album_into(canonical, other, canonical_map, stats, cross_artist: bool
     """Fold every track of `other` into `canonical` (dup titles are dropped,
     along with their duplicate files), then delete the `other` album row."""
     from models import DownloadJob
+
+    # Phase 1 (scale-to-millions): record both artists for counter recompute.
+    global _MERGE_TOUCHED
+    if canonical.artist_id:
+        _MERGE_TOUCHED.add(canonical.artist_id)
+    if other.artist_id:
+        _MERGE_TOUCHED.add(other.artist_id)
 
     for track in list(other.tracks.all()):
         nt = _norm(track.title)
@@ -361,6 +372,17 @@ def _merge_duplicate_albums(app) -> dict:
                     break
             if not merged_something:
                 break
+
+    # Phase 1 (scale-to-millions): merges moved/deleted albums & tracks; the
+    # cross-artist pass shifted tracks between artists. Recompute counters for
+    # every artist touched by a merge (small set; indexed).
+    try:
+        from services.counters_service import recompute_artist
+        for sid in _MERGE_TOUCHED:
+            recompute_artist(sid)
+        _MERGE_TOUCHED.clear()
+    except Exception:
+        logger.debug("[SCALE] counter recompute skipped", exc_info=True)
 
     return stats
 

@@ -196,6 +196,11 @@ def page_index():
     return render_template("index.html")
 
 
+@app.route("/plugins")
+def page_plugins():
+    return render_template("plugins.html")
+
+
 @app.route("/artist/<int:artist_id>")
 def page_artist(artist_id):
     return render_template("artist.html", artist_id=artist_id)
@@ -240,32 +245,58 @@ def api_search_artist():
 
 @app.route("/api/artists")
 def api_artists():
-    # Ultra-fast indexed aggregation queries (no Cartesian outer join with distinct hash overhead)
-    album_counts = dict(
-        db.session.query(Album.artist_id, func.count(Album.id))
-        .group_by(Album.artist_id)
-        .all()
-    )
+    # Phase 1 (scale-to-millions): read the denormalized per-artist counters
+    # instead of full GROUP BY scans on every request, and paginate. The
+    # response shape is unchanged (frontend works with either mode); a client
+    # that passes limit/offset gets a page + total.
+    limit = request.args.get("limit", type=int)
+    offset = request.args.get("offset", type=int)
+    q = request.args.get("q", "").strip().lower()
 
-    track_stats = dict(
-        (row[0], {"total_tracks": row[1] or 0, "downloaded_tracks": int(row[2] or 0)})
-        for row in db.session.query(
-            Album.artist_id,
-            func.count(Track.id),
-            func.sum(case((Track.is_downloaded == True, 1), else_=0)),
+    query = Artist.query.order_by(Artist.name)
+    if q:
+        query = query.filter(func.lower(Artist.name).like(f"%{q}%"))
+    total = query.count()
+    if limit and limit > 0:
+        query = query.limit(limit)
+    if offset and offset > 0:
+        query = query.offset(offset)
+    artists = query.all()
+
+    stale_ids = [a.id for a in artists
+                 if not (a.total_albums or a.total_tracks or a.downloaded_tracks)]
+    fallback_album = {}
+    fallback_track = {}
+    if stale_ids:
+        fallback_album = dict(
+            db.session.query(Album.artist_id, func.count(Album.id))
+            .filter(Album.artist_id.in_(stale_ids))
+            .group_by(Album.artist_id)
+            .all()
         )
-        .join(Track, Track.album_id == Album.id)
-        .group_by(Album.artist_id)
-        .all()
-    )
+        fallback_track = dict(
+            (row[0], {"total_tracks": row[1] or 0, "downloaded_tracks": int(row[2] or 0)})
+            for row in db.session.query(
+                Album.artist_id,
+                func.count(Track.id),
+                func.sum(case((Track.is_downloaded == True, 1), else_=0)),
+            )
+            .join(Track, Track.album_id == Album.id)
+            .filter(Album.artist_id.in_(stale_ids))
+            .group_by(Album.artist_id)
+            .all()
+        )
 
-    artists = Artist.query.order_by(Artist.name).all()
     out = []
     for a in artists:
-        st = track_stats.get(a.id, {"total_tracks": 0, "downloaded_tracks": 0})
-        tot_t = st["total_tracks"]
-        dl_t = st["downloaded_tracks"]
-        tot_alb = album_counts.get(a.id, 0)
+        if a.id in fallback_track:
+            tot_t = fallback_track[a.id]["total_tracks"]
+            dl_t = fallback_track[a.id]["downloaded_tracks"]
+            tot_alb = fallback_album.get(a.id, 0)
+        else:
+            tot_t = a.total_tracks or 0
+            dl_t = a.downloaded_tracks or 0
+            tot_alb = a.total_albums or 0
         out.append({
             "id": a.id,
             "name": a.name,
@@ -281,6 +312,8 @@ def api_artists():
             "downloaded_tracks": dl_t,
             "percent_downloaded": round((dl_t / tot_t * 100), 1) if tot_t else 0,
         })
+    if limit is not None or offset is not None:
+        return jsonify({"total": total, "artists": out})
     return jsonify(out)
 
 
@@ -485,6 +518,15 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
             artist.sync_status = "ready"
             artist.sync_error = None
             artist.last_synced_at = datetime.now(timezone.utc)
+
+            # Phase 1 (scale-to-millions): after inserts + prunes, recompute the
+            # denormalized counters for this artist in one indexed pass.
+            try:
+                from services.counters_service import recompute_artist
+                recompute_artist(artist.id)
+            except Exception:
+                logger.debug("[SCALE] counter recompute skipped", exc_info=True)
+
             db.session.commit()
 
             logger.info("[DEEZER] Discography sync complete for '%s' (%d albums)", artist.name, len(disco.get("albums", [])))
@@ -845,6 +887,14 @@ def api_album_delete(album_id):
         t.file_path = ""
         t.size_bytes = 0
 
+    # Phase 1 (scale-to-millions): album's tracks all flipped to missing.
+    try:
+        from services.counters_service import recompute_artist
+        if album.artist_id:
+            recompute_artist(album.artist_id)
+    except Exception:
+        logger.debug("[SCALE] counter recompute skipped", exc_info=True)
+
     album.is_downloaded = False
     album.size_bytes = 0
     album.local_path = None
@@ -884,6 +934,14 @@ def api_track_delete(track_id):
     track.size_bytes = 0
     track.progress = 0.0
     track.error_message = None
+
+    # Phase 1 (scale-to-millions): track flipped to missing → −1 downloaded.
+    try:
+        from services.counters_service import on_track_downloaded
+        if track.album_id and track.album and track.album.artist_id:
+            on_track_downloaded(track.album.artist_id, is_downloaded=False)
+    except Exception:
+        logger.debug("[SCALE] counter update skipped", exc_info=True)
 
     album = track.album
     if album:
@@ -1090,6 +1148,13 @@ def api_track_caution(track_id):
             t.local_path = None
             t.file_path = ""
             t.size_bytes = 0
+            # Phase 1 (scale-to-millions): track flipped to missing → −1 downloaded.
+            try:
+                from services.counters_service import on_track_downloaded
+                if t.album_id and t.album and t.album.artist_id:
+                    on_track_downloaded(t.album.artist_id, is_downloaded=False)
+            except Exception:
+                logger.debug("[SCALE] counter update skipped", exc_info=True)
             if fp and os.path.isfile(fp):
                 try:
                     os.remove(fp)
@@ -1141,7 +1206,14 @@ def api_track_caution(track_id):
 
 @app.route("/api/queue")
 def api_get_queue():
-    active = DownloadJob.query.filter(DownloadJob.status.in_(["downloading", "queued"])).order_by(DownloadJob.created_at).all()
+    # Phase 1 (scale-to-millions): cap the active list at 500 rows — the
+    # frontend renders the whole list; unbounded growth here is the same
+    # payload problem as /api/artists (research §2.2).
+    active = (DownloadJob.query
+              .filter(DownloadJob.status.in_(["downloading", "queued"]))
+              .order_by(DownloadJob.created_at)
+              .limit(500)
+              .all())
     history = DownloadJob.query.filter(DownloadJob.status.in_(["completed", "failed", "cancelled"])).order_by(DownloadJob.updated_at.desc()).limit(50).all()
 
     def _fmt(j):
@@ -1878,9 +1950,24 @@ with app.app_context():
                 conn.execute(db.text("ALTER TABLE installed_plugins ADD COLUMN priority_override INTEGER"))
             except Exception:
                 pass
+            # Phase 1: denormalized per-artist counters (scale-to-millions)
+            for col in ("total_albums", "total_tracks", "downloaded_tracks"):
+                try:
+                    conn.execute(db.text(f"ALTER TABLE artists ADD COLUMN {col} INTEGER DEFAULT 0"))
+                except Exception:
+                    pass
             conn.commit()
     except Exception:
         pass
+
+    # Phase 1 (scale-to-millions): one-time backfill of the denormalized
+    # per-artist counters for existing libraries (idempotent — only updates
+    # artists where any counter is still 0).
+    try:
+        from services.counters_service import backfill_artist_counters
+        backfill_artist_counters()
+    except Exception:
+        logger.exception("[SCALE] Counter backfill failed (will retry next boot)")
 
     # Ensure default settings
     default_settings = [

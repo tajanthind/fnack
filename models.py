@@ -43,6 +43,14 @@ class Artist(db.Model):
         cascade="all, delete-orphan",
     )
 
+    # Denormalized per-artist counters (Phase 1, scale-to-millions research).
+    # Kept in sync at every write point where Album/Track rows change or
+    # Track.is_downloaded flips — /api/artists reads these instead of full
+    # GROUP BY scans on every request. Backfilled once at migration.
+    total_albums = db.Column(db.Integer, default=0, nullable=False)
+    total_tracks = db.Column(db.Integer, default=0, nullable=False)
+    downloaded_tracks = db.Column(db.Integer, default=0, nullable=False)
+
 
 class Album(db.Model):
     __tablename__ = "albums"
