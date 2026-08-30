@@ -108,6 +108,12 @@ phase.
    row-creation fix verified live. FTS5 deferred (no user-facing LIKE scans).
 3. **Phase 2** (`plugin-architecture/phase-2-pipeline-cutover`): replace
    hardcoded spotiflac→ytdlp and metadata call sequences with plugin chains.
+   **DONE (in PR)** — downloader chain loop (spotiflac p10 → ytdlp p50,
+   per-engine verify, dedup-copy skip guard), metadata chain (deezer-batch p10
+   → musicbrainz enrich) in sync/import, per-plugin settings UI (settings_schema
+   modal per plugin, namespaced PluginSetting rows), call_safe BaseException
+   + 600s download timeout fix (stuck-job bug). Live-verified: FLAC preserved
+   via dedup skip, clean failures with preserved strings, no stuck jobs.
 4. **Phase 3** (`plugin-architecture/phase-3-marketplace`): repositories,
    marketplace install/update/uninstall, per-plugin settings, health dashboard.
 5. **Phase 4** (`plugin-architecture/phase-4-stretch`): auth_provider (SSO),
