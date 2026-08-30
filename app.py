@@ -1856,50 +1856,10 @@ def _periodic_discography_sync_loop():
 # Database initialization and startup
 with app.app_context():
     db.create_all()
-    # Plugin framework (INTEGRATION.md §2/§3 + PHASE1 §3): auto-install bundled
-    # plugins (official, enabled-by-default, no marketplace visit needed), then
-    # load installed plugins whose InstalledPlugin.enabled is True, then
-    # register the REST blueprint.
-    from plugins.registry import PluginRegistry
-    from plugins.api import build_plugins_blueprint
-    from plugins.models import InstalledPlugin
 
-    # PHASE1 §3: idempotent auto-install — bundled plugins ship inside the
-    # image; any bundled plugin without an InstalledPlugin row gets one
-    # (trust_level=official, enabled=True, source_repo_id=None). Existing rows
-    # are untouched (a user who disabled a bundled plugin stays disabled).
-    bundled_root = Path(os.environ.get("BUNDLED_PLUGINS_DIR", "/app/bundled_plugins"))
-    if bundled_root.exists():
-        for pdir in bundled_root.iterdir():
-            manifest_path = pdir / "plugin.json"
-            if not pdir.is_dir() or not manifest_path.exists():
-                continue
-            try:
-                import json as _json
-                manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
-            except Exception:
-                logger.exception("[PLUGINS] Could not read bundled manifest %s", manifest_path)
-                continue
-            pid = manifest.get("id")
-            if not pid or InstalledPlugin.query.get(pid):
-                continue
-            db.session.add(InstalledPlugin(
-                id=pid,
-                name=manifest.get("name", pid),
-                version=manifest.get("version", "0.0.0"),
-                type=",".join(manifest.get("type", [])),
-                enabled=True,
-                trust_level="official",
-                source_repo_id=None,
-                manifest_json=_json.dumps(manifest),
-            ))
-        db.session.commit()
-
-    enabled_ids = {p.id for p in InstalledPlugin.query.filter_by(enabled=True).all()}
-    plugin_manager.load_all(enabled_ids=enabled_ids)
-    plugin_registry = PluginRegistry(plugin_manager)
-    app.register_blueprint(build_plugins_blueprint(plugin_manager, plugin_registry))
-    # Create SQLite performance indexes & schema migrations
+    # Create SQLite performance indexes & schema migrations — MUST run before
+    # any ORM query touches the new columns (installed_plugins.priority_override,
+    # artists counters), which the plugin auto-install below does.
     try:
         with db.engine.connect() as conn:
             conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_artists_name ON artists (name)"))
@@ -1959,6 +1919,50 @@ with app.app_context():
             conn.commit()
     except Exception:
         pass
+
+    # Plugin framework (INTEGRATION.md §2/§3 + PHASE1 §3): auto-install bundled
+    # plugins (official, enabled-by-default, no marketplace visit needed), then
+    # load installed plugins whose InstalledPlugin.enabled is True, then
+    # register the REST blueprint.
+    from plugins.registry import PluginRegistry
+    from plugins.api import build_plugins_blueprint
+    from plugins.models import InstalledPlugin
+
+    # PHASE1 §3: idempotent auto-install — bundled plugins ship inside the
+    # image; any bundled plugin without an InstalledPlugin row gets one
+    # (trust_level=official, enabled=True, source_repo_id=None). Existing rows
+    # are untouched (a user who disabled a bundled plugin stays disabled).
+    bundled_root = Path(os.environ.get("BUNDLED_PLUGINS_DIR", "/app/bundled_plugins"))
+    if bundled_root.exists():
+        for pdir in bundled_root.iterdir():
+            manifest_path = pdir / "plugin.json"
+            if not pdir.is_dir() or not manifest_path.exists():
+                continue
+            try:
+                import json as _json
+                manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                logger.exception("[PLUGINS] Could not read bundled manifest %s", manifest_path)
+                continue
+            pid = manifest.get("id")
+            if not pid or InstalledPlugin.query.get(pid):
+                continue
+            db.session.add(InstalledPlugin(
+                id=pid,
+                name=manifest.get("name", pid),
+                version=manifest.get("version", "0.0.0"),
+                type=",".join(manifest.get("type", [])),
+                enabled=True,
+                trust_level="official",
+                source_repo_id=None,
+                manifest_json=_json.dumps(manifest),
+            ))
+        db.session.commit()
+
+    enabled_ids = {p.id for p in InstalledPlugin.query.filter_by(enabled=True).all()}
+    plugin_manager.load_all(enabled_ids=enabled_ids)
+    plugin_registry = PluginRegistry(plugin_manager)
+    app.register_blueprint(build_plugins_blueprint(plugin_manager, plugin_registry))
 
     # Phase 1 (scale-to-millions): one-time backfill of the denormalized
     # per-artist counters for existing libraries (idempotent — only updates
