@@ -85,8 +85,14 @@ class PluginRegistry:
     def list_available(self) -> list[dict]:
         """Merged, de-duplicated (by id, newest wins) plugin listing across
         every enabled repository's cached index, annotated with whether
-        it's already installed."""
+        it's already installed and whether the id is a bundled plugin
+        (bundled wins — never installable from a repo)."""
         installed_ids = {p.id: p.version for p in InstalledPlugin.query.all()}
+        bundled_ids = set()
+        try:
+            bundled_ids = {d.name for d in self.manager.discover_bundled()}
+        except Exception:
+            pass
         merged: dict[str, dict] = {}
         for repo in PluginRepository.query.filter_by(enabled=True).all():
             if not repo.cached_index_json:
@@ -97,6 +103,7 @@ class PluginRegistry:
                 entry["source_repo_id"] = repo.id
                 entry["source_repo_name"] = repo.name
                 entry["installed_version"] = installed_ids.get(entry.get("id"))
+                entry["bundled"] = entry.get("id") in bundled_ids
                 merged[entry["id"]] = entry
         return list(merged.values())
 

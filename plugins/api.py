@@ -97,6 +97,10 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
 
     @bp.route("/<plugin_id>/uninstall", methods=["POST"])
     def uninstall(plugin_id):
+        # Bundled plugins ship in the image and auto-install on every boot —
+        # uninstalling one would just resurrect it. Disable instead.
+        if plugin_id in manager.bundled_ids():
+            return jsonify({"error": "Bundled plugins cannot be uninstalled — disable it instead (it auto-installs on boot)."}), 400
         try:
             registry.uninstall(plugin_id)
         except RegistryError as exc:
@@ -150,6 +154,8 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         version = payload.get("version")
         if not plugin_id:
             return jsonify({"error": "plugin_id is required"}), 400
+        if plugin_id in manager.bundled_ids():
+            return jsonify({"error": "This plugin is bundled with fnack — no need to install it from a repository."}), 400
         try:
             row = registry.install(plugin_id, version)
         except RegistryError as exc:

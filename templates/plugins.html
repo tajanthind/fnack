@@ -60,7 +60,7 @@
           <h3 class="fw-bold m-0"><i class="fas fa-puzzle-piece text-danger me-2"></i>Plugins</h3>
           <span class="badge bg-secondary-subtle text-secondary font-monospace">v{{ app_version }}</span>
         </div>
-        <p class="text-secondary small m-0 mt-1">Bundled and third-party plugins. Enable, disable, and set priority for downloaders & metadata providers.</p>
+        <p class="text-secondary small m-0 mt-1">Bundled and third-party plugins. Enable, disable, set priority, browse the marketplace, and manage repositories.</p>
       </div>
       <div class="d-flex align-items-center gap-2">
         <button id="refreshPluginsBtn" class="btn btn-save-prominent btn-sm d-flex align-items-center gap-2" onclick="loadPluginsPage()">
@@ -70,10 +70,44 @@
       </div>
     </div>
 
-    <div id="pluginsPageContainer">
-      <div class="container py-5 text-center text-secondary">
-        <div class="spinner-border text-danger" role="status"></div>
-        <div class="mt-2">Loading plugins...</div>
+    <!-- Tabs: Installed / Marketplace / Repositories -->
+    <ul class="nav nav-tabs mb-4" id="pluginsTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="installed-tab" data-bs-toggle="tab" data-bs-target="#installed-pane" type="button" role="tab">
+          <i class="fas fa-puzzle-piece me-1"></i>Installed
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="marketplace-tab" data-bs-toggle="tab" data-bs-target="#marketplace-pane" type="button" role="tab">
+          <i class="fas fa-store me-1"></i>Marketplace
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="repositories-tab" data-bs-toggle="tab" data-bs-target="#repositories-pane" type="button" role="tab">
+          <i class="fas fa-database me-1"></i>Repositories
+        </button>
+      </li>
+    </ul>
+
+    <div class="tab-content" id="pluginsTabContent">
+      <div class="tab-pane fade show active" id="installed-pane" role="tabpanel">
+        <div id="pluginsPageContainer">
+          <div class="container py-5 text-center text-secondary">
+            <div class="spinner-border text-danger" role="status"></div>
+            <div class="mt-2">Loading plugins...</div>
+          </div>
+        </div>
+      </div>
+      <div class="tab-pane fade" id="marketplace-pane" role="tabpanel">
+        <div id="marketplaceContainer">
+          <div class="container py-5 text-center text-secondary">
+            <div class="spinner-border text-danger" role="status"></div>
+            <div class="mt-2">Loading marketplace...</div>
+          </div>
+        </div>
+      </div>
+      <div class="tab-pane fade" id="repositories-pane" role="tabpanel">
+        <div id="repositoriesContainer"></div>
       </div>
     </div>
 
