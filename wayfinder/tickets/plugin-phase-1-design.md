@@ -2,6 +2,10 @@
 
 wayfinder:research
 
+## Resolution
+
+RESOLVED (research) — findings written to `wayfinder/research/phase-1-bundled-plugins-design.md`. Full manifest inventory (spotiflac p10 downloader, ytdlp p50 + spotdl alias, deezer-batch/musicbrainz/spotify/itunes metadata providers with chain order + MusicBrainz pacing preserved, acoustid fingerprint, navidrome scan_trigger+settings_tab, vpn + http_proxy fold-in, 4 library_task scripts), auto-install flow (bundled_plugins_dir + idempotent InstalledPlugin rows, official/enabled/source_repo_id=None), Settings→Plugins new top-level page with grouped list + enable/disable + numeric priority_override column + health, write-lock discipline (health-log buffered, piggybacked flush), and 8 behavior-preservation callouts. Implementation starts after Phase 0 merges.
+
 ## Question
 
 PHASE1_BUNDLED_PLUGINS_BRIEF §2/§3/§4 — design (no code changes yet) the exact
