@@ -208,225 +208,54 @@
       </div>
     </div>
 
-    <!-- Download Engine Settings -->
+    <!-- Plugins & Extensibility Hub -->
     <div class="card bg-dark-card border-0 shadow-sm mb-4">
       <div class="card-body p-4">
-        <h5 class="fw-bold mb-3"><i class="fas fa-bolt text-warning me-2"></i>Download Engines & Rate Limiting</h5>
-
-        <!-- SpotiFLAC (Primary) -->
-        <div class="p-3 bg-dark rounded mb-4">
-          <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="d-flex align-items-center gap-2">
-              <div class="form-check form-switch m-0">
-                <input class="form-check-input settings-input" type="checkbox" id="setEnableSpotiflac" checked>
-              </div>
-              <h6 class="fw-bold m-0 text-white">SpotiFLAC Engine (Primary Lossless)</h6>
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+          <div class="d-flex align-items-center gap-3">
+            <div class="rounded-3 bg-danger bg-opacity-10 text-danger p-3 d-flex align-items-center justify-content-center" style="width:48px; height:48px;">
+              <i class="fas fa-puzzle-piece fs-4"></i>
             </div>
-            <span class="badge bg-success-subtle text-success">Zero Auth Required</span>
-          </div>
-          <p class="text-secondary small mb-3">Fetches true lossless FLAC streams from Tidal, Qobuz, SoundCloud, and Deezer without account credentials.</p>
-          
-          <div class="row g-3 mb-3">
-            <div class="col-md-6">
-              <label class="form-label small text-secondary">Preferred Audio Quality</label>
-              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setSpotiflacQuality">
-                <option value="LOSSLESS" selected>LOSSLESS (16-bit / 24-bit FLAC)</option>
-                <option value="HIGH">HIGH (320kbps)</option>
-                <option value="LOW">LOW (160kbps)</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <div class="d-flex align-items-center justify-content-between">
-                <label class="form-label small text-secondary m-0">Rate Limit Pacing Delay</label>
-                <span class="badge bg-danger" id="spotiflacDelayBadge">1.5s</span>
-              </div>
-              <input type="range" class="form-range settings-input mt-2" id="setSpotiflacDelay" min="0.5" max="5.0" step="0.5" value="1.5">
-              <div class="form-text text-secondary small">Delay between SpotiFLAC processes to prevent 429 rate-limiting from upstream lossless providers when adding multiple artists.</div>
+            <div>
+              <h5 class="fw-bold m-0 text-white">Plugins & Extensibility</h5>
+              <p class="text-secondary small m-0 mt-1">Downloaders, metadata providers, media servers, fingerprinting, VPN, and webhooks are now managed as independent plugins.</p>
             </div>
           </div>
-          <div class="row g-3 mt-1">
-            <div class="col-md-6">
-              <label class="form-label small text-secondary m-0">Spotify Client ID <span class="badge bg-secondary-subtle text-secondary ms-1">Optional</span></label>
-              <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input mt-1" id="setSpotifyClientId" placeholder="e.g. 3a7f8c...">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label small text-secondary m-0">Spotify Client Secret <span class="badge bg-secondary-subtle text-secondary ms-1">Optional</span></label>
-              <input type="password" class="form-control form-control-sm bg-dark text-white border-secondary settings-input mt-1" id="setSpotifyClientSecret" placeholder="e.g. 9b2d4e...">
-            </div>
-          </div>
-          <div class="form-text text-secondary small mt-1">
-            Optional: If provided (from <a href="https://developer.spotify.com/dashboard" target="_blank" class="text-info text-decoration-none">developer.spotify.com</a>), fnack resolves tracks directly via official Spotify API in &lt;10ms with 100% precision.
-          </div>
+          <a href="/plugins" class="btn btn-brand btn-sm d-flex align-items-center gap-2">
+            <i class="fas fa-external-link-alt"></i>
+            <span>Open Plugins Manager</span>
+          </a>
         </div>
-
-        <!-- yt-dlp (Fallback) -->
-        <div class="p-3 bg-dark rounded mb-4">
-          <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="d-flex align-items-center gap-2">
-              <div class="form-check form-switch m-0">
-                <input class="form-check-input settings-input" type="checkbox" id="setEnableYtdlp" checked>
-              </div>
-              <h6 class="fw-bold m-0 text-white">yt-dlp Engine (Fallback)</h6>
-            </div>
-            <span class="badge bg-secondary-subtle text-secondary">Secondary Fallback</span>
-          </div>
-          <p class="text-secondary small mb-3">Direct YouTube & YouTube Music audio extraction with candidate scoring & Topic channel prioritization.</p>
-          
-          <div class="row g-3 mb-3">
-            <div class="col-md-6">
-              <label class="form-label small text-secondary">YouTube Audio Source</label>
-              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setYoutubeSource">
-                <option value="youtube_music" selected>YouTube Music (Official Topic Releases — No Video Dialogue/Skits)</option>
-                <option value="youtube">Standard YouTube Search</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label small text-secondary">Output Format</label>
-              <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setYtdlpFormat">
-                <option value="opus" selected>Opus (Native YouTube 160kbps — Zero Transcoding / Recommended)</option>
-                <option value="m4a">M4A / AAC (Native 128kbps AAC — Zero Transcoding)</option>
-                <option value="flac">FLAC (Transcoded Container)</option>
-                <option value="mp3">MP3 (Transcoded 320kbps)</option>
-              </select>
+        <div class="row g-2 pt-2 border-top border-secondary border-opacity-25">
+          <div class="col-6 col-md-3">
+            <div class="p-2 bg-dark rounded text-center">
+              <div class="text-secondary small fw-bold"><i class="fas fa-download text-warning me-1"></i>Downloaders</div>
+              <div class="small text-white mt-1">SpotiFLAC, yt-dlp</div>
             </div>
           </div>
-          <div class="form-text text-secondary small">
-            <strong>YouTube Music Topic</strong> streams are official record label master audio tracks, free of music video intros, outros, and dialogue skits.
-          </div>
-        </div>
-
-        <!-- YouTube cookies.txt Authentication Manager -->
-        <div class="p-3 bg-dark rounded">
-          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-            <div class="d-flex align-items-center gap-2">
-              <i class="fas fa-cookie-bite text-warning fs-5"></i>
-              <h6 class="fw-bold m-0 text-white">YouTube Cookies (cookies.txt)</h6>
-            </div>
-            <div id="cookieStatusBadgeContainer">
-              <span class="badge bg-secondary" id="cookieStatusBadge"><i class="fas fa-circle-notch fa-spin me-1"></i>Checking...</span>
+          <div class="col-6 col-md-3">
+            <div class="p-2 bg-dark rounded text-center">
+              <div class="text-secondary small fw-bold"><i class="fas fa-database text-info me-1"></i>Metadata</div>
+              <div class="small text-white mt-1">Deezer, Spotify, MB, iTunes</div>
             </div>
           </div>
-          <p class="text-secondary small mb-3">Provide a <code>cookies.txt</code> file so yt-dlp can authenticate with YouTube and bypass sign-in or bot detection restrictions.</p>
-
-          <div class="mb-3">
-            <label class="form-label small text-secondary fw-bold">Cookies File Path</label>
-            <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="setYoutubeCookiesPath" value="/config/cookies.txt">
-          </div>
-
-          <div class="row g-2 mb-3">
-            <div class="col-md-8">
-              <label class="form-label small text-secondary">Upload cookies.txt File</label>
-              <input type="file" class="form-control form-control-sm bg-dark text-white border-secondary" id="cookieFileInput" accept=".txt">
-            </div>
-            <div class="col-md-4 d-flex align-items-end gap-2">
-              <button type="button" class="btn btn-outline-info btn-sm w-100" onclick="uploadCookieFile()">
-                <i class="fas fa-upload me-1"></i>Upload File
-              </button>
+          <div class="col-6 col-md-3">
+            <div class="p-2 bg-dark rounded text-center">
+              <div class="text-secondary small fw-bold"><i class="fas fa-server text-success me-1"></i>Servers & Media</div>
+              <div class="small text-white mt-1">Navidrome, Subsonic API</div>
             </div>
           </div>
-
-          <div class="mb-3">
-            <label class="form-label small text-secondary">Or Paste cookies.txt Content Below</label>
-            <textarea class="form-control form-control-sm bg-dark text-white border-secondary font-monospace" id="cookiePasteInput" rows="3" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	TRUE	..."></textarea>
-          </div>
-
-          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 pt-2 border-top border-secondary border-opacity-25">
-            <div class="d-flex gap-2">
-              <button type="button" class="btn btn-brand btn-sm" onclick="savePastedCookies()">
-                <i class="fas fa-save me-1"></i>Save Pasted Content
-              </button>
-              <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteCookieFile()">
-                <i class="fas fa-trash-alt me-1"></i>Delete Cookies
-              </button>
-            </div>
-            <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#cookieHelpBox">
-              <i class="fas fa-question-circle me-1"></i>How to Export cookies.txt
-            </button>
-          </div>
-
-          <!-- Step by step cookies guide collapsible -->
-          <div class="collapse mt-3" id="cookieHelpBox">
-            <div class="p-3 bg-dark-card rounded border border-secondary border-opacity-25 small text-secondary">
-              <h6 class="fw-bold text-white mb-2"><i class="fas fa-info-circle text-info me-1"></i>Step-by-Step: Exporting YouTube cookies.txt</h6>
-              <ol class="mb-2 ps-3">
-                <li>Install a cookie export extension such as <strong>Get cookies.txt LOCALLY</strong> (available for Chrome/Firefox/Brave).</li>
-                <li>Log in to <a href="https://www.youtube.com" target="_blank" class="text-info">youtube.com</a> in your browser.</li>
-                <li>Click the extension icon on the YouTube tab.</li>
-                <li>Click <strong>Export</strong> or <strong>Export As cookies.txt</strong> to save the file.</li>
-                <li>Upload the file above, or place it at <code>/config/cookies.txt</code> in your Docker container mount!</li>
-              </ol>
+          <div class="col-6 col-md-3">
+            <div class="p-2 bg-dark rounded text-center">
+              <div class="text-secondary small fw-bold"><i class="fas fa-shield-halved text-danger me-1"></i>VPN & Hooks</div>
+              <div class="small text-white mt-1">VPN, Discord, ntfy</div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- VPN Manager (optional in-container VPN) -->
-    <div class="card bg-dark-card border-0 shadow-sm mb-4">
-      <div class="card-body p-4">
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-          <h5 class="fw-bold m-0"><i class="fas fa-shield-halved text-success me-2"></i>VPN (Optional)</h5>
-          <div>
-            <span class="badge bg-secondary" id="vpnStatusBadge"><i class="fas fa-circle-notch fa-spin me-1"></i>Checking...</span>
-          </div>
-        </div>
-        <p class="text-secondary small mb-3">
-          Route all of fnack's traffic through a VPN inside this same container. This is the most effective fix for
-          YouTube bot-checks ("Sign in to confirm you're not a bot") — residential VPN IPs are flagged far less often.
-          Upload an <strong>OpenVPN</strong> (<code>.ovpn</code>) or <strong>WireGuard</strong> (<code>.conf</code>) config from any provider.
-        </p>
-
-        <div class="bg-dark p-3 rounded mb-3">
-          <div class="row g-2 mb-3">
-            <div class="col-md-8">
-              <label class="form-label small text-secondary">Upload VPN Config File</label>
-              <input type="file" class="form-control form-control-sm bg-dark text-white border-secondary" id="vpnFileInput" accept=".ovpn,.conf,.txt">
-            </div>
-            <div class="col-md-4 d-flex align-items-end">
-              <button type="button" class="btn btn-outline-success btn-sm w-100" onclick="uploadVpnConfig()">
-                <i class="fas fa-upload me-1"></i>Upload & Apply
-              </button>
-            </div>
-          </div>
-
-          <div class="mb-2">
-            <label class="form-label small text-secondary">Or Paste Config Content</label>
-            <textarea class="form-control form-control-sm bg-dark text-white border-secondary font-monospace" id="vpnPasteInput" rows="4" placeholder="client&#10;dev tun&#10;proto udp&#10;remote vpn.example.com 1194&#10;..."></textarea>
-          </div>
-          <div class="d-flex align-items-center gap-2 mb-3">
-            <button type="button" class="btn btn-outline-success btn-sm d-none" id="vpnSavePasteBtn" onclick="saveVpnConfig()">
-              <i class="fas fa-save me-1"></i>Save Pasted Config
-            </button>
-            <small class="text-secondary" id="vpnPasteHint"></small>
-          </div>
-
-          <div class="d-flex flex-wrap gap-2 pt-2 border-top border-secondary border-opacity-25">
-            <button type="button" class="btn btn-brand btn-sm" onclick="startVpn()">
-              <i class="fas fa-play me-1"></i>Start VPN
-            </button>
-            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="stopVpn()">
-              <i class="fas fa-stop me-1"></i>Stop VPN
-            </button>
-            <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteVpnConfig()">
-              <i class="fas fa-trash-alt me-1"></i>Delete Config
-            </button>
-          </div>
-        </div>
-
-        <div class="small text-secondary">
-          <strong>Status:</strong> <span id="vpnStatusText">—</span>
-        </div>
-        <div class="small text-secondary mt-1">
-          <strong>Public IP:</strong> <span id="vpnPublicIp">—</span>
-          <span class="text-info" id="vpnIpNote"></span>
-        </div>
-        <div class="form-text text-secondary small mt-2">
-          Configs are stored in <code>/config/vpn/</code> (your host volume). The container needs
-          <code>NET_ADMIN</code> + <code>/dev/net/tun</code> — already set in the provided <code>docker-compose.yml</code>.
-        </div>
-      </div>
-    </div>
-
+    <!-- Album Artwork & Cover Art -->
     <div class="card bg-dark-card border-0 shadow-sm mb-4">
       <div class="card-body p-4">
         <h5 class="fw-bold mb-3"><i class="fas fa-image text-danger me-2"></i>Album Artwork & Cover Art</h5>
@@ -498,69 +327,7 @@
       </div>
     </div>
 
-    <!-- Navidrome Subsonic Integration -->
-    <div class="card bg-dark-card border-0 shadow-sm mb-4">
-      <div class="card-body p-4">
-        <div class="d-flex align-items-center justify-content-between mb-2">
-          <h5 class="fw-bold m-0"><i class="fas fa-broadcast-tower text-success me-2"></i>Navidrome Integration</h5>
-          <span class="badge bg-success-subtle text-success">Subsonic API</span>
-        </div>
-        <p class="text-secondary small mb-3">Connect your Navidrome music server to trigger automatic library rescans whenever fnack finishes downloading albums or songs.</p>
-
-        <div class="bg-dark p-3 rounded mb-3">
-          <div class="row g-3 mb-3">
-            <div class="col-md-12">
-              <label class="form-label small text-secondary fw-bold">Navidrome Server URL</label>
-              <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="setNavidromeUrl" placeholder="http://192.168.1.50:4533">
-              <div class="form-text text-secondary small">Your Navidrome web address or IP.</div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label small text-secondary fw-bold">Username</label>
-              <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="setNavidromeUser" placeholder="admin">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label small text-secondary fw-bold">Password / Subsonic Token</label>
-              <input type="password" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="setNavidromeToken" placeholder="••••••••">
-            </div>
-          </div>
-
-          <div class="form-check form-switch mb-3">
-            <input class="form-check-input settings-input" type="checkbox" id="setNavidromeAutoScan" checked>
-            <label class="form-check-label fw-bold text-white small" for="setNavidromeAutoScan">Auto-Trigger Navidrome Library Scan</label>
-            <div class="text-secondary small">Automatically send a Subsonic scan request to Navidrome as soon as any track download finishes.</div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label small text-secondary fw-bold">Navidrome Database Path (auto-fix album splits)</label>
-            <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input font-monospace" id="setNavidromeDbPath" placeholder="/navidrome-data/navidrome.db">
-            <div class="form-text text-secondary small">
-              Optional: the <code>navidrome.db</code> file on this host, mounted into the fnack
-              container. When set, fnack merges split album rows (e.g. from per-track
-              release dates) automatically at every restart and every 6h — no manual
-              script needed. Add a bind mount for your Navidrome data dir in
-              <code>docker-compose.yml</code>, e.g. <code>- /opt/navidrome/data:/navidrome-data</code>,
-              then enter <code>/navidrome-data/navidrome.db</code> here. A snapshot backup is
-              taken before any change.
-            </div>
-          </div>
-
-          <div class="d-flex flex-wrap align-items-center gap-2 pt-2 border-top border-secondary border-opacity-25">
-            <button type="button" class="btn btn-outline-secondary btn-sm" id="btnTestNavidrome" onclick="testNavidromeConnection()">
-              <i class="fas fa-plug me-1"></i>Test Connection
-            </button>
-            <button type="button" class="btn btn-outline-success btn-sm" id="btnScanNavidrome" onclick="triggerNavidromeScan()">
-              <i class="fas fa-sync me-1"></i>Trigger Navidrome Scan Now
-            </button>
-            <button type="button" class="btn btn-outline-warning btn-sm" id="btnFixNavidromeSplits" onclick="fixNavidromeSplits()">
-              <i class="fas fa-merge me-1"></i>Fix Album Splits Now
-            </button>
-            <div id="navidromeTestResult" class="ms-2"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Concurrency & Paths -->
+    <!-- Performance & Automation -->
     <div class="card bg-dark-card border-0 shadow-sm mb-4">
       <div class="card-body p-4">
         <h5 class="fw-bold mb-3"><i class="fas fa-cogs text-info me-2"></i>Performance & Automation</h5>
@@ -600,19 +367,6 @@
           <button type="button" class="btn btn-outline-info btn-sm mt-2" id="btnRunMaintenance" onclick="runMaintenanceNow()">
             <i class="fas fa-broom me-1"></i>Run Maintenance Now
           </button>
-        </div>
-
-        <!-- AcoustID (optional fingerprinting) -->
-        <div class="mb-3">
-          <label class="form-label fw-bold small">AcoustID API Key <span class="badge bg-secondary ms-1">Optional</span></label>
-          <input type="text" class="form-control form-control-sm bg-dark text-white border-secondary settings-input font-monospace" id="setAcoustidKey" placeholder="(leave empty to disable fingerprinting)" style="max-width: 340px;">
-          <div class="form-text text-secondary small">
-            Free key from <code>acoustid.org</code>. Without it, fingerprint
-            verification and "Identify this file" are disabled and everything
-            else works unchanged. With it: fnack confirms downloaded songs that
-            have wrong tags, flags files that turned out to be a different song
-            (you decide keep/delete), and can identify unknown regional tracks.
-          </div>
         </div>
 
         <!-- Music Storage Path -->
@@ -821,6 +575,23 @@
       showToast(`Switched theme to ${themeKey.replace('-', ' ').toUpperCase()}`, 'info');
     }
 
+    function _setVal(id, val) {
+      const el = document.getElementById(id);
+      if (el && val !== undefined && val !== null) el.value = val;
+    }
+    function _setChecked(id, checked) {
+      const el = document.getElementById(id);
+      if (el && checked !== undefined && checked !== null) el.checked = checked;
+    }
+    function _getVal(id, fallback = '') {
+      const el = document.getElementById(id);
+      return el ? el.value : fallback;
+    }
+    function _getChecked(id, fallback = false) {
+      const el = document.getElementById(id);
+      return el ? el.checked : fallback;
+    }
+
     // Load Settings
     async function loadSettings() {
       try {
@@ -830,44 +601,25 @@
 
         applyTheme(s.theme || localStorage.getItem('fnack_theme') || 'onyx-dark', false);
 
-        document.getElementById('setEnableSpotiflac').checked = s.enable_spotiflac !== false;
-        document.getElementById('setEnableYtdlp').checked = s.enable_ytdlp !== false;
-        document.getElementById('concurrentRange').value = s.max_concurrent || 3;
-        document.getElementById('concurrentBadge').textContent = s.max_concurrent || 3;
-        document.getElementById('setSpotiflacQuality').value = s.spotiflac_quality || 'LOSSLESS';
-        
-        const spotDelay = s.spotiflac_delay || 1.5;
-        document.getElementById('setSpotiflacDelay').value = spotDelay;
-        document.getElementById('spotiflacDelayBadge').textContent = spotDelay + 's';
-        document.getElementById('setSpotifyClientId').value = s.spotify_client_id || '';
-        document.getElementById('setSpotifyClientSecret').value = s.spotify_client_secret || '';
+        _setVal('concurrentRange', s.max_concurrent || 3);
+        const concurrentBadge = document.getElementById('concurrentBadge');
+        if (concurrentBadge) concurrentBadge.textContent = s.max_concurrent || 3;
 
-        document.getElementById('setYoutubeSource').value = s.youtube_source || 'youtube_music';
-        document.getElementById('setYoutubeCookiesPath').value = s.youtube_cookies_path || '/config/cookies.txt';
+        _setVal('syncIntervalInput', s.discography_interval_hours || 6);
+        _setVal('musicPathInput', s.music_path || '/music');
+        _setVal('apiKeyInput', s.api_key || '');
 
-        document.getElementById('setYtdlpFormat').value = s.ytdlp_format || s.spotdl_format || 'flac';
-        document.getElementById('syncIntervalInput').value = s.discography_interval_hours || 6;
-        document.getElementById('musicPathInput').value = s.music_path || '/music';
-        document.getElementById('apiKeyInput').value = s.api_key || '';
+        _setChecked('setSaveCoverArt', s.save_cover_art !== false);
+        _setVal('setCoverArtFilename', s.cover_art_filename || 'cover.jpg');
+        _setChecked('setEmbedCoverArt', s.embed_cover_art !== false);
 
-        document.getElementById('setSaveCoverArt').checked = s.save_cover_art !== false;
-        document.getElementById('setCoverArtFilename').value = s.cover_art_filename || 'cover.jpg';
-        document.getElementById('setEmbedCoverArt').checked = s.embed_cover_art !== false;
+        _setVal('setMatchingStrictness', s.matching_strictness || 'standard');
+        _setChecked('setRejectMismatches', s.reject_mismatches !== false);
+        _setChecked('setEnableDurationCheck', s.enable_duration_check !== false);
+        _setChecked('setEnableFolderWatcher', s.enable_folder_watcher !== false);
 
-        document.getElementById('setMatchingStrictness').value = s.matching_strictness || 'standard';
-        document.getElementById('setRejectMismatches').checked = s.reject_mismatches !== false;
-        document.getElementById('setEnableDurationCheck').checked = s.enable_duration_check !== false;
-        document.getElementById('setEnableFolderWatcher').checked = s.enable_folder_watcher !== false;
+        _setVal('setMaintenanceInterval', s.maintenance_interval || 'weekly');
 
-        document.getElementById('setNavidromeUrl').value = s.navidrome_url || '';
-        document.getElementById('setNavidromeUser').value = s.navidrome_user || '';
-        document.getElementById('setNavidromeToken').value = s.navidrome_token || '';
-        document.getElementById('setNavidromeAutoScan').checked = s.navidrome_auto_scan !== false;
-        document.getElementById('setNavidromeDbPath').value = s.navidrome_db_path || '';
-        document.getElementById('setMaintenanceInterval').value = s.maintenance_interval || 'weekly';
-        document.getElementById('setAcoustidKey').value = s.acoustid_api_key || '';
-
-        updateCookieStatusUI(s.cookies_status);
         setDirty(false);
       } catch (err) {
         console.error('Failed to load settings:', err);
@@ -1140,49 +892,25 @@
     }
 
     function checkDirty() {
-      const curEnableSpotiflac = document.getElementById('setEnableSpotiflac').checked;
-      const curEnableYtdlp = document.getElementById('setEnableYtdlp').checked;
-      const curMaxConc = parseInt(document.getElementById('concurrentRange').value);
-      const curSpotQuality = document.getElementById('setSpotiflacQuality').value;
-      const curSpotDelay = parseFloat(document.getElementById('setSpotiflacDelay').value);
-      const curSpotifyClientId = document.getElementById('setSpotifyClientId').value.trim();
-      const curSpotifyClientSecret = document.getElementById('setSpotifyClientSecret').value.trim();
-      const curYtSource = document.getElementById('setYoutubeSource').value;
-      const curCookiesPath = document.getElementById('setYoutubeCookiesPath').value.trim();
-      const curYtdlp = document.getElementById('setYtdlpFormat').value;
-      const curSync = parseInt(document.getElementById('syncIntervalInput').value);
-      const curPath = document.getElementById('musicPathInput').value.trim();
+      const curMaxConc = parseInt(_getVal('concurrentRange', '3'));
+      const curSync = parseInt(_getVal('syncIntervalInput', '6'));
+      const curPath = _getVal('musicPathInput', '/music').trim();
 
-      const curSaveCover = document.getElementById('setSaveCoverArt').checked;
-      const curCoverFn = document.getElementById('setCoverArtFilename').value;
-      const curEmbedCover = document.getElementById('setEmbedCoverArt').checked;
+      const curSaveCover = _getChecked('setSaveCoverArt', true);
+      const curCoverFn = _getVal('setCoverArtFilename', 'cover.jpg');
+      const curEmbedCover = _getChecked('setEmbedCoverArt', true);
 
-      const curStrict = document.getElementById('setMatchingStrictness').value;
-      const curReject = document.getElementById('setRejectMismatches').checked;
-      const curDurCheck = document.getElementById('setEnableDurationCheck').checked;
-      const curWatcher = document.getElementById('setEnableFolderWatcher').checked;
+      const curStrict = _getVal('setMatchingStrictness', 'standard');
+      const curReject = _getChecked('setRejectMismatches', true);
+      const curDurCheck = _getChecked('setEnableDurationCheck', true);
+      const curWatcher = _getChecked('setEnableFolderWatcher', true);
 
-      const curNavUrl = document.getElementById('setNavidromeUrl').value.trim();
-      const curNavUser = document.getElementById('setNavidromeUser').value.trim();
-      const curNavToken = document.getElementById('setNavidromeToken').value;
-      const curNavAuto = document.getElementById('setNavidromeAutoScan').checked;
-      const curNavDb = document.getElementById('setNavidromeDbPath').value.trim();
-      const curMaintInt = document.getElementById('setMaintenanceInterval').value;
-      const curAcoustidKey = document.getElementById('setAcoustidKey').value.trim();
+      const curMaintInt = _getVal('setMaintenanceInterval', 'weekly');
       const curTheme = _currentTheme;
 
       const isChanged = (
         curTheme !== (_initialSettings.theme || 'onyx-dark') ||
-        curEnableSpotiflac !== (_initialSettings.enable_spotiflac !== false) ||
-        curEnableYtdlp !== (_initialSettings.enable_ytdlp !== false) ||
         curMaxConc !== (_initialSettings.max_concurrent || 3) ||
-        curSpotQuality !== (_initialSettings.spotiflac_quality || 'LOSSLESS') ||
-        curSpotDelay !== (_initialSettings.spotiflac_delay || 1.5) ||
-        curSpotifyClientId !== (_initialSettings.spotify_client_id || '') ||
-        curSpotifyClientSecret !== (_initialSettings.spotify_client_secret || '') ||
-        curYtSource !== (_initialSettings.youtube_source || 'youtube_music') ||
-        curCookiesPath !== (_initialSettings.youtube_cookies_path || '/config/cookies.txt') ||
-        curYtdlp !== (_initialSettings.ytdlp_format || _initialSettings.spotdl_format || 'flac') ||
         curSync !== (_initialSettings.discography_interval_hours || 6) ||
         curPath !== (_initialSettings.music_path || '/music') ||
         curSaveCover !== (_initialSettings.save_cover_art !== false) ||
@@ -1192,13 +920,7 @@
         curReject !== (_initialSettings.reject_mismatches !== false) ||
         curDurCheck !== (_initialSettings.enable_duration_check !== false) ||
         curWatcher !== (_initialSettings.enable_folder_watcher !== false) ||
-        curNavUrl !== (_initialSettings.navidrome_url || '') ||
-        curNavUser !== (_initialSettings.navidrome_user || '') ||
-        curNavToken !== (_initialSettings.navidrome_token || '') ||
-        curNavAuto !== (_initialSettings.navidrome_auto_scan !== false) ||
-        curNavDb !== (_initialSettings.navidrome_db_path || '') ||
-        curMaintInt !== (_initialSettings.maintenance_interval || 'weekly') ||
-        curAcoustidKey !== (_initialSettings.acoustid_api_key || '')
+        curMaintInt !== (_initialSettings.maintenance_interval || 'weekly')
       );
 
       setDirty(isChanged);
@@ -1227,39 +949,23 @@
     function discardSettingsChanges() {
       if (!_initialSettings) return;
       applyTheme(_initialSettings.theme || 'onyx-dark', false);
-      document.getElementById('setEnableSpotiflac').checked = _initialSettings.enable_spotiflac !== false;
-      document.getElementById('setEnableYtdlp').checked = _initialSettings.enable_ytdlp !== false;
-      document.getElementById('concurrentRange').value = _initialSettings.max_concurrent || 3;
-      document.getElementById('concurrentBadge').textContent = _initialSettings.max_concurrent || 3;
-      document.getElementById('setSpotiflacQuality').value = _initialSettings.spotiflac_quality || 'LOSSLESS';
-      
-      const spotDelay = _initialSettings.spotiflac_delay || 1.5;
-      document.getElementById('setSpotiflacDelay').value = spotDelay;
-      document.getElementById('spotiflacDelayBadge').textContent = spotDelay + 's';
+      _setVal('concurrentRange', _initialSettings.max_concurrent || 3);
+      const concurrentBadge = document.getElementById('concurrentBadge');
+      if (concurrentBadge) concurrentBadge.textContent = _initialSettings.max_concurrent || 3;
 
-      document.getElementById('setSpotifyClientId').value = _initialSettings.spotify_client_id || '';
-      document.getElementById('setSpotifyClientSecret').value = _initialSettings.spotify_client_secret || '';
+      _setVal('syncIntervalInput', _initialSettings.discography_interval_hours || 6);
+      _setVal('musicPathInput', _initialSettings.music_path || '/music');
 
-      document.getElementById('setYoutubeSource').value = _initialSettings.youtube_source || 'youtube_music';
-      document.getElementById('setYoutubeCookiesPath').value = _initialSettings.youtube_cookies_path || '/config/cookies.txt';
+      _setChecked('setSaveCoverArt', _initialSettings.save_cover_art !== false);
+      _setVal('setCoverArtFilename', _initialSettings.cover_art_filename || 'cover.jpg');
+      _setChecked('setEmbedCoverArt', _initialSettings.embed_cover_art !== false);
 
-      document.getElementById('setYtdlpFormat').value = _initialSettings.ytdlp_format || _initialSettings.spotdl_format || 'flac';
-      document.getElementById('syncIntervalInput').value = _initialSettings.discography_interval_hours || 6;
-      document.getElementById('musicPathInput').value = _initialSettings.music_path || '/music';
+      _setVal('setMatchingStrictness', _initialSettings.matching_strictness || 'standard');
+      _setChecked('setRejectMismatches', _initialSettings.reject_mismatches !== false);
+      _setChecked('setEnableDurationCheck', _initialSettings.enable_duration_check !== false);
+      _setChecked('setEnableFolderWatcher', _initialSettings.enable_folder_watcher !== false);
 
-      document.getElementById('setSaveCoverArt').checked = _initialSettings.save_cover_art !== false;
-      document.getElementById('setCoverArtFilename').value = _initialSettings.cover_art_filename || 'cover.jpg';
-      document.getElementById('setEmbedCoverArt').checked = _initialSettings.embed_cover_art !== false;
-
-      document.getElementById('setMatchingStrictness').value = _initialSettings.matching_strictness || 'standard';
-      document.getElementById('setRejectMismatches').checked = _initialSettings.reject_mismatches !== false;
-      document.getElementById('setEnableDurationCheck').checked = _initialSettings.enable_duration_check !== false;
-      document.getElementById('setEnableFolderWatcher').checked = _initialSettings.enable_folder_watcher !== false;
-
-      document.getElementById('setNavidromeUrl').value = _initialSettings.navidrome_url || '';
-      document.getElementById('setNavidromeUser').value = _initialSettings.navidrome_user || '';
-      document.getElementById('setNavidromeToken').value = _initialSettings.navidrome_token || '';
-      document.getElementById('setNavidromeAutoScan').checked = _initialSettings.navidrome_auto_scan !== false;
+      _setVal('setMaintenanceInterval', _initialSettings.maintenance_interval || 'weekly');
 
       setDirty(false);
       showToast('Changes discarded', 'info');
@@ -1296,32 +1002,17 @@
 
       const payload = {
         theme: _currentTheme,
-        enable_spotiflac: document.getElementById('setEnableSpotiflac').checked,
-        enable_ytdlp: document.getElementById('setEnableYtdlp').checked,
-        max_concurrent: parseInt(document.getElementById('concurrentRange').value),
-        spotiflac_quality: document.getElementById('setSpotiflacQuality').value,
-        spotiflac_delay: parseFloat(document.getElementById('setSpotiflacDelay').value),
-        spotify_client_id: document.getElementById('setSpotifyClientId').value.trim(),
-        spotify_client_secret: document.getElementById('setSpotifyClientSecret').value.trim(),
-        youtube_source: document.getElementById('setYoutubeSource').value,
-        youtube_cookies_path: document.getElementById('setYoutubeCookiesPath').value.trim(),
-        ytdlp_format: document.getElementById('setYtdlpFormat').value,
-        discography_interval_hours: parseInt(document.getElementById('syncIntervalInput').value),
-        music_path: document.getElementById('musicPathInput').value.trim(),
-        save_cover_art: document.getElementById('setSaveCoverArt').checked,
-        cover_art_filename: document.getElementById('setCoverArtFilename').value,
-        embed_cover_art: document.getElementById('setEmbedCoverArt').checked,
-        matching_strictness: document.getElementById('setMatchingStrictness').value,
-        reject_mismatches: document.getElementById('setRejectMismatches').checked,
-        enable_duration_check: document.getElementById('setEnableDurationCheck').checked,
-        enable_folder_watcher: document.getElementById('setEnableFolderWatcher').checked,
-        navidrome_url: document.getElementById('setNavidromeUrl').value.trim(),
-        navidrome_user: document.getElementById('setNavidromeUser').value.trim(),
-        navidrome_token: document.getElementById('setNavidromeToken').value,
-        navidrome_auto_scan: document.getElementById('setNavidromeAutoScan').checked,
-        navidrome_db_path: document.getElementById('setNavidromeDbPath').value.trim(),
-        maintenance_interval: document.getElementById('setMaintenanceInterval').value,
-        acoustid_api_key: document.getElementById('setAcoustidKey').value.trim(),
+        max_concurrent: parseInt(_getVal('concurrentRange', '3')),
+        discography_interval_hours: parseInt(_getVal('syncIntervalInput', '6')),
+        music_path: _getVal('musicPathInput', '/music').trim(),
+        save_cover_art: _getChecked('setSaveCoverArt', true),
+        cover_art_filename: _getVal('setCoverArtFilename', 'cover.jpg'),
+        embed_cover_art: _getChecked('setEmbedCoverArt', true),
+        matching_strictness: _getVal('setMatchingStrictness', 'standard'),
+        reject_mismatches: _getChecked('setRejectMismatches', true),
+        enable_duration_check: _getChecked('setEnableDurationCheck', true),
+        enable_folder_watcher: _getChecked('setEnableFolderWatcher', true),
+        maintenance_interval: _getVal('setMaintenanceInterval', 'weekly'),
       };
 
       try {

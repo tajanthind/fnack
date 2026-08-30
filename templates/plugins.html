@@ -116,6 +116,20 @@
   <!-- Toast Notification Container -->
   <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer" style="z-index: 2100;"></div>
 
+  <!-- Confirm / Plugin Settings Modal -->
+  <div class="modal-overlay d-none" id="confirmModal">
+    <div class="custom-modal">
+      <div class="modal-header">
+        <h5 class="modal-title m-0 fw-bold" id="confirmModalTitle">Settings</h5>
+      </div>
+      <div class="modal-body" id="confirmModalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="confirmModalCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-brand btn-sm" id="confirmModalOkBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Mobile Bottom Navigation Bar -->
   <div class="mobile-bottom-nav">
     <a href="/" class="mobile-nav-link"><i class="fas fa-th-large"></i><span>Library</span></a>
