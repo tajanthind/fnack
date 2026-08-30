@@ -723,6 +723,11 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         for _dl_idx, dl in enumerate(downloaders):
             if job_id in cancel_requested_jobs:
                 break
+            # If the dedup copy (Step 0) already produced a verified file,
+            # skip the whole chain — never re-download over a good local file
+            # (this would downgrade a FLAC to opus, a behavior regression).
+            if verified_file:
+                break
             if not engine_gates.get(dl.manifest.id, True):
                 logger.info("[QUEUE] %s disabled in settings, skipping for '%s - %s'",
                             dl.manifest.name, artist_name, track_title)
