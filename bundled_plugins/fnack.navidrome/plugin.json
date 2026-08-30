@@ -1,0 +1,23 @@
+{
+  "id": "fnack.navidrome",
+  "name": "Navidrome",
+  "version": "1.0.0",
+  "type": ["scan_trigger", "ui_extension"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:NavidromePlugin",
+  "author": "fnack",
+  "description": "Triggers Navidrome rescans and contributes the Navidrome settings panel.",
+  "homepage": "",
+  "permissions": ["network", "settings"],
+  "settings_schema": [
+    {"key": "url", "type": "string", "default": ""},
+    {"key": "user", "type": "string", "default": ""},
+    {"key": "token", "type": "secret", "default": ""},
+    {"key": "auto_scan", "type": "boolean", "default": "true"},
+    {"key": "db_path", "type": "string", "default": ""}
+  ],
+  "ui": {"slots": ["settings_tab"]},
+  "dependencies": {},
+  "trust_level": "official"
+}

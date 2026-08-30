@@ -1,0 +1,17 @@
+{
+  "id": "fnack.vpn",
+  "name": "VPN (WireGuard/OpenVPN)",
+  "version": "1.0.0",
+  "type": ["vpn"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:VPNPluginImpl",
+  "author": "fnack",
+  "description": "Split-mode WireGuard/OpenVPN tunnel for download/metadata traffic. Includes the local HTTP CONNECT proxy (scripts/http_proxy.py).",
+  "homepage": "",
+  "permissions": ["settings", "filesystem:downloads"],
+  "settings_schema": [],
+  "ui": {"slots": []},
+  "dependencies": {},
+  "trust_level": "official"
+}

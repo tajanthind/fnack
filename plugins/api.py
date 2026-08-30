@@ -17,6 +17,32 @@ from plugins.models import InstalledPlugin, PluginRepository, PluginSetting
 from plugins.registry import PluginRegistry, RegistryError
 
 
+def _ensure_installed_row(manager: PluginManager, plugin_id: str, enabled: bool = True) -> InstalledPlugin:
+    """Create an InstalledPlugin row when missing (e.g. a manual folder install
+    or a bundled plugin enabled before auto-install ran). Enabling a plugin
+    must persist across restarts — a row-less enable currently reverts."""
+    row = db.session.get(InstalledPlugin, plugin_id)
+    if row is not None:
+        row.enabled = enabled
+        db.session.commit()
+        return row
+    loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+    manifest = loaded.manifest if loaded else None
+    row = InstalledPlugin(
+        id=plugin_id,
+        name=(manifest.name if manifest else plugin_id),
+        version=(manifest.version if manifest else "0.0.0"),
+        type=",".join(manifest.type) if manifest else "",
+        enabled=enabled,
+        trust_level=(manifest.trust_level if manifest else "community"),
+        source_repo_id=None,
+        manifest_json="{}",
+    )
+    db.session.add(row)
+    db.session.commit()
+    return row
+
+
 def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) -> Blueprint:
     bp = Blueprint("plugins", __name__, url_prefix="/api/plugins")
 
@@ -26,23 +52,48 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
     def list_installed():
         return jsonify(manager.list_loaded())
 
+    @bp.route("/grouped", methods=["GET"])
+    def list_grouped():
+        """Plugins grouped by type for the Settings → Plugins page.
+        A plugin implementing multiple types appears once per type."""
+        loaded = manager.list_loaded()
+        grouped: dict[str, list] = {}
+        for p in loaded:
+            for t in p["type"]:
+                grouped.setdefault(t, []).append(p)
+        return jsonify(grouped)
+
     @bp.route("/<plugin_id>/enable", methods=["POST"])
     def enable(plugin_id):
         manager.enable_plugin(plugin_id)
-        row = db.session.get(InstalledPlugin, plugin_id)
-        if row:
-            row.enabled = True
-            db.session.commit()
+        _ensure_installed_row(manager, plugin_id, enabled=True)
         return jsonify({"ok": True})
 
     @bp.route("/<plugin_id>/disable", methods=["POST"])
     def disable(plugin_id):
         manager.disable_plugin(plugin_id)
-        row = db.session.get(InstalledPlugin, plugin_id)
-        if row:
-            row.enabled = False
-            db.session.commit()
+        _ensure_installed_row(manager, plugin_id, enabled=False)
         return jsonify({"ok": True})
+
+    @bp.route("/<plugin_id>/priority", methods=["POST"])
+    def set_priority(plugin_id):
+        """Set the user-facing priority override for ordered plugin types.
+        `priority` is a positive int; NULL clears the override (falls back to
+        the manifest priority)."""
+        payload = request.get_json(silent=True) or {}
+        if "priority" not in payload:
+            return jsonify({"error": "priority is required"}), 400
+        raw = payload.get("priority")
+        value = None if raw is None else int(raw)
+        if value is not None and value < 1:
+            return jsonify({"error": "priority must be >= 1"}), 400
+        row = _ensure_installed_row(manager, plugin_id, enabled=True)
+        row.priority_override = value
+        db.session.commit()
+        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        if loaded:
+            loaded.priority_override = value
+        return jsonify({"ok": True, "priority": value})
 
     @bp.route("/<plugin_id>/uninstall", methods=["POST"])
     def uninstall(plugin_id):

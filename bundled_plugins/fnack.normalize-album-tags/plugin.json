@@ -1,0 +1,17 @@
+{
+  "id": "fnack.normalize-album-tags",
+  "name": "Normalize Album Tags",
+  "version": "1.0.0",
+  "type": ["library_task"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:NormalizeAlbumTagsTask",
+  "author": "fnack",
+  "description": "Aligns library tags with the fnack database (album merges, tag normalization, artwork backfill).",
+  "homepage": "",
+  "permissions": ["settings"],
+  "settings_schema": [],
+  "ui": {"slots": []},
+  "dependencies": {},
+  "trust_level": "official"
+}

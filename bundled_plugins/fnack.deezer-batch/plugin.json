@@ -1,0 +1,17 @@
+{
+  "id": "fnack.deezer-batch",
+  "name": "Deezer (batch enrichment)",
+  "version": "1.0.0",
+  "type": ["metadata_provider"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:DeezerBatchProvider",
+  "author": "fnack",
+  "description": "Deezer discography/metadata enrichment for sync & import. Authoritative, tried first. The interactive /api/search-artist route stays core.",
+  "homepage": "",
+  "permissions": ["network"],
+  "settings_schema": [],
+  "ui": {"slots": []},
+  "dependencies": {},
+  "trust_level": "official"
+}

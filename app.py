@@ -140,6 +140,7 @@ socketio = SocketIO(app, async_mode="gevent", cors_allowed_origins="*")
 # load_all() runs inside the startup app_context block below.
 plugin_manager = init_plugin_manager(
     plugins_dir=str(Path(os.environ.get("CONFIG_DIR", "/config")) / "plugins"),
+    bundled_plugins_dir=os.environ.get("BUNDLED_PLUGINS_DIR", "/app/bundled_plugins"),
     core_version=__version__,
 )
 
@@ -1783,11 +1784,44 @@ def _periodic_discography_sync_loop():
 # Database initialization and startup
 with app.app_context():
     db.create_all()
-    # Plugin framework (INTEGRATION.md §2/§3): load installed plugins whose
-    # InstalledPlugin.enabled is True, then register the REST blueprint.
+    # Plugin framework (INTEGRATION.md §2/§3 + PHASE1 §3): auto-install bundled
+    # plugins (official, enabled-by-default, no marketplace visit needed), then
+    # load installed plugins whose InstalledPlugin.enabled is True, then
+    # register the REST blueprint.
     from plugins.registry import PluginRegistry
     from plugins.api import build_plugins_blueprint
     from plugins.models import InstalledPlugin
+
+    # PHASE1 §3: idempotent auto-install — bundled plugins ship inside the
+    # image; any bundled plugin without an InstalledPlugin row gets one
+    # (trust_level=official, enabled=True, source_repo_id=None). Existing rows
+    # are untouched (a user who disabled a bundled plugin stays disabled).
+    bundled_root = Path(os.environ.get("BUNDLED_PLUGINS_DIR", "/app/bundled_plugins"))
+    if bundled_root.exists():
+        for pdir in bundled_root.iterdir():
+            manifest_path = pdir / "plugin.json"
+            if not pdir.is_dir() or not manifest_path.exists():
+                continue
+            try:
+                import json as _json
+                manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                logger.exception("[PLUGINS] Could not read bundled manifest %s", manifest_path)
+                continue
+            pid = manifest.get("id")
+            if not pid or InstalledPlugin.query.get(pid):
+                continue
+            db.session.add(InstalledPlugin(
+                id=pid,
+                name=manifest.get("name", pid),
+                version=manifest.get("version", "0.0.0"),
+                type=",".join(manifest.get("type", [])),
+                enabled=True,
+                trust_level="official",
+                source_repo_id=None,
+                manifest_json=_json.dumps(manifest),
+            ))
+        db.session.commit()
 
     enabled_ids = {p.id for p in InstalledPlugin.query.filter_by(enabled=True).all()}
     plugin_manager.load_all(enabled_ids=enabled_ids)
@@ -1837,6 +1871,11 @@ with app.app_context():
                 pass
             try:
                 conn.execute(db.text("ALTER TABLE tracks ADD COLUMN caution_info TEXT"))
+            except Exception:
+                pass
+            # Phase 1: user-facing priority override (plugins)
+            try:
+                conn.execute(db.text("ALTER TABLE installed_plugins ADD COLUMN priority_override INTEGER"))
             except Exception:
                 pass
             conn.commit()
