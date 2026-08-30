@@ -395,7 +395,10 @@ class PluginManager:
 plugin_manager: Optional[PluginManager] = None
 
 
-def init_plugin_manager(plugins_dir: str, core_version: str) -> PluginManager:
+def init_plugin_manager(plugins_dir: str, core_version: str,
+                        bundled_plugins_dir: str | Path | None = None) -> PluginManager:
     global plugin_manager
-    plugin_manager = PluginManager(plugins_dir=plugins_dir, core_version=core_version)
+    plugin_manager = PluginManager(plugins_dir=plugins_dir,
+                                   bundled_plugins_dir=bundled_plugins_dir,
+                                   core_version=core_version)
     return plugin_manager
