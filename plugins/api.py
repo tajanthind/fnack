@@ -114,6 +114,44 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
             return jsonify({"error": str(exc)}), 400
         return jsonify({"ok": True})
 
+    @bp.route("/<plugin_id>/file", methods=["POST"])
+    def upload_file(plugin_id):
+        """Generic per-plugin file upload (Brief 4 §3 — the reusable upload
+        tool). Each plugin stores its OWN copy under its private data dir;
+        this is shared *tooling*, not shared *credentials* (option 2, no
+        cross-plugin credential linking). Body: multipart `file` (+ optional
+        `key` naming the schema field). Stores at
+        <config>/plugins/<plugin_id>/data/<key> and records the path in the
+        plugin's settings under `key` so the auto-generated form shows it."""
+        if "file" not in request.files:
+            return jsonify({"error": "no file provided"}), 400
+        f = request.files["file"]
+        if not f.filename:
+            return jsonify({"error": "empty filename"}), 400
+        key = (request.form.get("key") or "").strip() or f"file_{f.filename}"
+        from pathlib import Path as _Path
+        data_dir = _Path(manager.plugins_dir) / plugin_id / "data"
+        try:
+            data_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return jsonify({"error": f"cannot create plugin data dir: {e}"}), 500
+        dest = data_dir / f.filename
+        try:
+            f.save(str(dest))
+        except OSError as e:
+            return jsonify({"error": f"failed to save file: {e}"}), 500
+        # Record the stored path in the plugin's settings (per-plugin copy).
+        row = db.session.get(PluginSetting, (plugin_id, key))
+        if row is None:
+            db.session.add(PluginSetting(plugin_id=plugin_id, key=key, value=str(dest)))
+        else:
+            row.value = str(dest)
+        db.session.commit()
+        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        if loaded:
+            manager.call_safe(loaded, "on_settings_changed", {key: str(dest)})
+        return jsonify({"ok": True, "key": key, "path": str(dest)})
+
     @bp.route("/<plugin_id>/settings", methods=["GET"])
     def get_settings(plugin_id):
         rows = PluginSetting.query.filter_by(plugin_id=plugin_id).all()

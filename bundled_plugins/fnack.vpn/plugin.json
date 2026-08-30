@@ -2,7 +2,7 @@
   "id": "fnack.vpn",
   "name": "VPN (WireGuard/OpenVPN)",
   "version": "1.0.0",
-  "type": ["vpn"],
+  "type": ["vpn", "ui_extension"],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:VPNPluginImpl",
@@ -11,7 +11,7 @@
   "homepage": "",
   "permissions": ["settings", "filesystem:downloads"],
   "settings_schema": [],
-  "ui": {"slots": []},
+  "ui": {"slots": ["settings_tab"]},
   "dependencies": {},
   "trust_level": "official"
 }
