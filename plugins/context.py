@@ -37,7 +37,8 @@ class LibraryContext:
             return None
         return {
             "id": t.id, "title": t.title, "isrc": t.isrc, "status": t.status,
-            "file_path": t.file_path, "duration": t.duration, "bitrate": t.bitrate,
+            "file_path": t.file_path, "local_path": t.local_path,
+            "duration": t.duration, "bitrate": t.bitrate,
             "caution": t.caution, "caution_info": t.caution_info,
         }
 

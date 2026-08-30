@@ -132,7 +132,9 @@ class SubsonicPlugin(ServerExtensionPlugin):
                 return self._err(40, "Wrong username or password")
             track_id = int((request.args.get("id") or "0").replace("tr-", ""))
             t = self.context.library.get_track(track_id)
-            path = t.get("local_path") or t.get("file_path") if t else None
+            if not t:
+                return self._err(70, "Song not found")
+            path = t.get("local_path") or t.get("file_path")
             if not path or not os.path.isfile(str(path)):
                 return self._err(70, "File not found")
             ext = os.path.splitext(str(path))[1].lower()
