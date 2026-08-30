@@ -462,20 +462,32 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
 
     try:
         # Phase 2 (PLUGIN_ARCHITECTURE.md §10 Phase 2): metadata providers are a
-        # priority chain — Deezer batch is authoritative (p10). Try the chain
-        # first; fall back to the direct service call if the plugin is disabled
-        # or missing, so behavior never degrades for existing users.
+        # priority chain — Deezer batch (p10) authoritative, then MusicBrainz
+        # (p20, enrichment-only), Spotify (p30), iTunes (p40). Iterate the
+        # chain in priority order; the FIRST provider that returns a usable
+        # discography wins. Fall back to the direct Deezer service call only if
+        # the whole chain yields nothing (e.g. all providers disabled), so
+        # behavior never degrades for existing users.
         disco = None
+        served_by = None
         try:
             from plugins.manager import plugin_manager as _pm
             if _pm is not None:
                 for provider in _pm.get_metadata_providers():
-                    if provider.manifest.id != "fnack.deezer-batch":
+                    # Deezer is keyed by the artist's deezer id; other
+                    # discography-capable providers are keyed by artist name.
+                    key = str(deezer_artist_id) if provider.manifest.id == "fnack.deezer-batch" else artist.name
+                    try:
+                        d = provider.get_artist_discography(key)
+                    except Exception:
+                        logger.debug("[METADATA] provider %s discography failed, trying next",
+                                     provider.manifest.id, exc_info=True)
                         continue
-                    d = provider.get_artist_discography(str(deezer_artist_id))
                     if d and d.get("albums"):
                         disco = d
-                    break
+                        served_by = provider.manifest.id
+                        logger.info("[METADATA] Discography served by %s for '%s'", served_by, artist.name)
+                        break
         except Exception:
             logger.debug("[DEEZER] plugin chain skipped, using direct call", exc_info=True)
         if not disco:
@@ -489,21 +501,23 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                 include_singles=options.get("include_singles", True),
                 include_compilations=options.get("include_compilations", False),
             )
+            served_by = "core:deezer_service"
 
         # MusicBrainz enrichment (additive only; regional artists are
         # negative-cached and never probed; fail-soft on any error). Routed
-        # through the chain's musicbrainz plugin when enabled (pacing + cache
-        # live inside the service module), else the direct call.
+        # through any chain provider that exposes `enrich` (the musicbrainz
+        # plugin carries the 1 req/s pacing + cache via its service module);
+        # else the direct call.
         try:
             enriched = False
             from plugins.manager import plugin_manager as _pm2
             if _pm2 is not None:
                 for provider in _pm2.get_metadata_providers():
-                    if provider.manifest.id == "fnack.musicbrainz" and hasattr(provider, "enrich"):
-                        provider.enrich(disco.get("artist_name") or artist.name, disco.get("albums") or [])
-                        enriched = True
-                    if provider.manifest.id != "fnack.musicbrainz":
+                    enrich_fn = getattr(provider, "enrich", None)
+                    if not enrich_fn:
                         continue
+                    enrich_fn(disco.get("artist_name") or artist.name, disco.get("albums") or [])
+                    enriched = True
                     break
             if not enriched:
                 from services.musicbrainz_service import enrich_albums
