@@ -675,15 +675,33 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
 
         # Step 1: Resolve Spotify link (ISRC-first) if SpotiFLAC is enabled and not already resolved from library
         if not verified_file and enable_spotiflac and job_id not in cancel_requested_jobs:
-            spotify_url = resolve_spotify_url(
-                track_title,
-                artist_name,
-                album_name,
-                isrc=isrc,
-                track_number=track_num,
-                client_id=spotify_client_id,
-                client_secret=spotify_client_secret,
-            )
+            spotify_url = None
+            from plugins.manager import plugin_manager as _pm
+            if _pm is not None:
+                for provider in _pm.get_metadata_providers():
+                    if hasattr(provider, "resolve_track_url") and callable(provider.resolve_track_url):
+                        try:
+                            spotify_url = provider.resolve_track_url(
+                                track_title,
+                                artist_name,
+                                album_name=album_name,
+                                isrc=isrc,
+                                track_number=track_num,
+                            )
+                            if spotify_url:
+                                break
+                        except Exception as e:
+                            logger.debug("[METADATA] %s resolve_track_url failed: %s", getattr(provider, "manifest", provider), e)
+            if not spotify_url:
+                spotify_url = resolve_spotify_url(
+                    track_title,
+                    artist_name,
+                    album_name,
+                    isrc=isrc,
+                    track_number=track_num,
+                    client_id=spotify_client_id,
+                    client_secret=spotify_client_secret,
+                )
         else:
             spotify_url = None
 

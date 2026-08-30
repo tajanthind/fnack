@@ -470,12 +470,13 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
             from plugins.manager import plugin_manager as _pm
             if _pm is not None:
                 for provider in _pm.get_metadata_providers():
-                    if provider.manifest.id != "fnack.deezer-batch":
-                        continue
-                    d = provider.get_artist_discography(str(deezer_artist_id))
-                    if d and d.get("albums"):
-                        disco = d
-                    break
+                    try:
+                        d = provider.get_artist_discography(str(deezer_artist_id))
+                        if d and d.get("albums"):
+                            disco = d
+                            break
+                    except Exception as e:
+                        logger.debug("[METADATA] %s get_artist_discography failed: %s", getattr(provider, "manifest", provider), e)
         except Exception:
             logger.debug("[DEEZER] plugin chain skipped, using direct call", exc_info=True)
         if not disco:
@@ -490,21 +491,19 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                 include_compilations=options.get("include_compilations", False),
             )
 
-        # MusicBrainz enrichment (additive only; regional artists are
-        # negative-cached and never probed; fail-soft on any error). Routed
-        # through the chain's musicbrainz plugin when enabled (pacing + cache
-        # live inside the service module), else the direct call.
+        # Metadata enrichment (e.g. MusicBrainz). Routed through all enabled
+        # metadata providers that provide an enrich() hook in priority order.
         try:
             enriched = False
             from plugins.manager import plugin_manager as _pm2
             if _pm2 is not None:
                 for provider in _pm2.get_metadata_providers():
-                    if provider.manifest.id == "fnack.musicbrainz" and hasattr(provider, "enrich"):
-                        provider.enrich(disco.get("artist_name") or artist.name, disco.get("albums") or [])
-                        enriched = True
-                    if provider.manifest.id != "fnack.musicbrainz":
-                        continue
-                    break
+                    if hasattr(provider, "enrich") and callable(provider.enrich):
+                        try:
+                            provider.enrich(disco.get("artist_name") or artist.name, disco.get("albums") or [])
+                            enriched = True
+                        except Exception as e:
+                            logger.debug("[METADATA] %s enrich failed: %s", getattr(provider, "manifest", provider), e)
             if not enriched:
                 from services.musicbrainz_service import enrich_albums
                 enrich_albums(disco.get("artist_name") or artist.name, disco.get("albums") or [])
