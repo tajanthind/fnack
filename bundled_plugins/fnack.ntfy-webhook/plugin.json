@@ -1,0 +1,23 @@
+{
+  "id": "fnack.ntfy-webhook",
+  "name": "ntfy Webhook",
+  "version": "1.0.0",
+  "type": ["event_hook"],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:NtfyWebhookPlugin",
+  "author": "fnack",
+  "description": "Sends ntfy.sh (or self-hosted ntfy) push notifications when downloads complete, fail, or AcoustID flags a track.",
+  "homepage": "",
+  "permissions": ["network", "settings"],
+  "settings_schema": [
+    {"key": "server_url", "type": "string", "default": "https://ntfy.sh"},
+    {"key": "topic", "type": "string", "required": true},
+    {"key": "on_job_completed", "type": "boolean", "default": "true"},
+    {"key": "on_job_failed", "type": "boolean", "default": "true"},
+    {"key": "on_caution_flagged", "type": "boolean", "default": "true"}
+  ],
+  "ui": {"slots": []},
+  "dependencies": {},
+  "trust_level": "official"
+}

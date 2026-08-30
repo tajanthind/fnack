@@ -207,11 +207,43 @@ class PluginManager:
         except InvalidVersion as exc:
             raise PluginLoadError(f"bad version string: {exc}") from exc
 
+    def _install_plugin_deps(self, plugin_dir: Path, manifest: PluginManifest) -> Optional[Path]:
+        """Install the plugin's declared python dependencies into a private
+        site-packages-style dir (Phase 4 dep isolation). Returns the deps dir
+        path or None. pip failure -> PluginLoadError, never a crash."""
+        deps = (manifest.dependencies or {}).get("python") or []
+        if not deps:
+            return None
+        deps_dir = plugin_dir / "deps"
+        marker = deps_dir / ".installed"
+        if marker.exists():
+            return deps_dir
+        deps_dir.mkdir(parents=True, exist_ok=True)
+        import subprocess
+        cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+               "--target", str(deps_dir), *deps]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                raise PluginLoadError(
+                    f"{manifest.id} dependencies failed to install: {result.stderr[-400:]}"
+                )
+        except PluginLoadError:
+            raise
+        except Exception as exc:
+            raise PluginLoadError(f"{manifest.id} dependency install failed: {exc}") from exc
+        marker.touch()
+        return deps_dir
+
     def _import_module(self, plugin_dir: Path, manifest: PluginManifest):
         module_file = manifest.entry_point.split(":")[0].replace(".", "/") + ".py"
         module_path = plugin_dir / module_file
         if not module_path.exists():
             raise PluginLoadError(f"entry_point module not found: {module_path}")
+
+        # Phase 4: per-plugin dependency isolation — the deps dir goes at the
+        # FRONT of sys.path only for this plugin's import/lifetime.
+        deps_dir = self._install_plugin_deps(plugin_dir, manifest)
 
         module_name = f"fnack_plugin_{manifest.id.replace('.', '_').replace('-', '_')}"
         spec = importlib.util.spec_from_file_location(module_name, module_path)
@@ -219,10 +251,24 @@ class PluginManager:
             raise PluginLoadError(f"could not build import spec for {module_path}")
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
+        old_front = None
         try:
+            if deps_dir is not None and str(deps_dir) not in sys.path:
+                # Front for this import; also appended permanently below so
+                # lazy runtime imports inside plugin methods still resolve.
+                sys.path.insert(0, str(deps_dir))
+                old_front = str(deps_dir)
             spec.loader.exec_module(module)
         except Exception as exc:  # noqa: BLE001 - deliberately broad, this is untrusted code
             raise PluginLoadError(f"plugin raised on import: {exc}") from exc
+        finally:
+            if old_front is not None:
+                try:
+                    sys.path.remove(old_front)
+                except ValueError:
+                    pass
+        if deps_dir is not None and str(deps_dir) not in sys.path:
+            sys.path.append(str(deps_dir))  # keep for the plugin's runtime lifetime
         return module
 
     # -- lifecycle ------------------------------------------------------------

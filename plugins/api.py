@@ -196,4 +196,69 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         registry.remove_repository(repo_id)
         return jsonify({"ok": True})
 
+    # -- config-as-code (Phase 4, PLUGIN_ARCHITECTURE.md §11) ----------------
+
+    _SECRET_KEYS = {"api_key", "token", "webhook_url", "client_secret", "password", "secret"}
+
+    @bp.route("/export", methods=["GET"])
+    def export_config():
+        """Export full plugin state (repos + installed + settings, secrets
+        redacted) as one JSON blob — pairs with the DEPLOY.md move story."""
+        repos = [{"url": r.url, "enabled": r.enabled}
+                 for r in PluginRepository.query.all()]
+        plugins = {}
+        for row in InstalledPlugin.query.all():
+            settings = {s.key: s.value for s in PluginSetting.query.filter_by(plugin_id=row.id).all()}
+            redacted = {
+                k: ("<redacted>" if k.lower() in _SECRET_KEYS or "secret" in k.lower() or "token" in k.lower() or "key" in k.lower() else v)
+                for k, v in settings.items()
+            }
+            plugins[row.id] = {
+                "version": row.version,
+                "enabled": row.enabled,
+                "trust_level": row.trust_level,
+                "settings": redacted,
+                "priority_override": row.priority_override,
+            }
+        return jsonify({"repos": repos, "plugins": plugins})
+
+    @bp.route("/import", methods=["POST"])
+    def import_config():
+        """Re-add repos, install pinned versions, restore enabled/settings/
+        priority from an exported blob. Secrets are NOT restored (redacted in
+        export) — the user must re-enter them."""
+        payload = request.get_json(silent=True) or {}
+        added, installed = [], []
+        try:
+            for r in payload.get("repos", []):
+                if r.get("url"):
+                    repo = registry.add_repository(r["url"])
+                    repo.enabled = bool(r.get("enabled", True))
+                    added.append(r["url"])
+            db.session.commit()
+            for pid, meta in (payload.get("plugins") or {}).items():
+                version = meta.get("version")
+                try:
+                    row = registry.install(pid, version)
+                    row.enabled = bool(meta.get("enabled", True))
+                    if meta.get("priority_override") is not None:
+                        row.priority_override = meta["priority_override"]
+                    for k, v in (meta.get("settings") or {}).items():
+                        if v == "<redacted>":
+                            continue
+                        s = db.session.get(PluginSetting, (pid, k))
+                        if s is None:
+                            db.session.add(PluginSetting(plugin_id=pid, key=k, value=str(v)))
+                        else:
+                            s.value = str(v)
+                    db.session.commit()
+                    installed.append(pid)
+                except RegistryError as exc:
+                    # Plugin not in any added repo — skip, don't abort the batch.
+                    db.session.rollback()
+            return jsonify({"ok": True, "repos_added": added, "plugins_installed": installed})
+        except Exception as exc:
+            db.session.rollback()
+            return jsonify({"error": str(exc)}), 400
+
     return bp

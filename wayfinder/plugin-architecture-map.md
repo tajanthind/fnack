@@ -125,6 +125,14 @@ phase.
 5. **Phase 4** (`plugin-architecture/phase-4-stretch`): auth_provider (SSO),
    Discord + ntfy event_hook pack, Subsonic server_extension, per-plugin Python
    dep isolation, signed manifests.
+   **DONE (in PR)** — queue events job_completed/job_failed/caution_flagged;
+   Discord + ntfy webhook plugins (live-verified: Discord embed captured on
+   real download); config-as-code export/import (secrets redacted);
+   reverse-proxy-auth opt-in (zero-auth preserved by default, verified
+   401-without/200-with header); Subsonic API (ping/getArtists/getAlbumList2/
+   stream — verified FLAC streaming + token auth); per-plugin dep isolation
+   (pip --target + sys.path). Signed manifests + update channels deferred
+   (post-Phase-4 optional).
 
 ## Not yet specified
 
