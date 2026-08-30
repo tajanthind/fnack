@@ -86,6 +86,10 @@ phase.
    manager + blueprint + `plugin_slot()` helper in `app.py`, emit the additive
    events in `queue_service.py`, adapt `tests/run_smoke_test.py` to the real
    models, write `docs/plugins/AUTHORING.md`. Zero behavior change.
+   **DONE** — PR #1 open; 8 commits; smoke test + image build green in CI
+   (PR checks CLEAN); live-container E2E verified (discovery/import/listing,
+   plugins dir creation, config restored pristine). Awaiting user merge
+   before Phase 1 (HARNESS §0).
 2. **Phase 1** (`plugin-architecture/phase-1-bundled-plugins`): bundle the
    downloaders/metadata-providers/fingerprint/scan_trigger/vpn/library_task
    plugins, auto-install on startup with `trust_level=official`, Settings →
