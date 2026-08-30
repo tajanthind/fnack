@@ -405,6 +405,28 @@ User chose: **new top-level tab/page** (not a settings.html card).
 
 ---
 
+### Live finding (validated on the real container, this run)
+
+**Manual-install enable does not persist across restart.** The scaffold's
+`POST /api/plugins/<id>/enable` / `disable` endpoints call
+`manager.enable_plugin(...)` (in-memory) and then only
+`row.enabled = ...` **if an `InstalledPlugin` row already exists**
+(`db.session.get(InstalledPlugin, plugin_id)` then `if row:`). A manual
+folder install (`/config/plugins/<id>/`) has NO row, so enabling it works
+for the current process but reverts on restart. Verified live: install
+example plugin → enable → `enabled: True` → restart → `enabled: False`.
+
+Implications for Phase 1:
+1. **Bundled auto-install (§2) closes this for bundled plugins** — rows are
+   created at startup, so bundled enable/disable persists. Good.
+2. **For manual/third-party installs**, the enable endpoint (and the Phase 1
+   Settings→Plugins toggle) must CREATE the `InstalledPlugin` row when
+   missing (`enabled=True`, trust from manifest, source_repo_id=None) rather
+   than silently no-op'ing. This is a small scaffold change to make during
+   Phase 1 (in `plugins/api.py` enable/disable + the UI toggle path).
+3. `/api/plugins/<id>/health` returns `{"error": "not installed"}` for
+   row-less manual installs — after (2), rows always exist so health works.
+
 ## 6. Summary (priority order for Phase 1 implementation)
 
 1. Manager: `bundled_plugins_dir` discovery + auto-install rows (§2) — the
