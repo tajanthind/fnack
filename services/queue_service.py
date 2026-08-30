@@ -706,7 +706,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
             duration=expected_duration,
             spotify_url=spotify_url,
             deezer_id=track_deezer_id,
-            disc_number=track.disc_number or 1,
+            disc_number=disc_num or 1,   # captured before the dedup app_context closed
             track_number=track_num,
         )
 
