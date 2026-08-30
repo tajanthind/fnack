@@ -24,10 +24,9 @@ class AcoustIDFingerprinter(FingerprintPlugin):
         """Read the legacy global AppSetting value into the plugin setting
         (one-time migration for users who had a key set before Phase 1)."""
         try:
-            from models import AppSetting, db
-            old = db.session.get(AppSetting, "acoustid_api_key")
-            if old and old.value and not self.context.settings.get("api_key"):
-                self.context.settings.set("api_key", old.value)
+            old_val = self.context.library.get_setting("acoustid_api_key")
+            if old_val and not self.context.settings.get("api_key"):
+                self.context.settings.set("api_key", old_val)
         except Exception:
             pass
 
@@ -35,14 +34,8 @@ class AcoustIDFingerprinter(FingerprintPlugin):
         """Write the plugin setting back to the legacy AppSetting row so
         services.acoustid_service.is_enabled()/identify() keep working."""
         try:
-            from models import AppSetting, db
             key = (self.context.settings.get("api_key") or "").strip()
-            row = db.session.get(AppSetting, "acoustid_api_key")
-            if row is None:
-                db.session.add(AppSetting(key="acoustid_api_key", value=key))
-            else:
-                row.value = key
-            db.session.commit()
+            self.context.library.set_setting("acoustid_api_key", key)
         except Exception:
             pass
 

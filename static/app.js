@@ -1842,17 +1842,22 @@ async function savePluginPriority(pluginId, value) {
 // Settings-tab forms contributed by plugins call this (e.g. fnack.navidrome).
 async function savePluginSettings(pluginId) {
   const payload = {};
-  // Generic per-plugin settings form (rendered from settings_schema).
+  // Generic per-plugin settings form (rendered from settings_schema in modal).
   document.querySelectorAll(`#confirmModalBody .plugin-settings-field`).forEach((el) => {
     const key = el.dataset.key;
     if (!key) return;
     if (el.type === 'checkbox') payload[key] = el.checked ? 'true' : 'false';
     else payload[key] = el.value;
   });
-  // Plugin-contributed settings_tab forms (e.g. fnack.navidrome).
-  document.querySelectorAll(`[id^="plugin-${pluginId}-"]`).forEach((el) => {
-    const key = el.id.replace(`plugin-${pluginId}-`, '');
-    payload[key] = el.value;
+  // Plugin-contributed settings_tab forms (e.g. fnack.navidrome, fnack.subsonic).
+  const cleanId = pluginId.replace(/\./g, '\\.');
+  const idPrefix1 = `plugin-${pluginId}-`;
+  const idPrefix2 = `plugin-${pluginId.replace('.', '_')}-`;
+  document.querySelectorAll(`[id^="plugin-${cleanId}-"], [id^="plugin-${pluginId.replace('.', '_')}-"]`).forEach((el) => {
+    const prefix = el.id.startsWith(idPrefix1) ? idPrefix1 : idPrefix2;
+    const key = el.id.slice(prefix.length);
+    if (el.type === 'checkbox') payload[key] = el.checked ? 'true' : 'false';
+    else payload[key] = el.value;
   });
   try {
     const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/settings`, {

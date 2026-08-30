@@ -69,15 +69,18 @@ class SubsonicPlugin(ServerExtensionPlugin):
         bp = blueprint
 
         @bp.route("/rest/ping", methods=["GET", "POST"])
+        @bp.route("/rest/ping.view", methods=["GET", "POST"])
         @bp.route("/rest/getLicense", methods=["GET", "POST"])
+        @bp.route("/rest/getLicense.view", methods=["GET", "POST"])
         def ping_license():
-            if not self._auth_ok(request.args):
+            if not self._auth_ok(request.values):
                 return self._err(40, "Wrong username or password")
             return self._ok({"type": "fnack", "validUntil": "2035-01-01T00:00:00Z"})
 
         @bp.route("/rest/getArtists", methods=["GET", "POST"])
+        @bp.route("/rest/getArtists.view", methods=["GET", "POST"])
         def get_artists():
-            if not self._auth_ok(request.args):
+            if not self._auth_ok(request.values):
                 return self._err(40, "Wrong username or password")
             artists = self.context.library.list_artists()
             index = {}
@@ -90,8 +93,9 @@ class SubsonicPlugin(ServerExtensionPlugin):
             ]}})
 
         @bp.route("/rest/getAlbumList2", methods=["GET", "POST"])
+        @bp.route("/rest/getAlbumList2.view", methods=["GET", "POST"])
         def get_album_list():
-            if not self._auth_ok(request.args):
+            if not self._auth_ok(request.values):
                 return self._err(40, "Wrong username or password")
             albums = self.context.library.list_albums(limit=500)
             return self._ok({"albumList2": {"album": [
@@ -101,10 +105,11 @@ class SubsonicPlugin(ServerExtensionPlugin):
             ]}})
 
         @bp.route("/rest/getAlbum", methods=["GET", "POST"])
+        @bp.route("/rest/getAlbum.view", methods=["GET", "POST"])
         def get_album():
-            if not self._auth_ok(request.args):
+            if not self._auth_ok(request.values):
                 return self._err(40, "Wrong username or password")
-            album_id = int((request.args.get("id") or "0").replace("al-", ""))
+            album_id = int((request.values.get("id") or "0").replace("al-", ""))
             album = self.context.library.get_album(album_id)
             if not album:
                 return self._err(70, "Album not found")
@@ -116,10 +121,11 @@ class SubsonicPlugin(ServerExtensionPlugin):
             }})
 
         @bp.route("/rest/getSong", methods=["GET", "POST"])
+        @bp.route("/rest/getSong.view", methods=["GET", "POST"])
         def get_song():
-            if not self._auth_ok(request.args):
+            if not self._auth_ok(request.values):
                 return self._err(40, "Wrong username or password")
-            track_id = int((request.args.get("id") or "0").replace("tr-", ""))
+            track_id = int((request.values.get("id") or "0").replace("tr-", ""))
             t = self.context.library.get_track(track_id)
             if not t:
                 return self._err(70, "Song not found")
@@ -127,10 +133,11 @@ class SubsonicPlugin(ServerExtensionPlugin):
                                       "duration": int(t.get("duration") or 0)}})
 
         @bp.route("/rest/stream", methods=["GET", "POST"])
+        @bp.route("/rest/stream.view", methods=["GET", "POST"])
         def stream():
-            if not self._auth_ok(request.args):
+            if not self._auth_ok(request.values):
                 return self._err(40, "Wrong username or password")
-            track_id = int((request.args.get("id") or "0").replace("tr-", ""))
+            track_id = int((request.values.get("id") or "0").replace("tr-", ""))
             t = self.context.library.get_track(track_id)
             if not t:
                 return self._err(70, "Song not found")
@@ -141,18 +148,19 @@ class SubsonicPlugin(ServerExtensionPlugin):
             return send_file(str(path), mimetype=_MIME.get(ext, "application/octet-stream"))
 
         @bp.route("/rest/getCoverArt", methods=["GET", "POST"])
+        @bp.route("/rest/getCoverArt.view", methods=["GET", "POST"])
         def cover():
-            if not self._auth_ok(request.args):
+            if not self._auth_ok(request.values):
                 return self._err(40, "Wrong username or password")
-            album_id = int((request.args.get("id") or "0").replace("al-", ""))
+            album_id = int((request.values.get("id") or "0").replace("al-", ""))
             album = self.context.library.get_album(album_id)
-            # cover.jpg lives in the album's local dir (the DB has no direct
-            # cover path via context); fall back to 404-style error.
             return self._err(70, "Cover not found (not yet indexed)")
 
         @bp.route("/rest/getScanStatus", methods=["GET", "POST"])
+        @bp.route("/rest/getScanStatus.view", methods=["GET", "POST"])
         @bp.route("/rest/startScan", methods=["GET", "POST"])
+        @bp.route("/rest/startScan.view", methods=["GET", "POST"])
         def scan():
-            if not self._auth_ok(request.args):
+            if not self._auth_ok(request.values):
                 return self._err(40, "Wrong username or password")
             return self._ok({"scanStatus": {"scanning": False, "count": 0}})

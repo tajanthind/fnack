@@ -20,9 +20,7 @@ _KEYS = ("navidrome_url", "navidrome_user", "navidrome_token",
 
 class NavidromePlugin(ScanTriggerPlugin):
     def _global_setting(self, key: str) -> str:
-        from models import AppSetting, db
-        row = db.session.get(AppSetting, key)
-        return (row.value or "").strip() if row else ""
+        return (self.context.library.get_setting(key, "") or "").strip()
 
     def _settings_from_global(self):
         """One-time: pull legacy AppSetting values into the plugin store."""
@@ -35,15 +33,9 @@ class NavidromePlugin(ScanTriggerPlugin):
     def _settings_to_global(self):
         """Write plugin settings back to the global rows (source of truth for
         the existing navidrome_service)."""
-        from models import AppSetting, db
         for key in _KEYS:
             val = (self.context.settings.get(key) or "").strip()
-            row = db.session.get(AppSetting, key)
-            if row is None:
-                db.session.add(AppSetting(key=key, value=val))
-            else:
-                row.value = val
-        db.session.commit()
+            self.context.library.set_setting(key, val)
 
     def on_load(self):
         self._settings_from_global()
@@ -60,15 +52,15 @@ class NavidromePlugin(ScanTriggerPlugin):
             return False, "Navidrome scan failed (no app context)"
 
     def test_connection(self) -> tuple[bool, str]:
-        url = self.context.settings.get("url") or self._global_setting("navidrome_url")
-        user = self.context.settings.get("user") or self._global_setting("navidrome_user")
-        token = self.context.settings.get("token") or self._global_setting("navidrome_token")
+        url = self.context.settings.get("navidrome_url") or self._global_setting("navidrome_url")
+        user = self.context.settings.get("navidrome_user") or self._global_setting("navidrome_user")
+        token = self.context.settings.get("navidrome_token") or self._global_setting("navidrome_token")
         return test_navidrome_connection(url, user, token)
 
     def _render_settings_tab(self, context_data: dict) -> str:
-        url = self.context.settings.get("url") or self._global_setting("navidrome_url")
-        user = self.context.settings.get("user") or self._global_setting("navidrome_user")
-        db_path = self.context.settings.get("db_path") or self._global_setting("navidrome_db_path")
+        url = self.context.settings.get("navidrome_url") or self._global_setting("navidrome_url")
+        user = self.context.settings.get("navidrome_user") or self._global_setting("navidrome_user")
+        db_path = self.context.settings.get("navidrome_db_path") or self._global_setting("navidrome_db_path")
         return f"""
 <div class="card bg-dark-card border-0 shadow-sm mb-4">
   <div class="card-body p-4">
@@ -77,19 +69,19 @@ class NavidromePlugin(ScanTriggerPlugin):
     <form onsubmit="savePluginSettings('fnack.navidrome'); return false;">
       <div class="mb-3">
         <label class="form-label small text-secondary">Server URL</label>
-        <input type="text" class="form-control" id="plugin-navidrome-url" value="{url}" placeholder="http://192.168.1.10:4533">
+        <input type="text" class="form-control" id="plugin-fnack.navidrome-navidrome_url" value="{url}" placeholder="http://192.168.1.10:4533">
       </div>
       <div class="mb-3">
         <label class="form-label small text-secondary">Username</label>
-        <input type="text" class="form-control" id="plugin-navidrome-user" value="{user}" placeholder="admin">
+        <input type="text" class="form-control" id="plugin-fnack.navidrome-navidrome_user" value="{user}" placeholder="admin">
       </div>
       <div class="mb-3">
         <label class="form-label small text-secondary">Password / Token</label>
-        <input type="password" class="form-control" id="plugin-navidrome-token" placeholder="••••••••">
+        <input type="password" class="form-control" id="plugin-fnack.navidrome-navidrome_token" placeholder="••••••••">
       </div>
       <div class="mb-3">
         <label class="form-label small text-secondary">Navidrome DB path (album-split repair)</label>
-        <input type="text" class="form-control" id="plugin-navidrome-db_path" value="{db_path}" placeholder="/mnt/storage/media/config-navidrome/navidrome.db">
+        <input type="text" class="form-control" id="plugin-fnack.navidrome-navidrome_db_path" value="{db_path}" placeholder="/mnt/storage/media/config-navidrome/navidrome.db">
       </div>
       <button type="submit" class="btn btn-brand btn-sm">Save Navidrome Settings</button>
     </form>

@@ -861,6 +861,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     )
                 rel_path = str(final_dest.relative_to(music_dir))
 
+                was_downloaded = bool(track_rec.is_downloaded) if track_rec else False
                 if track_rec:
                     track_rec.is_downloaded = True
                     track_rec.status = "completed"
@@ -911,7 +912,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 # re-downloads of an already-downloaded track don't double-count.
                 try:
                     from services.counters_service import on_track_downloaded
-                    if album_rec and album_rec.artist_id and not track_rec.is_downloaded:
+                    if album_rec and album_rec.artist_id and not was_downloaded:
                         on_track_downloaded(album_rec.artist_id, is_downloaded=True)
                 except Exception:
                     logger.debug("[QUEUE] counter update skipped", exc_info=True)
@@ -1382,6 +1383,7 @@ def download_manual_match_track(
 
             rel_path = str(final_dest.relative_to(music_dir))
 
+            was_downloaded = bool(track_rec.is_downloaded) if track_rec else False
             if track_rec:
                 track_rec.is_downloaded = True
                 track_rec.status = "completed"
@@ -1407,7 +1409,7 @@ def download_manual_match_track(
             # move when the flag actually changes (research §2.3).
             try:
                 from services.counters_service import on_track_downloaded
-                if album_rec and album_rec.artist_id and not track_rec.is_downloaded:
+                if album_rec and album_rec.artist_id and not was_downloaded:
                     on_track_downloaded(album_rec.artist_id, is_downloaded=True)
             except Exception:
                 logger.debug("[QUEUE] counter update skipped", exc_info=True)

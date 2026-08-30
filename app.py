@@ -182,7 +182,7 @@ socketio = SocketIO(app, async_mode="gevent", cors_allowed_origins="*")
 # load_all() runs inside the startup app_context block below.
 plugin_manager = init_plugin_manager(
     plugins_dir=str(Path(os.environ.get("CONFIG_DIR", "/config")) / "plugins"),
-    bundled_plugins_dir=os.environ.get("BUNDLED_PLUGINS_DIR", "/app/bundled_plugins"),
+    bundled_plugins_dir=os.environ.get("BUNDLED_PLUGINS_DIR", str(Path(__file__).resolve().parent / "bundled_plugins")),
     core_version=__version__,
 )
 
@@ -2005,7 +2005,7 @@ with app.app_context():
     # image; any bundled plugin without an InstalledPlugin row gets one
     # (trust_level=official, enabled=True, source_repo_id=None). Existing rows
     # are untouched (a user who disabled a bundled plugin stays disabled).
-    bundled_root = Path(os.environ.get("BUNDLED_PLUGINS_DIR", "/app/bundled_plugins"))
+    bundled_root = Path(os.environ.get("BUNDLED_PLUGINS_DIR", str(Path(__file__).resolve().parent / "bundled_plugins")))
     if bundled_root.exists():
         for pdir in bundled_root.iterdir():
             manifest_path = pdir / "plugin.json"
@@ -2038,6 +2038,61 @@ with app.app_context():
                 manifest_json=_json.dumps(manifest),
             ))
         db.session.commit()
+
+    # Pre-configure the Official fnack Plugins repository so Marketplace and
+    # Repositories work out of the box (with cached index pre-populated).
+    try:
+        from plugins.models import PluginRepository
+        official_repo_url = os.environ.get(
+            "OFFICIAL_PLUGINS_REPO_URL",
+            "https://raw.githubusercontent.com/tajanthind/fnack-plugins/main/index.json",
+        )
+        official_repo = PluginRepository.query.filter_by(url=official_repo_url).first()
+        if official_repo is None:
+            cached_plugins = []
+            if bundled_root.exists():
+                for pdir in sorted(bundled_root.iterdir()):
+                    manifest_path = pdir / "plugin.json"
+                    if not pdir.is_dir() or not manifest_path.exists():
+                        continue
+                    try:
+                        import json as _json
+                        m = _json.loads(manifest_path.read_text(encoding="utf-8"))
+                        p_ver = m.get("version", "1.0.0")
+                        cached_plugins.append({
+                            "id": m.get("id"),
+                            "name": m.get("name"),
+                            "latest_version": p_ver,
+                            "type": m.get("type", []),
+                            "description": m.get("description", ""),
+                            "permissions": m.get("permissions", []),
+                            "trust_level": m.get("trust_level", "official"),
+                            "versions": {
+                                p_ver: {
+                                    "download_url": f"https://github.com/tajanthind/fnack-plugins/releases/download/v{p_ver}/{m.get('id')}.zip",
+                                    "min_core_version": m.get("min_core_version", "0.2.0"),
+                                }
+                            }
+                        })
+                    except Exception:
+                        pass
+            import json as _json
+            from datetime import datetime, timezone
+            index_data = {
+                "name": "Official fnack Plugins",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "plugins": cached_plugins,
+            }
+            db.session.add(PluginRepository(
+                name="Official fnack Plugins",
+                url=official_repo_url,
+                enabled=True,
+                cached_index_json=_json.dumps(index_data),
+                last_synced_at=datetime.now(timezone.utc),
+            ))
+            db.session.commit()
+    except Exception:
+        logger.exception("[PLUGINS] Could not seed official plugin repository")
 
     enabled_ids = {p.id for p in InstalledPlugin.query.filter_by(enabled=True).all()}
     plugin_manager.load_all(enabled_ids=enabled_ids)
@@ -2114,8 +2169,9 @@ socketio.start_background_task(_periodic_discography_sync_loop)
 # inline version slowed every request while it scanned/tagged the library.
 def _run_maintenance_subprocess():
     try:
+        script_path = str(Path(__file__).resolve().parent / "scripts" / "run_maintenance.py")
         subprocess.Popen(
-            [sys.executable, "/app/scripts/run_maintenance.py"],
+            [sys.executable, script_path],
             stdout=open("/tmp/fnack-maintenance.log", "a"),
             stderr=subprocess.STDOUT,
             start_new_session=True,

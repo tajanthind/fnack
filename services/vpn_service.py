@@ -145,7 +145,7 @@ def _restore_docker_dns() -> None:
 _RESOLV_BACKUP = "/tmp/fnack-resolv-backup.conf"
 _PROXY_PORT = int(os.environ.get("FNACK_VPN_PROXY_PORT", "1080"))
 _PROXY_UID = 2001
-_PROXY_SCRIPT = "/app/scripts/http_proxy.py"
+_PROXY_SCRIPT = str(Path(__file__).resolve().parent.parent / "scripts" / "http_proxy.py")
 _PROXY_ENV = {
     "HTTP_PROXY": f"http://127.0.0.1:{_PROXY_PORT}",
     "HTTPS_PROXY": f"http://127.0.0.1:{_PROXY_PORT}",

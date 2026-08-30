@@ -92,13 +92,28 @@ class LibraryContext:
                  "is_downloaded": t.is_downloaded, "bitrate": t.bitrate,
                  "size_bytes": t.size_bytes} for t in rows]
 
+    def get_setting(self, key: str, default=None) -> Optional[str]:
+        """Read a core AppSetting value (or default)."""
+        from models import AppSetting, db
+        row = db.session.get(AppSetting, key)
+        return row.value if row else default
+
+    def set_setting(self, key: str, value) -> None:
+        """Write a core AppSetting value."""
+        from models import AppSetting, db
+        row = db.session.get(AppSetting, key)
+        if row is None:
+            row = AppSetting(key=key, value=str(value))
+            db.session.add(row)
+        else:
+            row.value = str(value)
+        db.session.commit()
+
     def get_api_key(self) -> str:
         """The configured M2M API key ('' if unset). Exposed so server-
         extension plugins (e.g. Subsonic) can authenticate clients against
         the same key without touching models directly."""
-        from models import AppSetting, db
-        row = db.session.get(AppSetting, "api_key")
-        return (row.value or "").strip() if row else ""
+        return self.get_setting("api_key", "").strip()
 
     def update_track_status(self, track_id: int, status: str, error_message: str = None) -> None:
         from models import Track, db
@@ -163,12 +178,17 @@ class FSContext:
     private per-plugin scratch space nothing else can see."""
 
     def __init__(self, plugin_id: str, permissions: list[str]):
+        import os
         self._permissions = set(permissions)
-        self.downloads_dir = Path("/downloads")
-        self.music_dir = Path("/music")
-        self.data_dir = Path("/config/plugins") / plugin_id / "data"
+        self.downloads_dir = Path(os.environ.get("DOWNLOADS_DIR", "/downloads"))
+        self.music_dir = Path(os.environ.get("MUSIC_DIR", "/music"))
+        config_dir = Path(os.environ.get("CONFIG_DIR", "/config"))
+        self.data_dir = config_dir / "plugins" / plugin_id / "data"
         if "filesystem:downloads" in self._permissions or "filesystem:music" in self._permissions:
-            self.data_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                self.data_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
 
     def _check(self, permission: str):
         if permission not in self._permissions:

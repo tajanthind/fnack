@@ -18,8 +18,9 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, "/app")
-sys.path.insert(0, "/app/services")
+root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, root_dir)
+sys.path.insert(0, os.path.join(root_dir, "services"))
 
 from flask import Flask  # noqa: E402
 from models import Album, AppSetting, Track, db  # noqa: E402

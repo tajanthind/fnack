@@ -58,6 +58,13 @@ with app.app_context():
         '"description":"test bundled","permissions":["network"],'
         '"settings_schema":[],"ui":{"slots":[]},"dependencies":{},"trust_level":"official"}'
     )
+    (bundled_plugin_dir / "plugin.py").write_text(
+        "from plugins.base import DownloaderPlugin, DownloadResult, TrackRef\n"
+        "class SpotiFLACDownloader(DownloaderPlugin):\n"
+        "    priority = 10\n"
+        "    def can_handle(self, track: TrackRef) -> bool: return True\n"
+        "    def download(self, track, dest_dir, options): return DownloadResult(success=True)\n"
+    )
 
     manager = init_plugin_manager(
         plugins_dir=str(Path(__file__).resolve().parent.parent / "examples" / "plugins"),
@@ -65,11 +72,13 @@ with app.app_context():
         core_version=__version__,
     )
     manager.load_all()  # no enabled_ids filter -> enable everything discovered
-    print("Loaded plugins:", manager.list_loaded())
-    assert manager.list_loaded()[0]["enabled"] is True, "plugin should be enabled"
-    assert manager.list_loaded()[0]["id"] == "dev.fnack.example-quality-flag", (
+    loaded_list = manager.list_loaded()
+    print("Loaded plugins:", loaded_list)
+    loaded_map = {p["id"]: p for p in loaded_list}
+    assert "dev.fnack.example-quality-flag" in loaded_map, (
         "expected the bundled example plugin to be discovered"
     )
+    assert loaded_map["dev.fnack.example-quality-flag"]["enabled"] is True, "plugin should be enabled"
 
     # Simulate the queue emitting the after-download event (INTEGRATION.md step 5)
     manager.event_bus.emit("track.after_download", track_id=track_id)
@@ -105,7 +114,8 @@ with app.app_context():
 
     r = client.post("/api/plugins/dev.fnack.example-quality-flag/disable")
     print("Disable:", r.status_code, r.json)
-    assert manager.list_loaded()[0]["enabled"] is False
+    loaded_map = {p["id"]: p for p in manager.list_loaded()}
+    assert loaded_map["dev.fnack.example-quality-flag"]["enabled"] is False
 
     # Phase 1: enable creates the missing InstalledPlugin row (persists across
     # restart) — the live finding from the Phase 0 validation run.
@@ -119,7 +129,8 @@ with app.app_context():
     r = client.post("/api/plugins/dev.fnack.example-quality-flag/priority", json={"priority": 7})
     print("Priority POST:", r.status_code, r.json)
     assert r.status_code == 200 and r.json.get("priority") == 7
-    assert manager.list_loaded()[0]["priority_override"] == 7
+    loaded_map = {p["id"]: p for p in manager.list_loaded()}
+    assert loaded_map["dev.fnack.example-quality-flag"]["priority_override"] == 7
 
     r = client.post("/api/plugins/dev.fnack.example-quality-flag/priority", json={"priority": None})
     assert r.status_code == 200 and r.json.get("priority") is None

@@ -76,3 +76,4 @@ fnack-logs.txt
 
 # Plugin framework: installed plugin data dirs (never committed)
 config/plugins/*/data/
+tests/bundled_fixture/
