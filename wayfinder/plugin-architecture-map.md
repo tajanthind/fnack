@@ -78,6 +78,25 @@ phase.
   research — full manifest inventory, plugin class skeletons, auto-install
   flow, UI structure, behavior-preservation callouts (findings in
   `research/phase-1-bundled-plugins-design.md`).
+- [Reconciliation: metadata chain must be real priority iteration (Brief 3)](tickets/plugin-metadata-chain-reconciliation.md):
+  the sync/import discography fetch was per-plugin-ID special-casing (only
+  `fnack.deezer-batch` ever served). Fixed to iterate
+  `get_metadata_providers()` in priority order (Deezer p10 → MusicBrainz p20
+  → Spotify p30 → iTunes p40) with the FIRST provider returning a usable
+  discography winning, and the direct Deezer service call only as a last
+  resort. `fnack.itunes.get_artist_discography` now returns a real album
+  list (keyed by artist name) so the fallback is genuine when Deezer is
+  disabled. The downloader loop was audited: it IS a real chain (no
+  hardcoded-ID skip; `engine_gates` is legacy-setting gating only).
+- [Decide: bundled-plugin single source of truth](tickets/plugin-bundled-sync-of-truth.md):
+  `tajanthind/fnack-plugins/plugins/` is the SOURCE of truth for first-party
+  plugin code; fnack's `bundled_plugins/` is the vendored copy baked into the
+  image. Release process: edit + package in `fnack-plugins` (run
+  `package_plugins.py` to regenerate `index.json` + `dist/`), then copy the
+  same plugin sources into fnack's `bundled_plugins/` before tagging a core
+  release. Verified identical today (all 17 plugins byte-for-byte). The
+  auto-seeded official repo URL points at the fnack-plugins `index.json`.
+
 
 ## Roadmap (execution carried into the map)
 
@@ -86,13 +105,7 @@ phase.
    manager + blueprint + `plugin_slot()` helper in `app.py`, emit the additive
    events in `queue_service.py`, adapt `tests/run_smoke_test.py` to the real
    models, write `docs/plugins/AUTHORING.md`. Zero behavior change.
-   **DONE** — PR #1 open; 11 commits; smoke test + image build green in CI
-   (PR checks CLEAN); live-container E2E verified (discovery/import/listing,
-   full REST lifecycle enable/settings/disable, plugins dir creation, config
-   restored pristine); full validation run on the real library this session
-   (6 artists intact, stats identical, zero errors). Live finding recorded:
-   manual-install enable needs InstalledPlugin row creation (Phase 1 fix,
-   research §6). Awaiting user merge before Phase 1 (HARNESS §0).
+   **DONE** — merged 2026-08-30 as PR #1 (commit `454696c`); smoke test + image build green in CI (PR checks CLEAN); live-container E2E verified (discovery/import/listing, full REST lifecycle enable/settings/disable, plugins dir creation, config restored pristine); validation run on the real library (6 artists intact, stats identical, zero errors). Live finding recorded: manual-install enable needs InstalledPlugin row creation (fixed in Phase 1, research §6).
 2. **Phase 1** (`plugin-architecture/phase-1-bundled-plugins`): bundle the
    downloaders/metadata-providers/fingerprint/scan_trigger/vpn/library_task
    plugins, auto-install on startup with `trust_level=official`, Settings →

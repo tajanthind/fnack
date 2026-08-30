@@ -97,10 +97,17 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
 
     @bp.route("/<plugin_id>/uninstall", methods=["POST"])
     def uninstall(plugin_id):
-        # Bundled plugins ship in the image and auto-install on every boot —
-        # uninstalling one would just resurrect it. Disable instead.
-        if plugin_id in manager.bundled_ids():
-            return jsonify({"error": "Bundled plugins cannot be uninstalled — disable it instead (it auto-installs on boot)."}), 400
+        # Bundled plugins ship in the image and would auto-install again on
+        # boot — record a tombstone so auto-install skips them, then remove.
+        was_bundled = plugin_id in manager.bundled_ids()
+        if was_bundled:
+            from models import AppSetting
+            row = db.session.get(AppSetting, f"plugin.uninstalled.{plugin_id}")
+            if row is None:
+                db.session.add(AppSetting(key=f"plugin.uninstalled.{plugin_id}", value="1"))
+            else:
+                row.value = "1"
+            db.session.commit()
         try:
             registry.uninstall(plugin_id)
         except RegistryError as exc:
@@ -154,10 +161,22 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         version = payload.get("version")
         if not plugin_id:
             return jsonify({"error": "plugin_id is required"}), 400
-        if plugin_id in manager.bundled_ids():
+        # Reinstalling a user-uninstalled bundled plugin is fine (tombstone
+        # gets cleared below); only block installing an ACTIVE bundled id
+        # from a repo.
+        from models import AppSetting
+        tombstone_key = f"plugin.uninstalled.{plugin_id}"
+        is_tombstoned = db.session.get(AppSetting, tombstone_key) is not None
+        if plugin_id in manager.bundled_ids() and not is_tombstoned:
             return jsonify({"error": "This plugin is bundled with fnack — no need to install it from a repository."}), 400
         try:
             row = registry.install(plugin_id, version)
+            # Clear the tombstone so auto-install considers it installed again.
+            if is_tombstoned:
+                t = db.session.get(AppSetting, tombstone_key)
+                if t:
+                    db.session.delete(t)
+                    db.session.commit()
         except RegistryError as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"ok": True, "id": row.id, "version": row.version})

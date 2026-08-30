@@ -259,19 +259,26 @@ def import_artist_folder(
     if not deezer_artist_id:
         return {"error": f"Could not resolve Deezer artist for folder '{folder_name}'"}
 
-    # Fetch discography (Phase 2: through the deezer-batch plugin chain when
-    # enabled, else the direct call — behavior-preserving).
+    # Fetch discography (Phase 2: metadata provider chain in priority order —
+    # Deezer p10 authoritative, then MusicBrainz p20 / Spotify p30 / iTunes p40.
+    # First provider with a usable discography wins; direct service call is the
+    # last resort, so behavior never degrades for existing users).
     disco = None
     try:
         from plugins.manager import plugin_manager as _pm
         if _pm is not None:
             for provider in _pm.get_metadata_providers():
-                if provider.manifest.id != "fnack.deezer-batch":
+                key = str(deezer_artist_id) if provider.manifest.id == "fnack.deezer-batch" else folder_name
+                try:
+                    d = provider.get_artist_discography(key)
+                except Exception:
+                    logger.debug("[METADATA] provider %s discography failed, trying next",
+                                 provider.manifest.id, exc_info=True)
                     continue
-                d = provider.get_artist_discography(str(deezer_artist_id))
                 if d and d.get("albums"):
                     disco = d
-                break
+                    logger.info("[METADATA] Discography served by %s for '%s'", provider.manifest.id, folder_name)
+                    break
     except Exception:
         logger.debug("[DEEZER] plugin chain skipped, using direct call", exc_info=True)
     if not disco:
@@ -292,11 +299,11 @@ def import_artist_folder(
         from plugins.manager import plugin_manager as _pm2
         if _pm2 is not None:
             for provider in _pm2.get_metadata_providers():
-                if provider.manifest.id == "fnack.musicbrainz" and hasattr(provider, "enrich"):
-                    provider.enrich(disco.get("artist_name") or folder_name, disco.get("albums") or [])
-                    enriched = True
-                if provider.manifest.id != "fnack.musicbrainz":
+                enrich_fn = getattr(provider, "enrich", None)
+                if not enrich_fn:
                     continue
+                enrich_fn(disco.get("artist_name") or folder_name, disco.get("albums") or [])
+                enriched = True
                 break
         if not enriched:
             from services.musicbrainz_service import enrich_albums

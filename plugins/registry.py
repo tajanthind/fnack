@@ -93,6 +93,17 @@ class PluginRegistry:
             bundled_ids = {d.name for d in self.manager.discover_bundled()}
         except Exception:
             pass
+        # A bundled plugin the user uninstalled is marked with a tombstone —
+        # it must NOT count as "bundled/installed" so the Marketplace can
+        # reinstall it.
+        from models import AppSetting, db
+        try:
+            tombstoned = {
+                row.key.removeprefix("plugin.uninstalled.")
+                for row in AppSetting.query.filter(AppSetting.key.like("plugin.uninstalled.%")).all()
+            }
+        except Exception:
+            tombstoned = set()
         merged: dict[str, dict] = {}
         for repo in PluginRepository.query.filter_by(enabled=True).all():
             if not repo.cached_index_json:
@@ -103,7 +114,7 @@ class PluginRegistry:
                 entry["source_repo_id"] = repo.id
                 entry["source_repo_name"] = repo.name
                 entry["installed_version"] = installed_ids.get(entry.get("id"))
-                entry["bundled"] = entry.get("id") in bundled_ids
+                entry["bundled"] = entry.get("id") in bundled_ids and entry.get("id") not in tombstoned
                 merged[entry["id"]] = entry
         return list(merged.values())
 

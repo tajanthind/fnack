@@ -117,7 +117,21 @@ class PluginManager:
     def load_all(self, enabled_ids: Optional[set[str]] = None) -> None:
         """`enabled_ids` normally comes from InstalledPlugin.enabled rows in
         the DB; pass None to enable everything discovered (useful in tests)."""
+        # User-uninstalled bundled plugins (tombstoned via the uninstall
+        # endpoint) must not even load — otherwise they reappear in the
+        # Installed list as disabled after every reboot.
+        try:
+            from models import AppSetting, db
+            tombstones = {
+                row.key.removeprefix("plugin.uninstalled.")
+                for row in AppSetting.query.filter(AppSetting.key.like("plugin.uninstalled.%")).all()
+            }
+        except Exception:
+            tombstones = set()
         for plugin_dir in self.discover():
+            if plugin_dir.name in tombstones:
+                logger.info("[PLUGINS] Skipping load of %s (uninstalled by user)", plugin_dir.name)
+                continue
             try:
                 loaded = self.load_plugin(plugin_dir)
             except PluginLoadError as exc:
