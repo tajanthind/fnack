@@ -23,6 +23,7 @@ class YtDlpDownloader(DownloaderPlugin):
 
     def download(self, track: TrackRef, dest_dir: Path, options: dict) -> DownloadResult:
         output_format = options.get("format") or "opus"
+        cookies_path = options.get("cookies_path")
         # The legacy spotdl default was flac + youtube; yt-dlp's own default is
         # opus + youtube_music. options carries whichever entry point called us.
         ok, file, err = download_track_ytdlp(
@@ -32,6 +33,7 @@ class YtDlpDownloader(DownloaderPlugin):
             artist_name=track.artist_name,
             track_title=track.title,
             expected_duration=track.duration,
+            cookies_path=cookies_path,
             prefer_youtube_music=(options.get("audio_source", "youtube_music") != "youtube"),
         )
         return DownloadResult(
