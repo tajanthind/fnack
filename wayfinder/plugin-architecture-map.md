@@ -120,6 +120,18 @@ phase.
   Y' for version-incompatible plugins (load_error in list + greyed
   Marketplace); §5 descriptions confirmed on Installed + Marketplace.
   Live-verified end to end.
+- [Phase 7: core-hardcoding audit, Lidarr extraction, 0.2.x-parity trim, scheduled failed retry](tickets/plugin-phase-7-core-trim-and-hardcoding.md):
+  §1a metadata chain = false alarm (stale blob again — fix live on main);
+  §1b Lidarr emulation extracted to bundled `fnack.lidarr` plugin
+  (`library_source` + `server_extension`, routes behind the plugin,
+  `services/lidarr_service.py` deleted, context methods added); §1c
+  navidrome test/scan now go through `get_scan_triggers()` (fallback direct),
+  yt-dlp cookies classified core (download-pipeline config surface);
+  §2 was stale (Phase 6 shipped it); §3 `default_disabled` set (subsonic,
+  discord/ntfy webhooks, reverse-proxy-auth — 0.2.x non-parity plugins now
+  opt-in); §5 `_retry_all_failed()` + `_periodic_failed_retry_loop` +
+  `retry_interval` setting (default daily) + settings UI. Smoke test green
+  (multi-type fixture covers the new plugin shape).
 
 
 ## Roadmap (execution carried into the map)
@@ -170,6 +182,20 @@ phase.
    stream — verified FLAC streaming + token auth); per-plugin dep isolation
    (pip --target + sys.path). Signed manifests + update channels deferred
    (post-Phase-4 optional).
+6. **Phase 7** (`plugin-architecture/phase-7-core-trim-and-hardcoding`):
+   core-hardcoding audit (HARNESS BRIEF 7). §1a metadata chain re-verified
+   (false alarm — fix live on main); §1b Lidarr emulation extracted to
+   bundled `fnack.lidarr` plugin (`library_source` + `server_extension`,
+   routes behind the plugin, `services/lidarr_service.py` deleted, context
+   methods added); §1c navidrome test/scan routed through
+   `get_scan_triggers()` (direct fallback kept), yt-dlp cookies classified
+   core; §2 already shipped (Phase 6); §3 `default_disabled` set —
+   plugins that didn't exist in 0.2.x (subsonic, discord/ntfy webhooks,
+   reverse-proxy-auth) now ship disabled-by-default, still listed opt-in;
+   §5 scheduled failed-song retry (`_retry_all_failed()` shared with the
+   manual button, `_periodic_failed_retry_loop`, `retry_interval` default
+   daily, settings UI). Smoke test green (multi-type fixture); PR #10.
+   **DONE (in PR)** — merged by user, container redeployed for live E2E.
 
 ## Not yet specified
 

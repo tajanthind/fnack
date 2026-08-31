@@ -1,0 +1,30 @@
+{
+  "id": "fnack.lidarr",
+  "name": "Lidarr Integration",
+  "version": "1.0.0",
+  "type": [
+    "library_source",
+    "server_extension"
+  ],
+  "api_version": "^1.0",
+  "min_core_version": "0.2.0",
+  "entry_point": "plugin:LidarrPlugin",
+  "author": "fnack",
+  "description": "Lets Lidarr use fnack as its indexer + download client (Newznab/Torznab + SABnzbd emulation). Grabs expand into fnack's library and download like any other track.",
+  "homepage": "",
+  "permissions": [
+    "settings"
+  ],
+  "settings_schema": [
+    {
+      "key": "api_key",
+      "type": "secret",
+      "default": ""
+    }
+  ],
+  "ui": {
+    "slots": []
+  },
+  "dependencies": {},
+  "trust_level": "official"
+}

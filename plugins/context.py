@@ -20,6 +20,8 @@ import requests
 
 from plugins.events import EventBus
 
+log = logging.getLogger("fnack.plugins.context")
+
 
 # --------------------------------------------------------------------------
 # Library access — the ORM-insulation layer
@@ -114,6 +116,178 @@ class LibraryContext:
         extension plugins (e.g. Subsonic) can authenticate clients against
         the same key without touching models directly."""
         return self.get_setting("api_key", "").strip()
+
+    def get_or_create_api_key(self) -> str:
+        """The M2M API key, generating + persisting one if none is set
+        (moved from the former `services/lidarr_service.py` — Lidarr-style
+        integrations authenticate against this key). fnack stays fully open
+        (zero required auth) until a key is set."""
+        import secrets
+        key = self.get_setting("api_key", "").strip()
+        if key:
+            return key
+        key = secrets.token_hex(16)
+        self.set_setting("api_key", key)
+        return key
+
+    def search_albums(self, query: str, limit: int = 10) -> list[dict]:
+        """Live album search (deezer, core-direct). Same underlying function
+        the interactive search endpoint uses — the confirmed search split
+        keeps interactive/search paths core, calling the bundled provider
+        directly rather than through the plugin chain."""
+        from services.deezer_service import search_album
+        return search_album(query, limit=limit)
+
+    def search_tracks(self, query: str, limit: int = 10) -> list[dict]:
+        """Live track search (deezer, core-direct — see search_albums)."""
+        from services.deezer_service import search_track
+        return search_track(query, limit=limit)
+
+    def get_album_info(self, album_id: int) -> dict:
+        """Deezer album metadata (core-direct; used by the Lidarr plugin to
+        build friendly release names)."""
+        from services.deezer_service import get_album_info
+        return get_album_info(album_id)
+
+    def get_track_info(self, track_id: int) -> dict:
+        """Deezer track metadata (core-direct; see get_album_info)."""
+        from services.deezer_service import get_track_info
+        return get_track_info(track_id)
+
+    def queue_lidarr_grab(self, item_type: str, item_id: int) -> list[int]:
+        """Expand a Lidarr grab (a Deezer album or track id) into the local
+        library — creates Artist / Album / Track rows and queues one
+        DownloadJob per track so the queue worker downloads them like any
+        other track. Returns the created/queued job ids (moved verbatim from
+        the former `services/lidarr_service.py::_create_lidarr_grab_job`)."""
+        from services.deezer_service import get_album_tracks, get_album_info, get_track_info
+        from models import Album, Artist, DownloadJob, Track, db
+
+        job_ids: list = []
+
+        if item_type == "track":
+            info = get_track_info(item_id)
+            artist_name = info.get("artist_name") or "Unknown Artist"
+            track_title = info.get("title") or "Unknown Track"
+            album_title = info.get("album_title") or track_title
+            album_deezer_id = info.get("album_id")
+            cover_url = None
+            year = None
+            record_type = "single"
+            tracks_to_queue = [{
+                "id": item_id,
+                "title": track_title,
+                "track_position": 1,
+                "disk_number": 1,
+                "duration": float(info.get("duration") or 0),
+            }]
+        else:
+            info = get_album_info(item_id)
+            artist_name = info.get("artist_name") or "Unknown Artist"
+            album_title = info.get("title") or "Unknown Album"
+            album_deezer_id = info.get("id") or item_id
+            cover_url = info.get("cover_url")
+            year = info.get("year")
+            record_type = info.get("record_type") or "album"
+            tracks_to_queue = get_album_tracks(item_id)
+
+        if not tracks_to_queue:
+            log.warning("[LIDARR] Grab for %s %d returned no tracks", item_type, item_id)
+            return []
+
+        artist = Artist.query.filter_by(name=artist_name).first()
+        if not artist:
+            artist = Artist(
+                spotify_id=f"lidarr:{artist_name}",
+                name=artist_name,
+                source="lidarr",
+                monitored=True,
+            )
+            db.session.add(artist)
+            db.session.flush()
+
+        album = None
+        if album_deezer_id:
+            album = Album.query.filter_by(artist_id=artist.id, deezer_id=str(album_deezer_id)).first()
+        if not album:
+            album = Album(
+                artist_id=artist.id,
+                name=album_title,
+                year=year,
+                cover_url=cover_url,
+                deezer_id=str(album_deezer_id) if album_deezer_id else None,
+                record_type=record_type,
+            )
+            db.session.add(album)
+            db.session.flush()
+
+        for t in tracks_to_queue:
+            track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()
+            if not track:
+                track = Track(
+                    album_id=album.id,
+                    artist_id=artist.id,
+                    title=t["title"],
+                    track_number=t.get("track_position") or 0,
+                    disc_number=t.get("disk_number") or 1,
+                    duration=t.get("duration"),
+                    deezer_id=str(t["id"]),
+                    status="missing",
+                )
+                db.session.add(track)
+                db.session.flush()
+
+            existing = DownloadJob.query.filter_by(track_id=track.id, status="queued").first()
+            if existing:
+                job_ids.append(existing.id)
+                continue
+
+            job = DownloadJob(
+                track_id=track.id,
+                album_id=album.id,
+                artist_id=artist.id,
+                item_type="track",
+                album_spotify_id=str(album.deezer_id or ""),
+                album_name=album.name,
+                album_type=album.record_type,
+                album_url="",
+                cover_url=album.cover_url,
+                status="queued",
+                source="lidarr",
+            )
+            track.status = "queued"
+            db.session.add(job)
+            db.session.flush()
+            job_ids.append(job.id)
+
+        album.is_downloaded = False
+        db.session.commit()
+        log.info("[LIDARR] Grab expanded: %d track job(s) queued for '%s - %s'", len(job_ids), artist_name, album_title)
+        return job_ids
+
+    def list_download_jobs(self, statuses: list) -> list[dict]:
+        """DownloadJobs in the given statuses, as plain dicts (SABnzbd
+        queue/history emulation)."""
+        from models import DownloadJob
+        jobs = DownloadJob.query.filter(DownloadJob.status.in_(statuses)).all()
+        return [{
+            "id": j.id,
+            "album_name": j.album_name,
+            "status": j.status,
+            "progress": j.progress,
+            "artist_name": j.artist.name if j.artist else "Unknown",
+            "source": j.source,
+        } for j in jobs]
+
+    def cancel_download_job(self, job_id: int) -> bool:
+        """Cancel a DownloadJob (SABnzbd delete emulation)."""
+        from models import DownloadJob, db
+        j = db.session.get(DownloadJob, job_id)
+        if not j:
+            return False
+        j.status = "cancelled"
+        db.session.commit()
+        return True
 
     def update_track_status(self, track_id: int, status: str, error_message: str = None) -> None:
         from models import Track, db

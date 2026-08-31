@@ -108,7 +108,7 @@ caution reason and contributes a badge to the track row. Copy it to start.
 | `ui_extension` | Contribute UI into a named slot | `render_slot` (or purely declarative via `ui.slots`) |
 | `event_hook` | React to core events, no other interface | nothing required — subscribe in `on_load` |
 | `auth_provider` | SSO / reverse-proxy auth (planned, Phase 4) | *interface lands with implementation* |
-| `library_source` | Source of artists/albums to monitor (planned) | *interface lands with implementation* |
+| `library_source` | Source of artists/albums to monitor (the mirror of `downloader`) | `list_artists` (+ optional `poll`) — see `fnack.lidarr` |
 | `conflict_resolver` | Decide between duplicate/conflicting files (planned) | *interface lands with implementation* |
 | `recommendation` | Suggest artists/albums/tracks (planned) | *interface lands with implementation* |
 
@@ -296,8 +296,20 @@ you get. There is no `db`, no `app`, no `models` import.
 | `context.library` | `get_album(album_id) -> dict\|None` | Read an album (id, name, year, is_downloaded). | — |
 | `context.library` | `get_artist(artist_id) -> dict\|None` | Read an artist (id, name, monitored). | — |
 | `context.library` | `list_missing_tracks(limit=500) -> list` | Tracks with status "missing". | — |
+| `context.library` | `list_artists() -> list` | All artists (id, name, image_url). | — |
+| `context.library` | `list_albums(artist_id=None, limit=500) -> list` | Albums, optionally filtered by artist (id, name, year, artist_id, cover_url, is_downloaded). | — |
+| `context.library` | `list_tracks(album_id=None, limit=1000) -> list` | Tracks, optionally filtered by album (id, title, track_number, disc_number, duration, file_path, local_path, is_downloaded, bitrate, size_bytes). | — |
+| `context.library` | `get_api_key() -> str` | The configured M2M API key (`''` if unset — zero-auth model means unset = open). | — |
+| `context.library` | `get_or_create_api_key() -> str` | The M2M API key, generating + persisting one if none is set (Lidarr-style integrations authenticate against this). | — |
 | `context.library` | `update_track_status(track_id, status, error_message=None)` | Set a track's status (and optional error). | — |
 | `context.library` | `mark_caution(track_id, reason)` | Flag a track for user attention (badge in the UI); does not change status or delete. | — |
+| `context.library` | `search_albums(query, limit=10) -> list` | Live Deezer album search (same function the interactive search endpoint uses). | — |
+| `context.library` | `search_tracks(query, limit=10) -> list` | Live Deezer track search (same function the interactive search endpoint uses). | — |
+| `context.library` | `get_album_info(album_id) -> dict` | Deezer album metadata (core-direct; e.g. friendly release names). | — |
+| `context.library` | `get_track_info(track_id) -> dict` | Deezer track metadata (core-direct). | — |
+| `context.library` | `queue_lidarr_grab(item_type, item_id) -> list[int]` | Expand a Lidarr grab (Deezer album/track id) into Artist/Album/Track rows + queued DownloadJobs. Returns job ids. | — |
+| `context.library` | `list_download_jobs(statuses) -> list` | DownloadJobs in the given statuses (id, album_name, status, progress, artist_name, source). | — |
+| `context.library` | `cancel_download_job(job_id) -> bool` | Cancel a DownloadJob. | — |
 | `context.settings` | `get(key, default=None)` | Read your plugin's persisted setting. | `settings` |
 | `context.settings` | `set(key, value)` | Write your plugin's persisted setting. | `settings` |
 | `context.settings` | `all() -> dict` | All your plugin's settings. | `settings` |
