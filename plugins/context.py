@@ -40,6 +40,10 @@ class LibraryContext:
             "file_path": t.file_path, "local_path": t.local_path,
             "duration": t.duration, "bitrate": t.bitrate,
             "caution": t.caution, "caution_info": t.caution_info,
+            "album_id": t.album_id, "artist_id": t.artist_id,
+            "track_number": t.track_number, "disc_number": t.disc_number,
+            "size_bytes": t.size_bytes, "genre": t.genre,
+            "file_format": t.file_format, "created_at": t.created_at,
         }
 
     def get_album(self, album_id: int) -> Optional[dict]:
@@ -47,14 +51,17 @@ class LibraryContext:
         a = db.session.get(Album, album_id)
         if not a:
             return None
-        return {"id": a.id, "name": a.name, "year": a.year, "is_downloaded": a.is_downloaded}
+        return {"id": a.id, "name": a.name, "year": a.year,
+                "is_downloaded": a.is_downloaded, "artist_id": a.artist_id,
+                "cover_url": a.cover_url, "local_path": a.local_path}
 
     def get_artist(self, artist_id: int) -> Optional[dict]:
         from models import Artist, db
         a = db.session.get(Artist, artist_id)
         if not a:
             return None
-        return {"id": a.id, "name": a.name, "monitored": a.monitored}
+        return {"id": a.id, "name": a.name, "monitored": a.monitored,
+                "image_url": a.image_url}
 
     def list_missing_tracks(self, limit: int = 500) -> list[dict]:
         from models import Track
@@ -76,7 +83,8 @@ class LibraryContext:
         rows = q.order_by(Album.name).limit(limit).all()
         return [{"id": a.id, "name": a.name, "year": a.year,
                  "artist_id": a.artist_id, "cover_url": a.cover_url,
-                 "is_downloaded": a.is_downloaded} for a in rows]
+                 "is_downloaded": a.is_downloaded, "local_path": a.local_path,
+                 "created_at": a.created_at} for a in rows]
 
     def list_tracks(self, album_id: Optional[int] = None, limit: int = 1000) -> list[dict]:
         """Tracks, optionally filtered by album (Subsonic song list)."""
@@ -90,7 +98,40 @@ class LibraryContext:
                  "disc_number": t.disc_number, "duration": t.duration,
                  "file_path": t.file_path, "local_path": t.local_path,
                  "is_downloaded": t.is_downloaded, "bitrate": t.bitrate,
-                 "size_bytes": t.size_bytes} for t in rows]
+                 "size_bytes": t.size_bytes, "genre": t.genre,
+                 "file_format": t.file_format, "created_at": t.created_at} for t in rows]
+
+    def search_library(self, query: str, artist_limit: int = 20,
+                       album_limit: int = 20, track_limit: int = 20) -> dict:
+        """Case-insensitive substring search across artists, albums and
+        tracks (Subsonic search2/search3). Rows use the same shapes as
+        list_artists/list_albums/list_tracks."""
+        from models import Album, Artist, Track
+        like = f"%{(query or '').strip()}%"
+        if like == "%%":
+            return {"artists": [], "albums": [], "tracks": []}
+        artists = (Artist.query.filter(Artist.name.ilike(like))
+                   .order_by(Artist.name).limit(artist_limit).all())
+        albums = (Album.query.filter(Album.name.ilike(like))
+                  .order_by(Album.name).limit(album_limit).all())
+        tracks = (Track.query.filter(Track.title.ilike(like))
+                  .order_by(Track.title).limit(track_limit).all())
+        return {
+            "artists": [{"id": a.id, "name": a.name, "image_url": a.image_url}
+                        for a in artists],
+            "albums": [{"id": al.id, "name": al.name, "year": al.year,
+                        "artist_id": al.artist_id, "cover_url": al.cover_url,
+                        "is_downloaded": al.is_downloaded, "local_path": al.local_path,
+                        "created_at": al.created_at} for al in albums],
+            "tracks": [{"id": t.id, "title": t.title, "album_id": t.album_id,
+                        "artist_id": t.artist_id, "track_number": t.track_number,
+                        "disc_number": t.disc_number, "duration": t.duration,
+                        "file_path": t.file_path, "local_path": t.local_path,
+                        "is_downloaded": t.is_downloaded, "bitrate": t.bitrate,
+                        "size_bytes": t.size_bytes, "genre": t.genre,
+                        "file_format": t.file_format, "created_at": t.created_at}
+                       for t in tracks],
+        }
 
     def get_setting(self, key: str, default=None) -> Optional[str]:
         """Read a core AppSetting value (or default)."""
