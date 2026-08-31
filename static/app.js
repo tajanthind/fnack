@@ -1739,6 +1739,7 @@ async function loadPluginsPage() {
           <td>
             <div class="fw-bold">${escapeHtml(p.name)}</div>
             <div class="text-secondary small font-monospace">${escapeHtml(p.id)}</div>
+            ${(p.capabilities || []).length ? `<div class="small mt-1">${(p.capabilities || []).map(c => `<span class="badge bg-info-subtle text-info font-monospace me-1" style="font-size: 0.7rem;">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
             ${p.description ? `<div class="text-muted small mt-1 text-truncate" style="max-width: 340px;" title="${escapeHtml(p.description)}">${escapeHtml(p.description)}</div>` : ''}
             ${healthBadge}
             ${loadBadge}
@@ -2058,6 +2059,7 @@ async function loadMarketplacePage() {
               ${pluginTrustBadge(e.trust_level || 'community')}
             </div>
             <p class="text-secondary small mt-2 mb-2">${escapeHtml(e.description || '')}</p>
+            ${(e.capabilities || []).length ? `<div class="small mb-2">${(e.capabilities || []).map(c => `<span class="badge bg-info-subtle text-info font-monospace me-1" style="font-size: 0.7rem;">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
             <div class="small text-secondary">${escapeHtml(e.source_repo_name || '')}</div>
             ${perms}
             <div class="d-flex align-items-center justify-content-between mt-3">

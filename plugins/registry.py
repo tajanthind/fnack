@@ -121,6 +121,11 @@ class PluginRegistry:
                 vinfo = (entry.get("versions") or {}).get(entry.get("latest_version")) or {}
                 entry["min_core_version"] = vinfo.get("min_core_version") or entry.get("min_core_version")
                 entry["api_version"] = vinfo.get("api_version") or entry.get("api_version")
+                # Phase 1: surface declared capabilities in the Marketplace.
+                caps = entry.get("capabilities") or []
+                if isinstance(caps, str):
+                    caps = [caps]
+                entry["capabilities"] = [str(c) for c in caps]
                 merged[entry["id"]] = entry
         return list(merged.values())
 

@@ -26,5 +26,6 @@
     "slots": []
   },
   "dependencies": {},
-  "trust_level": "official"
+  "trust_level": "official",
+  "capabilities": ["server.extension"]
 }

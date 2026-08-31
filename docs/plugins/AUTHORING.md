@@ -88,6 +88,7 @@ caution reason and contributes a badge to the track row. Copy it to start.
 | `homepage` | no | string | URL for more info / issues. |
 | `permissions` | no | list | What your plugin may touch — see the permissions table. |
 | `settings_schema` | no | list | Declares your settings form (auto-generated UI). |
+| `capabilities` | no | list | Capability IDs this plugin provides (Phase 1, MASTER), e.g. `["download.track", "track.resolve"]`. Multiple allowed. When omitted, capabilities are derived from `type` (a `downloader` implies `download.track`, a `metadata_provider` implies `artist.search`/`artist.discography`/`track.metadata`/`album.metadata`, etc.). Unknown IDs warn (forward-compatible) rather than fail. |
 | `ui` | no | dict | `{"slots": ["track_row_actions", ...]}` — which UI slots you contribute to. |
 | `dependencies` | no | dict | `{"python": ["somelib>=2.0"]}` — Python deps (installed into a private area in a later release). |
 | `trust_level` | no | string | `"official"`, `"verified"`, or `"community"` (default `"community"`). Only fnack's own bundled plugins use `official`. |
@@ -135,6 +136,81 @@ Each entry: `{"key": "...", "type": "string|number|boolean|select|secret",
 "default": ..., "required": true|false}` and for `select` an `options` list.
 `secret: true` renders a password field and is stored encrypted-ish (never
 echoed back in full).
+
+### Capabilities (Phase 1, MASTER)
+
+Capabilities are provider-neutral contracts between core and plugins. Core
+asks "who provides `download.track`?" — it never asks "is SpotiFLAC
+installed?". A plugin is the distribution unit; capabilities are runtime
+contracts, and **one plugin can provide many capabilities**:
+
+```json
+{
+  "id": "fnack.navidrome",
+  "type": ["scan_trigger"],
+  "capabilities": ["media.scan", "media.health", "media.connection_test"]
+}
+```
+
+Known capability IDs:
+
+```text
+download.track          download.batch
+track.resolve           track.metadata
+artist.search           artist.discography     album.metadata
+fingerprint.identify
+media.scan              media.health           media.connection_test
+library.task            server.extension       auth.provider
+notification.event      network.route
+```
+
+Rules that matter for authors:
+
+- Declaring a capability is **data, not behavior** — nothing special happens
+  until core or another plugin actually queries the registry.
+- Omitting `capabilities` is fine: they're derived from your `type`
+  (a `downloader` implies `download.track`, a `metadata_provider` implies
+  `artist.search`/`artist.discography`/`track.metadata`/`album.metadata`, a
+  `scan_trigger` implies `media.scan`/`media.connection_test`, a `vpn`
+  implies `network.route`, a `server_extension` implies
+  `server.extension`, an `auth_provider` implies `auth.provider`, an
+  `event_hook` implies `notification.event`). Declare explicitly when you
+  provide something beyond the type default (e.g. `fnack.spotify` declares
+  `track.resolve`).
+- A disabled or uninstalled plugin's capabilities **disappear** — core must
+  not silently fall back to a hidden implementation (that's the point).
+- Priorities stay core: when several plugins provide the same capability,
+  the registry orders them by priority (lowest number first). The per-plugin
+  Priority field in Settings → Plugins overrides the manifest default.
+
+### The public SDK (`fnack.plugin_api`)
+
+Phase 1 formalized a stable public API package that plugins should import
+instead of reaching into `plugins.*` internals:
+
+```python
+from fnack.plugin_api import (
+    DOWNLOAD_TRACK, TRACK_RESOLVE, MEDIA_SCAN,        # capability IDs
+    TrackRef, DownloadRequest, DownloadResult,         # domain models
+    TrackDownloader, FingerprintProvider,              # provider protocols
+    ProviderExecutor,                                  # sync/async invocation
+    CapabilityUnavailable, ProviderError, PluginError, # errors
+    PluginContext, EventBus,                           # context + events
+)
+```
+
+- `fnack.plugin_api.models` re-exports the existing model classes
+  (`TrackRef`, `DownloadResult`, ...) — the same classes every plugin
+  already uses, no duplicates.
+- `fnack.plugin_api.providers` defines the small capability-oriented
+  protocols (`TrackDownloader`, `TrackResolver`, `FingerprintProvider`,
+  `MediaScanner`, `LibraryTaskProvider`, `ServerExtension`, `AuthProvider`,
+  `NotificationProvider`, `NetworkRouter`) and `ProviderExecutor`, the one
+  place that runs provider methods — sync or async (awaitables are detected
+  with `inspect.isawaitable`; never call `asyncio.run()` in your plugin).
+- Errors: raise or handle `CapabilityUnavailable` (no enabled plugin
+  provides a capability — a *valid* state, not a bug) and `ProviderError`
+  (a specific provider failed, with a stable `code` and `retryable` flag).
 
 ---
 

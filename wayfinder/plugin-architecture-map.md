@@ -132,6 +132,18 @@ phase.
   opt-in); §5 `_retry_all_failed()` + `_periodic_failed_retry_loop` +
   `retry_interval` setting (default daily) + settings UI. Smoke test green
   (multi-type fixture covers the new plugin shape).
+- [MASTER Phase 1: Core SDK + Capability Registry](tickets/plugin-phase-1-master-sdk-capability-registry.md):
+  new public `fnack/plugin_api/` SDK (errors/capabilities/models/providers/
+  context/events/version); CapabilityRegistry separate from PluginManager
+  (priority-ordered, priorities stay core); manifest `capabilities` field
+  (multiple per plugin, derived from `type` when omitted) on all 18 bundled
+  plugins + fnack-plugins; PluginManager public API replacing every
+  `_pm._plugins[...]` private access (app.py auth guard + server_extension
+  loop, api.py, queue_service.py); ProviderExecutor (sync + async via
+  `inspect.isawaitable`, central asyncio.run); 5 architecture tests;
+  transitional provider imports/ID-branches frozen to a documented allowlist
+  (each entry names the removal phase). Live-verified: capability inventory
+  correct, zero-auth preserved, disabled plugin capability disappears.
 
 
 ## Roadmap (execution carried into the map)
