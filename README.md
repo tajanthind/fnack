@@ -40,6 +40,7 @@ Automated Lossless Music Discography Downloader, Tagger, and Library Manager.
 - **Tag Normalization**: Strips conflicting casing tags (`ALBUMARTIST`, `AlbumArtist`, `albumartist`) for consistent grouping in Navidrome.
 - **Cover Artwork**: Automatically saves `cover.jpg` / `folder.jpg` in album folders and embeds artwork into audio files (FLAC Picture blocks, ID3 APIC, MP4 covr).
 - **Subsonic API Integration**: Automatically triggers `startScan.view` on your Navidrome server when downloads finish.
+- **fnack *is* a Subsonic server**: the bundled `fnack.subsonic` plugin serves your whole library over `/rest/*` (browse, search3, streaming, cover art, similar songs) for any Subsonic client — Symfonium, DSub, Feishin, Sublime Music, … — with an optional AudioMuse-AI integration for sonic similarity. See [docs/SUBSONIC.md](docs/SUBSONIC.md).
 
 ### Song Identification & Strictness
 - **ISRC Matching**: Prioritizes exact International Standard Recording Code matching.

@@ -1,7 +1,7 @@
 {
   "id": "fnack.subsonic",
   "name": "Subsonic API",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": [
     "server_extension"
   ],
@@ -9,16 +9,32 @@
   "min_core_version": "0.2.0",
   "entry_point": "plugin:SubsonicPlugin",
   "author": "fnack",
-  "description": "Exposes fnack's library as a Subsonic server (Symfonium/DSub/Sublime Music). Auth via the fnack API key; open if no key set.",
+  "description": "Exposes fnack's library as a Subsonic/OpenSubsonic server (Symfonium/DSub/Feishin/...): browse, search, stream, cover art, similar songs. Auth via the fnack API key (open if none set). Optionally proxies similarity to your own AudioMuse-AI instance.",
   "homepage": "",
   "permissions": [
-    "settings"
+    "settings",
+    "network"
   ],
   "settings_schema": [
     {
-      "key": "enabled",
+      "key": "audiomuse_enabled",
       "type": "boolean",
       "default": "false"
+    },
+    {
+      "key": "audiomuse_url",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "key": "audiomuse_api_token",
+      "type": "secret",
+      "default": ""
+    },
+    {
+      "key": "audiomuse_server",
+      "type": "string",
+      "default": ""
     }
   ],
   "ui": {
