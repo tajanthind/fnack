@@ -32,7 +32,52 @@ from plugins.base import PluginBase, PluginManifest
 from plugins.context import PluginContext
 from plugins.events import EventBus
 
+# Phase 1 (MASTER): capability registry is separate from PluginManager.
+from fnack.plugin_api.capabilities import (
+    ALBUM_METADATA,
+    ARTIST_DISCOGRAPHY,
+    ARTIST_SEARCH,
+    AUTH_PROVIDER,
+    DOWNLOAD_TRACK,
+    FINGERPRINT_IDENTIFY,
+    LIBRARY_TASK,
+    MEDIA_CONNECTION_TEST,
+    MEDIA_SCAN,
+    NETWORK_ROUTE,
+    NOTIFICATION_EVENT,
+    SERVER_EXTENSION,
+    TRACK_METADATA,
+    TRACK_RESOLVE,
+    CapabilityRegistry,
+)
+from fnack.plugin_api.errors import CapabilityUnavailable
+from fnack.plugin_api.providers import ProviderExecutor
+
 logger = logging.getLogger("fnack.plugins.manager")
+
+# Fallback capability derivation when a manifest omits `capabilities`:
+# plugin `type` -> capability IDs it implies (MASTER §5, PHASE 1
+# §Manifest capability declaration). Manifests may declare a different or
+# richer set; unknown types derive nothing (warned at load, forward-compatible).
+TYPE_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    "downloader": (DOWNLOAD_TRACK,),
+    "metadata_provider": (ARTIST_SEARCH, ARTIST_DISCOGRAPHY, TRACK_METADATA, ALBUM_METADATA),
+    "fingerprint": (FINGERPRINT_IDENTIFY,),
+    "scan_trigger": (MEDIA_SCAN, MEDIA_CONNECTION_TEST),
+    "library_task": (LIBRARY_TASK,),
+    "vpn": (NETWORK_ROUTE,),
+    "server_extension": (SERVER_EXTENSION,),
+    "auth_provider": (AUTH_PROVIDER,),
+    "event_hook": (NOTIFICATION_EVENT,),
+    # track.resolve is not implied by any current type — plugins that do
+    # URL resolution (e.g. fnack.spotify) declare it explicitly.
+    "lyrics_provider": (),
+    "storage_backend": (),
+    "ui_extension": (),
+    "library_source": (),
+    "conflict_resolver": (),
+    "recommendation": (),
+}
 
 MAX_CONSECUTIVE_FAILURES = 5
 DEFAULT_HOOK_TIMEOUT = 10.0
@@ -60,6 +105,9 @@ class LoadedPlugin:
         self.enabled = False
         self.consecutive_failures = 0
         self.priority_override: Optional[int] = None  # user override, from InstalledPlugin.priority_override
+        # Phase 1: capability IDs this plugin provides (manifest-declared or
+        # type-derived). Filled in by PluginManager.load_plugin.
+        self.capabilities: list[str] = []
 
     def refresh_from_db(self) -> None:
         """Pull persisted per-install state (priority_override) from the DB."""
@@ -85,6 +133,12 @@ class PluginManager:
         self._plugins: dict[str, LoadedPlugin] = {}
         self._lock = threading.Lock()
         self._scheduler_hook = self._default_scheduler_hook
+        # Phase 1: the capability registry — separate concern from plugin
+        # lifecycle. Application services query this; they never name a
+        # provider implementation.
+        self.capability_registry = CapabilityRegistry()
+        # Central sync/async executor (Phase 1 §Async provider executor).
+        self.executor = ProviderExecutor()
         # Brief 6 §4: plugins that failed to load, keyed by plugin id, with
         # the reason (e.g. version mismatch). They must still SHOW in the
         # Installed list as "Unsupported / failed to load" instead of
@@ -178,6 +232,10 @@ class PluginManager:
             self._plugins[manifest.id] = loaded
 
         loaded.refresh_from_db()  # pull priority_override + any persisted state
+        # Phase 1: compute this plugin's capabilities (manifest-declared or
+        # derived from its type(s)); actual registry registration happens on
+        # enable so the registry only ever reflects ENABLED providers.
+        loaded.capabilities = self._resolve_capabilities(loaded)
         self.call_safe(loaded, "on_load")
         return loaded
 
@@ -206,6 +264,20 @@ class PluginManager:
                 "Plugin %s declares unknown type(s) %s (this core knows: %s)",
                 raw.get("id"), unknown, sorted(VALID_TYPES),
             )
+
+        # Phase 1 (MASTER): validate declared capabilities the same way —
+        # warn on unknown IDs (forward-compatible), don't refuse to load.
+        from fnack.plugin_api.capabilities import ALL_CAPABILITIES
+        declared_caps = raw.get("capabilities") or []
+        if isinstance(declared_caps, str):
+            declared_caps = [declared_caps]
+        unknown_caps = [c for c in declared_caps if c not in ALL_CAPABILITIES]
+        if unknown_caps:
+            logger.warning(
+                "Plugin %s declares unknown capability id(s) %s (known: %s)",
+                raw.get("id"), unknown_caps, sorted(ALL_CAPABILITIES),
+            )
+        raw["capabilities"] = [str(c) for c in declared_caps]
 
         return PluginManifest(**raw)
 
@@ -300,12 +372,38 @@ class PluginManager:
 
     # -- lifecycle ------------------------------------------------------------
 
+    def _resolve_capabilities(self, loaded: LoadedPlugin) -> list[str]:
+        """Capability IDs this plugin provides: manifest-declared wins;
+        otherwise derived from the plugin's `type`(s)."""
+        declared = [str(c) for c in (loaded.manifest.capabilities or [])]
+        if declared:
+            return declared
+        derived: list[str] = []
+        for t in loaded.manifest.type or []:
+            derived.extend(TYPE_CAPABILITIES.get(t, ()))
+        # Dedupe, keep declaration order.
+        return list(dict.fromkeys(derived))
+
+    def _register_capabilities(self, loaded: LoadedPlugin) -> None:
+        self.capability_registry.register(
+            plugin_id=loaded.manifest.id,
+            provider=loaded.instance,
+            capabilities=loaded.capabilities,
+            priority=self._effective_priority(loaded),
+        )
+
+    def _unregister_capabilities(self, plugin_id: str) -> None:
+        self.capability_registry.unregister_plugin(plugin_id)
+
     def enable_plugin(self, plugin_id: str) -> None:
         loaded = self._plugins.get(plugin_id)
         if not loaded or loaded.enabled:
             return
         self.call_safe(loaded, "on_enable")
         loaded.enabled = True
+        # Phase 1: enabling a plugin makes its capabilities available.
+        if loaded.capabilities:
+            self._register_capabilities(loaded)
 
     def disable_plugin(self, plugin_id: str) -> None:
         loaded = self._plugins.get(plugin_id)
@@ -314,6 +412,11 @@ class PluginManager:
         self.call_safe(loaded, "on_disable")
         self.event_bus.unsubscribe_all_for(plugin_id)
         loaded.enabled = False
+        # Phase 1: disabling a plugin removes its capabilities (MASTER rule 2:
+        # "If an official plugin is disabled or removed, its capability
+        # disappears. Core must not silently fall back to a hidden
+        # implementation.").
+        self._unregister_capabilities(plugin_id)
 
     def unload_plugin(self, plugin_id: str) -> None:
         loaded = self._plugins.pop(plugin_id, None)
@@ -322,6 +425,7 @@ class PluginManager:
         if loaded.enabled:
             self.call_safe(loaded, "on_disable")
         self.call_safe(loaded, "on_unload")
+        self._unregister_capabilities(plugin_id)
         self.ui_slot_registry.update(
             {
                 slot: [c for c in contributors if c[0] != plugin_id]
@@ -443,6 +547,53 @@ class PluginManager:
     def get_scan_triggers(self) -> list:
         return self._ordered("ScanTriggerPlugin")
 
+    # -- Phase 1 public API: no private `_plugins` access from app services ---
+
+    def get_plugin(self, plugin_id: str) -> Optional[PluginBase]:
+        """The plugin instance, or None. (Public replacement for reaching
+        into `manager._plugins[...]`.)"""
+        loaded = self._plugins.get(plugin_id)
+        return loaded.instance if loaded else None
+
+    def get_loaded(self, plugin_id: str) -> Optional[LoadedPlugin]:
+        """The LoadedPlugin wrapper (instance, manifest, enabled, failures,
+        priority_override), or None."""
+        return self._plugins.get(plugin_id)
+
+    def get_plugin_context(self, plugin_id: str) -> Optional[PluginContext]:
+        """The plugin's PluginContext, or None."""
+        loaded = self._plugins.get(plugin_id)
+        return getattr(loaded.instance, "context", None) if loaded else None
+
+    def get_plugin_capabilities(self, plugin_id: str) -> list[str]:
+        """Capability IDs this plugin provides (declared or derived), or [].
+        Independent of enabled state — use the capability registry to know
+        which providers are actually available."""
+        loaded = self._plugins.get(plugin_id)
+        return list(loaded.capabilities) if loaded else []
+
+    def get_capability_providers(self, capability: str) -> list:
+        """Enabled provider instances for a capability, priority-ordered
+        (lowest priority number first). Raises CapabilityUnavailable when no
+        enabled plugin provides it."""
+        handles = self.capability_registry.providers(capability)
+        if not handles:
+            raise CapabilityUnavailable(capability=capability, operation="get_capability_providers")
+        return [h.provider for h in handles]
+
+    def has_capability(self, capability: str) -> bool:
+        return self.capability_registry.has(capability)
+
+    def refresh_capability_registration(self, plugin_id: str) -> None:
+        """Re-register a plugin's capabilities after its effective priority
+        changed (priority_override) — the registry keeps the new ordering."""
+        loaded = self._plugins.get(plugin_id)
+        if loaded is None:
+            return
+        self._unregister_capabilities(plugin_id)
+        if loaded.enabled and loaded.capabilities:
+            self._register_capabilities(loaded)
+
     def get_library_tasks(self) -> list:
         return self._ordered("LibraryTaskPlugin")
 
@@ -479,6 +630,8 @@ class PluginManager:
                 "description": p.manifest.description or "",
                 # Brief 6 §2: imperative actions rendered in the settings modal.
                 "actions": p.manifest.actions or [],
+                # Phase 1: capability IDs this plugin provides.
+                "capabilities": list(p.capabilities),
                 "load_error": None,
             }
             for p in self._plugins.values()
@@ -500,6 +653,7 @@ class PluginManager:
                 "settings_schema": [],
                 "description": "",
                 "actions": [],
+                "capabilities": [],
                 "load_error": reason,
             })
         return out

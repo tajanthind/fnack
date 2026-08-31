@@ -94,6 +94,11 @@ class PluginManifest:
     actions: list[dict] = field(default_factory=list)
     dependencies: dict = field(default_factory=dict)
     trust_level: str = "community"          # "official" | "verified" | "community"
+    # Phase 1 (MASTER): capability IDs this plugin provides, e.g.
+    # ["download.track", "track.resolve"]. Multiple capabilities per plugin
+    # are allowed. Unknown IDs warn (forward-compatible) rather than fail.
+    # When omitted, capabilities are derived from the plugin's `type`(s).
+    capabilities: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------

@@ -18,5 +18,6 @@
   ],
   "ui": {"slots": []},
   "dependencies": {},
-  "trust_level": "official"
+  "trust_level": "official",
+  "capabilities": ["download.track"]
 }

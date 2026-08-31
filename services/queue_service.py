@@ -762,7 +762,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
             if not dl.can_handle(track_ref):
                 continue
 
-            loaded = _pm._plugins[dl.manifest.id]  # noqa: SLF001 - internal, same package
+            loaded = _pm.get_loaded(dl.manifest.id)  # Phase 1: public API, not private _plugins
             # Build the options dict from the plugin's own settings with the
             # legacy AppSetting fallback (behavior-preserving for existing users).
             options = {}

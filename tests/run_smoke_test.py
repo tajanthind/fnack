@@ -207,6 +207,10 @@ with app.app_context():
     # Brief 6 §2: actions field surfaces (and defaults to []).
     assert "actions" in listed[0], "list_loaded() must expose actions"
 
+    # Phase 1 (MASTER): capabilities field surfaces on the loaded listing,
+    # and the capability registry is populated from loaded plugins.
+    assert "capabilities" in listed[0], "list_loaded() must expose capabilities"
+
     # Brief 6 §4: the version-mismatch fixture appears with a load_error
     # (Unsupported), NOT silently vanished.
     by_id = {p["id"]: p for p in manager.list_loaded()}
@@ -215,6 +219,17 @@ with app.app_context():
     assert by_id["fnack.requires-newer-core"]["load_error"], \
         "version-mismatch plugin must carry a load_error reason"
     assert "requires fnack" in by_id["fnack.requires-newer-core"]["load_error"]
+
+    # Phase 1 (MASTER): capability registry + public manager API.
+    spotiflac_caps = by_id["fnack.spotiflac"]["capabilities"]
+    print("SpotiFLAC capabilities:", spotiflac_caps)
+    assert "download.track" in spotiflac_caps
+    assert manager.capability_registry.has("download.track"), \
+        "capability registry must contain download.track from the enabled fixture"
+    assert manager.get_plugin("fnack.spotiflac") is not None, "get_plugin() public API"
+    assert manager.get_loaded("fnack.spotiflac") is not None, "get_loaded() public API"
+    assert manager.get_plugin_context("fnack.spotiflac") is not None, "get_plugin_context() public API"
+    assert manager.get_plugin_capabilities("fnack.spotiflac") == ["download.track"]
 
     # Brief 6 §3: updating a bundled plugin is refused (they update with the
     # fnack image).

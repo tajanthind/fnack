@@ -26,7 +26,7 @@ def _ensure_installed_row(manager: PluginManager, plugin_id: str, enabled: bool 
         row.enabled = enabled
         db.session.commit()
         return row
-    loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+    loaded = manager.get_loaded(plugin_id)
     manifest = loaded.manifest if loaded else None
     row = InstalledPlugin(
         id=plugin_id,
@@ -120,9 +120,11 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         row = _ensure_installed_row(manager, plugin_id, enabled=True)
         row.priority_override = value
         db.session.commit()
-        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        loaded = manager.get_loaded(plugin_id)
         if loaded:
             loaded.priority_override = value
+            # Phase 1: keep the capability registry's ordering in sync.
+            manager.refresh_capability_registration(plugin_id)
         return jsonify({"ok": True, "priority": value})
 
     @bp.route("/<plugin_id>/uninstall", methods=["POST"])
@@ -177,7 +179,7 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         else:
             row.value = str(dest)
         db.session.commit()
-        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        loaded = manager.get_loaded(plugin_id)
         if loaded:
             manager.call_safe(loaded, "on_settings_changed", {key: str(dest)})
         return jsonify({"ok": True, "key": key, "path": str(dest)})
@@ -187,7 +189,7 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         """Run an imperative plugin action declared in the manifest `actions`
         array (Brief 6 §2) — e.g. VPN start/stop. Calls the matching method
         on the plugin instance (action id -> method name, snake_cased)."""
-        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        loaded = manager.get_loaded(plugin_id)
         if not loaded or not loaded.enabled:
             return jsonify({"error": "plugin not loaded/enabled"}), 404
         # Only allow actions the manifest declares.
@@ -209,7 +211,7 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
     def plugin_status(plugin_id):
         """Live read-only status for plugins that expose a `status()` method
         (e.g. VPN: running, public_ip, handshake)."""
-        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        loaded = manager.get_loaded(plugin_id)
         if not loaded or not loaded.enabled:
             return jsonify({"error": "plugin not loaded/enabled"}), 404
         method = getattr(loaded.instance, "status", None)
@@ -237,7 +239,7 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
                 row.value = str(value)
         db.session.commit()
 
-        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        loaded = manager.get_loaded(plugin_id)
         if loaded:
             manager.call_safe(loaded, "on_settings_changed", payload)
         return jsonify({"ok": True})

@@ -15,5 +15,6 @@
   ],
   "ui": {"slots": []},
   "dependencies": {},
-  "trust_level": "official"
+  "trust_level": "official",
+  "capabilities": ["fingerprint.identify"]
 }

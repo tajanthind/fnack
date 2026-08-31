@@ -46,5 +46,6 @@
     "slots": []
   },
   "dependencies": {},
-  "trust_level": "official"
+  "trust_level": "official",
+  "capabilities": ["media.scan", "media.health", "media.connection_test"]
 }

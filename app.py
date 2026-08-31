@@ -106,12 +106,16 @@ def _plugin_auth_guard():
     the standing constraint: this guard only activates when at least one
     auth_provider plugin is installed AND enabled. With none, fnack stays
     fully open (unchanged). The existing M2M API key still works when a
-    provider is active (X-API-Key short-circuits to the same identity)."""
+    provider is active (X-API-Key short-circuits to the same identity).
+
+    Phase 1 (MASTER): providers come from the capability registry
+    (AUTH_PROVIDER), not a private manager dict — core never reaches into
+    `_plugins`."""
+    from fnack.plugin_api.capabilities import AUTH_PROVIDER
     from plugins.manager import plugin_manager as _pm
     if _pm is None:
         return None
-    providers = [p for p in _pm._plugins.values()  # noqa: SLF001 - internal
-                 if p.enabled and getattr(p.instance, "authenticate", None)]
+    providers = [h.provider for h in _pm.capability_registry.providers(AUTH_PROVIDER)]
     if not providers:
         return None  # zero auth_providers enabled -> fully open
 
@@ -130,11 +134,11 @@ def _plugin_auth_guard():
             return None
 
     headers = {k: v for k, v in request.headers.items()}
-    for p in providers:
+    for provider in providers:
         try:
-            user = p.instance.authenticate(headers)
+            user = provider.authenticate(headers)
         except Exception:
-            logger.exception("[AUTH] auth_provider %s failed", p.manifest.id)
+            logger.exception("[AUTH] auth_provider %s failed", getattr(provider, "manifest", None).id if getattr(provider, "manifest", None) else provider)
             continue
         if user:
             g.fnack_user = user
@@ -2131,6 +2135,7 @@ with app.app_context():
                             "description": m.get("description", ""),
                             "permissions": m.get("permissions", []),
                             "trust_level": m.get("trust_level", "official"),
+                            "capabilities": m.get("capabilities", []),
                             "versions": {
                                 p_ver: {
                                     "download_url": f"https://github.com/tajanthind/fnack-plugins/releases/download/v{p_ver}/{m.get('id')}.zip",
@@ -2208,20 +2213,18 @@ with app.app_context():
     LibraryContext().get_or_create_api_key()
 
     # Phase 4: register server_extension plugin blueprints (Subsonic API, etc.).
-    # Each enabled ServerExtensionPlugin gets a fresh Flask Blueprint scoped to
-    # its manifest id; register_routes() populates it. Must run inside the app
-    # context so blueprints attach to this app.
+    # Phase 1 (MASTER): enabled ServerExtension providers come from the
+    # capability registry (SERVER_EXTENSION), not a private manager dict.
+    # Must run inside the app context so blueprints attach to this app.
     try:
-        from plugins.base import ServerExtensionPlugin
+        from fnack.plugin_api.capabilities import SERVER_EXTENSION
         from flask import Blueprint as _FlaskBlueprint
-        for _loaded in plugin_manager._plugins.values():  # noqa: SLF001 - internal, same package
-            if not _loaded.enabled or not isinstance(_loaded.instance, ServerExtensionPlugin):
-                continue
-            _bp = _FlaskBlueprint(f"plugin_{_loaded.manifest.id.replace('.', '_').replace('-', '_')}",
+        for _handle in plugin_manager.capability_registry.providers(SERVER_EXTENSION):
+            _bp = _FlaskBlueprint(f"plugin_{_handle.plugin_id.replace('.', '_').replace('-', '_')}",
                                   __name__, url_prefix="")
-            _loaded.instance.register_routes(_bp)
+            _handle.provider.register_routes(_bp)
             app.register_blueprint(_bp)
-            logger.info("[PLUGINS] Registered server_extension routes for %s", _loaded.manifest.id)
+            logger.info("[PLUGINS] Registered server_extension routes for %s", _handle.plugin_id)
     except Exception:
         logger.exception("[PLUGINS] Could not register server_extension blueprints")
 
