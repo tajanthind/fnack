@@ -57,3 +57,27 @@ class PluginSetting(db.Model):
     plugin_id = db.Column(db.String(128), primary_key=True)
     key = db.Column(db.String(128), primary_key=True)
     value = db.Column(db.Text, nullable=True)
+
+
+class PluginCapabilityPriority(db.Model):
+    """Phase 1.1: capability-specific priority override.
+
+    Priority is resolved per (plugin_id, capability_id), so one plugin can
+    serve different capabilities at different priorities without multiple
+    instances. Resolution chain (LOWEST number = tried first, matching
+    fnack's existing downloader/metadata semantics):
+
+        capability-specific override (this table)   <- most specific
+        > plugin-level priority_override            <- existing default
+        > manifest/class priority                   <- fallback
+
+    A row exists ONLY when the user set a capability-specific value; absence
+    means "use the plugin-level default" — so existing plugin-level
+    priorities are preserved without any migration rewrite.
+    """
+
+    __tablename__ = "plugin_capability_priorities"
+
+    plugin_id = db.Column(db.String(128), primary_key=True)
+    capability_id = db.Column(db.String(128), primary_key=True)
+    priority = db.Column(db.Integer, nullable=False)

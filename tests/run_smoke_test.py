@@ -231,6 +231,30 @@ with app.app_context():
     assert manager.get_plugin_context("fnack.spotiflac") is not None, "get_plugin_context() public API"
     assert manager.get_plugin_capabilities("fnack.spotiflac") == ["download.track"]
 
+    # Phase 1.1: capability-specific priority — per-capability override,
+    # capability registry ordering, API endpoints.
+    assert by_id["fnack.spotiflac"]["capability_priorities"] == {"download.track": 10}, \
+        "list_loaded must expose per-capability effective priorities"
+    r = client.get("/api/plugins/fnack.spotiflac/capabilities")
+    print("GET /capabilities:", r.status_code, r.json)
+    assert r.status_code == 200
+    caps = {c["capability_id"]: c for c in r.json["capabilities"]}
+    assert caps["download.track"]["priority"] == 10
+    assert caps["download.track"]["source"] in ("manifest", "plugin")
+    r = client.post("/api/plugins/fnack.spotiflac/capabilities/download.track/priority",
+                    json={"priority": 3})
+    print("POST capability priority:", r.status_code, r.json)
+    assert r.status_code == 200 and r.json["capability_priorities"]["download.track"] == 3
+    assert manager.capability_registry.priority_for("fnack.spotiflac", "download.track") == 3
+    # Clear restores the plugin-level default.
+    r = client.post("/api/plugins/fnack.spotiflac/capabilities/download.track/priority",
+                    json={"priority": None})
+    assert r.status_code == 200 and r.json["capability_priorities"]["download.track"] == 10
+    # Unknown capability rejected.
+    r = client.post("/api/plugins/fnack.spotiflac/capabilities/not.a.cap/priority",
+                    json={"priority": 5})
+    assert r.status_code == 400
+
     # Brief 6 §3: updating a bundled plugin is refused (they update with the
     # fnack image).
     r = client.post("/api/plugins/fnack.spotiflac/update")

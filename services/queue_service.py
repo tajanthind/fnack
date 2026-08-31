@@ -685,7 +685,10 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 for provider in _pm.get_metadata_providers():
                     if hasattr(provider, "resolve_track_url") and callable(provider.resolve_track_url):
                         try:
-                            spotify_url = provider.resolve_track_url(
+                            # Phase 1.1 §3: provider invocation via the central
+                            # executor (sync/async + awaitable detection).
+                            spotify_url = _pm.executor.run(
+                                provider, "resolve_track_url",
                                 track_title,
                                 artist_name,
                                 album_name=album_name,
@@ -788,9 +791,12 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                                                 "status": "downloading"})
             logger.info("[QUEUE] Attempting %s for '%s - %s'", dl.manifest.name, artist_name, track_title)
             # Downloads need a long timeout (10s default would kill mid-download).
+            # Phase 1.1 §3: runtime provider invocation goes through the
+            # manager's ProviderExecutor boundary (sync/async/awaitable/timeout
+            # handled centrally) — same guard + timeout as the old call_safe.
             from plugins.manager import DOWNLOAD_HOOK_TIMEOUT
-            result = _pm.call_safe(loaded, "download", track_ref, tmp_work_dir, options,
-                                   timeout=DOWNLOAD_HOOK_TIMEOUT)
+            result = _pm.invoke_provider(loaded, "download", track_ref, tmp_work_dir, options,
+                                         timeout=DOWNLOAD_HOOK_TIMEOUT)
             if result and result.success and result.file_path:
                 downloaded_file = result.file_path
                 # Step 3: Verify audio file with strict duration + tag checking

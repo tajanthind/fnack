@@ -144,6 +144,21 @@ phase.
   transitional provider imports/ID-branches frozen to a documented allowlist
   (each entry names the removal phase). Live-verified: capability inventory
   correct, zero-auth preserved, disabled plugin capability disappears.
+- [MASTER Phase 1.1: capability-specific priority + provider contract validation](tickets/plugin-phase-1-1-remaining-architecture-fixes.md):
+  §1 priority per (plugin_id, capability_id) — PluginCapabilityPriority
+  table, resolution chain (cap-specific > plugin-level override > manifest;
+  LOWEST = tried first), plugin-level overrides preserved as defaults (no
+  migration rewrite); registry providers_for()/priority_for() with
+  deterministic (priority, plugin_id) ties; API GET /capabilities + POST
+  /capabilities/<cap>/priority; UI follow-up documented; §2 capability
+  contracts validated at load (fnack.plugin_api.contracts = single mapping;
+  invalid caps skipped with clear warning, valid caps still load) — official
+  manifests corrected (deezer-batch/musicbrainz/itunes dropped
+  album.metadata, navidrome dropped media.health), synced to fnack-plugins;
+  §3 ProviderExecutor = runtime invocation boundary (invoke_provider on the
+  manager; queue/app/import chains rerouted; lifecycle stays under
+  call_safe); §4 SDK re-export debt documented; §5 Tests A–F added. All
+  tests green, smoke green.
 
 
 ## Roadmap (execution carried into the map)
