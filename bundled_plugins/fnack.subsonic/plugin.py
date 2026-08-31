@@ -26,25 +26,10 @@ _MIME = {
 
 
 class SubsonicPlugin(ServerExtensionPlugin):
-    def on_load(self):
-        self.context.ui.register_slot("settings_tab", self._render_settings_tab)
-
-    def _render_settings_tab(self, context_data: dict) -> str:
-        enabled = (self.context.settings.get("enabled") or "false").lower() == "true"
-        checked = "checked" if enabled else ""
-        return f"""
-<div class="card bg-dark-card border-0 shadow-sm mb-4">
-  <div class="card-body p-4">
-    <h5 class="fw-bold m-0"><i class="fas fa-music text-danger me-2"></i>Subsonic API</h5>
-    <p class="text-secondary small mb-3">Let Symfonium / DSub / Sublime Music browse &amp; stream fnack directly (independent of Navidrome). Auth uses the fnack API key; open if none is set.</p>
-    <div class="form-check mb-3">
-      <input class="form-check-input" type="checkbox" id="plugin-fnack.subsonic-enabled" {checked}>
-      <label class="form-check-label small" for="plugin-fnack.subsonic-enabled">Enable the Subsonic API at /rest/*</label>
-    </div>
-    <button class="btn btn-brand btn-sm" onclick="savePluginSettings('fnack.subsonic')">Save</button>
-  </div>
-</div>"""
-
+    # Brief 6 §2: settings via the standard schema modal (enabled checkbox);
+    # the custom settings_tab card is retired. Note: the routes register
+    # unconditionally today; the enabled flag is stored but not yet gating
+    # route registration (pre-existing behavior, unchanged here).
     def _auth_ok(self, args: dict) -> bool:
         key = self.context.library.get_api_key()
         if not key:

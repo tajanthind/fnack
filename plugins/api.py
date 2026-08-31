@@ -50,7 +50,37 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
 
     @bp.route("", methods=["GET"])
     def list_installed():
-        return jsonify(manager.list_loaded())
+        loaded = manager.list_loaded()
+        # Brief 6 §3: flag plugins whose source repo offers a newer version.
+        # Bundled plugins ship with the image — only marketplace-installed
+        # plugins can update independently (decided: no Update for bundled).
+        latest = {}
+        try:
+            latest = registry.latest_versions()
+        except Exception:
+            pass
+        bundled_ids = manager.bundled_ids()
+        for p in loaded:
+            lv = latest.get(p["id"])
+            p["latest_version"] = lv
+            p["update_available"] = bool(
+                lv and not p["bundled"] and p["id"] not in bundled_ids and lv != p["version"]
+            )
+        return jsonify(loaded)
+
+    @bp.route("/<plugin_id>/update", methods=["POST"])
+    def update_plugin(plugin_id):
+        """Update an installed plugin to its source repo's latest version
+        (Brief 6 §3). Settings (PluginSetting rows) are keyed by plugin_id and
+        survive. Bundled plugins are refused — they update with the fnack
+        image, not independently."""
+        if plugin_id in manager.bundled_ids():
+            return jsonify({"error": "Bundled plugins update with the fnack release (docker compose pull && up -d), not independently."}), 400
+        try:
+            row = registry.update(plugin_id)
+        except RegistryError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"ok": True, "id": row.id, "version": row.version})
 
     @bp.route("/grouped", methods=["GET"])
     def list_grouped():
@@ -151,6 +181,44 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         if loaded:
             manager.call_safe(loaded, "on_settings_changed", {key: str(dest)})
         return jsonify({"ok": True, "key": key, "path": str(dest)})
+
+    @bp.route("/<plugin_id>/action/<action_id>", methods=["POST"])
+    def run_action(plugin_id, action_id):
+        """Run an imperative plugin action declared in the manifest `actions`
+        array (Brief 6 §2) — e.g. VPN start/stop. Calls the matching method
+        on the plugin instance (action id -> method name, snake_cased)."""
+        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        if not loaded or not loaded.enabled:
+            return jsonify({"error": "plugin not loaded/enabled"}), 404
+        # Only allow actions the manifest declares.
+        declared = {a.get("id") for a in (loaded.manifest.actions or [])}
+        if action_id not in declared:
+            return jsonify({"error": f"action '{action_id}' not declared by {plugin_id}"}), 400
+        method_name = action_id.replace("-", "_")
+        method = getattr(loaded.instance, method_name, None)
+        if not callable(method):
+            return jsonify({"error": f"plugin has no method '{method_name}' for action '{action_id}'"}), 500
+        result = manager.call_safe(loaded, method_name)
+        # Accept tuple[bool, str] (VPN start/stop) or any JSON-able return.
+        if isinstance(result, tuple) and len(result) == 2:
+            ok, msg = result
+            return jsonify({"success": bool(ok), "message": str(msg)}), (200 if ok else 400)
+        return jsonify({"ok": True, "result": result})
+
+    @bp.route("/<plugin_id>/status", methods=["GET"])
+    def plugin_status(plugin_id):
+        """Live read-only status for plugins that expose a `status()` method
+        (e.g. VPN: running, public_ip, handshake)."""
+        loaded = manager._plugins.get(plugin_id)  # noqa: SLF001 - internal, same package
+        if not loaded or not loaded.enabled:
+            return jsonify({"error": "plugin not loaded/enabled"}), 404
+        method = getattr(loaded.instance, "status", None)
+        if not callable(method):
+            return jsonify({"error": "plugin does not expose status()"}), 404
+        result = manager.call_safe(loaded, "status")
+        if result is None:
+            return jsonify({"error": "status() failed"}), 500
+        return jsonify(result)
 
     @bp.route("/<plugin_id>/settings", methods=["GET"])
     def get_settings(plugin_id):

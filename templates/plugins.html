@@ -97,10 +97,6 @@
             <div class="mt-2">Loading plugins...</div>
           </div>
         </div>
-        <!-- Custom plugin panels (settings_tab slots) render below the list —
-             e.g. the VPN upload/start/stop panel. Schema-based settings live
-             in each plugin's Settings modal instead. -->
-        {{ plugin_slot('settings_tab') }}
       </div>
       <div class="tab-pane fade" id="marketplace-pane" role="tabpanel">
         <div id="marketplaceContainer">
@@ -147,6 +143,8 @@
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
   <script>
+    window._FNACK_CORE_VERSION = "{{ app_version }}";
+    window._FNACK_PLUGIN_API_VERSION = "1.0.0";
     loadPluginsPage();
   </script>
 </body>

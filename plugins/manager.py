@@ -46,6 +46,12 @@ class PluginLoadError(Exception):
     pass
 
 
+class VersionMismatchError(PluginLoadError):
+    """A plugin whose api_version/min_core_version is incompatible with the
+    running core. Distinct from a crash so the UI can show a clear
+    'Unsupported — requires core ≥ X, you're on Y' state (Brief 6 §4)."""
+
+
 class LoadedPlugin:
     def __init__(self, instance: PluginBase, manifest: PluginManifest, module_path: Path):
         self.instance = instance
@@ -79,6 +85,11 @@ class PluginManager:
         self._plugins: dict[str, LoadedPlugin] = {}
         self._lock = threading.Lock()
         self._scheduler_hook = self._default_scheduler_hook
+        # Brief 6 §4: plugins that failed to load, keyed by plugin id, with
+        # the reason (e.g. version mismatch). They must still SHOW in the
+        # Installed list as "Unsupported / failed to load" instead of
+        # silently vanishing.
+        self._load_failures: dict[str, str] = {}
         # Ensure the install dir exists so manual installs (INTEGRATION.md §7)
         # and the registry have somewhere to write.
         try:
@@ -135,8 +146,10 @@ class PluginManager:
             try:
                 loaded = self.load_plugin(plugin_dir)
             except PluginLoadError as exc:
+                self._load_failures[plugin_dir.name] = str(exc)
                 logger.error("Failed to load plugin at %s: %s", plugin_dir, exc)
                 continue
+            self._load_failures.pop(plugin_dir.name, None)
             if enabled_ids is None or loaded.manifest.id in enabled_ids:
                 self.enable_plugin(loaded.manifest.id)
 
@@ -209,12 +222,12 @@ class PluginManager:
     def _check_compatibility(self, manifest: PluginManifest) -> None:
         try:
             if not self._parse_range(manifest.api_version).contains(Version(PLUGIN_API_VERSION)):
-                raise PluginLoadError(
+                raise VersionMismatchError(
                     f"{manifest.id} requires api_version {manifest.api_version}, "
                     f"core provides {PLUGIN_API_VERSION}"
                 )
             if Version(self.core_version) < Version(manifest.min_core_version):
-                raise PluginLoadError(
+                raise VersionMismatchError(
                     f"{manifest.id} requires fnack >= {manifest.min_core_version}, "
                     f"running {self.core_version}"
                 )
@@ -447,7 +460,7 @@ class PluginManager:
 
     def list_loaded(self) -> list[dict]:
         bundled_ids = self.bundled_ids()
-        return [
+        out = [
             {
                 "id": p.manifest.id,
                 "name": p.manifest.name,
@@ -464,9 +477,32 @@ class PluginManager:
                 "settings_schema": p.manifest.settings_schema or [],
                 # Brief 5 §4: surface the manifest description on /plugins.
                 "description": p.manifest.description or "",
+                # Brief 6 §2: imperative actions rendered in the settings modal.
+                "actions": p.manifest.actions or [],
+                "load_error": None,
             }
             for p in self._plugins.values()
         ]
+        # Brief 6 §4: plugins that failed to load still appear, badged with
+        # the reason (version mismatch -> "Unsupported"; other -> error).
+        for pid, reason in self._load_failures.items():
+            out.append({
+                "id": pid,
+                "name": pid,
+                "version": "?",
+                "type": [],
+                "enabled": False,
+                "trust_level": "community",
+                "consecutive_failures": 0,
+                "priority": 100,
+                "priority_override": None,
+                "bundled": pid in bundled_ids,
+                "settings_schema": [],
+                "description": "",
+                "actions": [],
+                "load_error": reason,
+            })
+        return out
 
 
 # A module-level singleton, created at app startup (see INTEGRATION.md) and
