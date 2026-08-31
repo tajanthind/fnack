@@ -109,7 +109,9 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
     def set_priority(plugin_id):
         """Set the user-facing priority override for ordered plugin types.
         `priority` is a positive int; NULL clears the override (falls back to
-        the manifest priority)."""
+        the manifest priority). This is the PLUGIN-LEVEL default — it applies
+        to every capability the plugin provides unless a capability-specific
+        override is set (see /capabilities/<cap>/priority)."""
         payload = request.get_json(silent=True) or {}
         if "priority" not in payload:
             return jsonify({"error": "priority is required"}), 400
@@ -126,6 +128,56 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
             # Phase 1: keep the capability registry's ordering in sync.
             manager.refresh_capability_registration(plugin_id)
         return jsonify({"ok": True, "priority": value})
+
+    # -- Phase 1.1: capability-specific priority -----------------------------
+
+    @bp.route("/<plugin_id>/capabilities", methods=["GET"])
+    def get_capabilities(plugin_id):
+        """List a plugin's capabilities with their EFFECTIVE priority
+        (LOWER = tried first) and the source of that priority:
+        "capability" (per-capability override), "plugin" (plugin-level
+        priority_override), or "manifest" (class priority)."""
+        loaded = manager.get_loaded(plugin_id)
+        if loaded is None:
+            return jsonify({"error": "plugin not loaded"}), 404
+        plugin_override = loaded.priority_override
+        manifest_priority = int(getattr(loaded.instance, "priority", 100) or 100)
+        out = []
+        for cap in loaded.capabilities or []:
+            cap_override = (loaded.capability_priorities or {}).get(cap)
+            if cap_override is not None:
+                source, priority = "capability", int(cap_override)
+            elif plugin_override is not None:
+                source, priority = "plugin", int(plugin_override)
+            else:
+                source, priority = "manifest", manifest_priority
+            out.append({
+                "capability_id": cap,
+                "priority": priority,
+                "source": source,
+            })
+        return jsonify({"plugin_id": plugin_id, "capabilities": out})
+
+    @bp.route("/<plugin_id>/capabilities/<capability>/priority", methods=["POST"])
+    def set_capability_priority(plugin_id, capability):
+        """Set/clear the capability-specific priority override for one
+        (plugin, capability). Body: {"priority": N} (N >= 1) or
+        {"priority": null} to clear (falls back to the plugin-level default).
+        LOWER number = tried first."""
+        payload = request.get_json(silent=True) or {}
+        if "priority" not in payload:
+            return jsonify({"error": "priority is required"}), 400
+        raw = payload.get("priority")
+        value = None if raw is None else int(raw)
+        if value is not None and value < 1:
+            return jsonify({"error": "priority must be >= 1"}), 400
+        try:
+            updated = manager.set_capability_priority(plugin_id, capability, value)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"ok": True, "plugin_id": plugin_id,
+                        "capability_id": capability, "priority": value,
+                        "capability_priorities": updated})
 
     @bp.route("/<plugin_id>/uninstall", methods=["POST"])
     def uninstall(plugin_id):

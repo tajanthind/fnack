@@ -70,6 +70,64 @@ def test_priority_ordering_is_core() -> None:
     ]
 
 
+def test_capability_specific_priority() -> None:
+    """Phase 1.1: priority is per (plugin_id, capability_id). One plugin can
+    serve different capabilities at different priorities."""
+    reg = CapabilityRegistry()
+    # fnack.spotify: track.resolve priority 5, track.metadata priority 30.
+    reg.register(
+        "fnack.spotify", FakeResolver(), [TRACK_RESOLVE, "track.metadata"],
+        priority=20,                       # plugin-level default
+        priorities={"track.resolve": 5, "track.metadata": 30},
+    )
+    # Another track.metadata provider at priority 25.
+    reg.register("fnack.other", object(), ["track.metadata"], priority=25)
+
+    assert [h.plugin_id for h in reg.providers(TRACK_RESOLVE)] == ["fnack.spotify"]
+    assert reg.priority_for("fnack.spotify", TRACK_RESOLVE) == 5
+    # track.metadata orders by the per-capability priorities, not the
+    # plugin-level default (20 would put fnack.spotify first otherwise).
+    assert [h.plugin_id for h in reg.providers("track.metadata")] == [
+        "fnack.other", "fnack.spotify",
+    ]
+    assert reg.priority_for("fnack.spotify", "track.metadata") == 30
+    # Capability-specific priority overrides plugin-level default.
+    assert reg.priority_for("fnack.other", "track.metadata") == 25
+
+
+def test_providers_for_returns_capability_records() -> None:
+    """Phase 1.1: providers_for(capability) returns provider/plugin_id/
+    capability_id/effective_priority in deterministic order."""
+    reg = CapabilityRegistry()
+    reg.register("fnack.spotiflac", FakeSpotiflac(), [DOWNLOAD_TRACK], priority=10)
+    reg.register("fnack.ytdlp", FakeYtdlp(), [DOWNLOAD_TRACK], priority=50)
+    records = reg.providers_for(DOWNLOAD_TRACK)
+    assert [(r.plugin_id, r.capability_id, r.priority) for r in records] == [
+        ("fnack.spotiflac", DOWNLOAD_TRACK, 10),
+        ("fnack.ytdlp", DOWNLOAD_TRACK, 50),
+    ]
+    assert records[0].provider is not None
+    # Capability record carries the per-capability effective priority.
+    reg.register("fnack.spotiflac", FakeSpotiflac(), [DOWNLOAD_TRACK],
+                 priority=10, priorities={DOWNLOAD_TRACK: 3})
+    records = reg.providers_for(DOWNLOAD_TRACK)
+    assert records[0].priority == 3
+
+
+def test_ties_broken_deterministically() -> None:
+    """Phase 1.1: ties resolve by plugin_id — never installation or dict
+    insertion order."""
+    reg = CapabilityRegistry()
+    reg.register("fnack.zzz", object(), [FINGERPRINT_IDENTIFY], priority=100)
+    reg.register("fnack.aaa", object(), [FINGERPRINT_IDENTIFY], priority=100)
+    assert [h.plugin_id for h in reg.providers(FINGERPRINT_IDENTIFY)] == [
+        "fnack.aaa", "fnack.zzz",
+    ]
+    assert [p.plugin_id for p in reg.providers_for(FINGERPRINT_IDENTIFY)] == [
+        "fnack.aaa", "fnack.zzz",
+    ]
+
+
 def test_multiple_capabilities_per_plugin() -> None:
     """One plugin instance can register many capabilities (MASTER rule 5)."""
     reg = CapabilityRegistry()
@@ -122,6 +180,9 @@ def test_register_replaces_handle() -> None:
 if __name__ == "__main__":
     test_register_and_lookup()
     test_priority_ordering_is_core()
+    test_capability_specific_priority()
+    test_providers_for_returns_capability_records()
+    test_ties_broken_deterministically()
     test_multiple_capabilities_per_plugin()
     test_multiple_providers_per_capability()
     test_zero_providers()

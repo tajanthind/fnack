@@ -52,6 +52,7 @@ from fnack.plugin_api.capabilities import (
 )
 from fnack.plugin_api.errors import CapabilityUnavailable
 from fnack.plugin_api.providers import ProviderExecutor
+from fnack.plugin_api.contracts import validate_capability_contract
 
 logger = logging.getLogger("fnack.plugins.manager")
 
@@ -108,15 +109,25 @@ class LoadedPlugin:
         # Phase 1: capability IDs this plugin provides (manifest-declared or
         # type-derived). Filled in by PluginManager.load_plugin.
         self.capabilities: list[str] = []
+        # Phase 1.1: capability-specific priority overrides
+        # {capability_id: priority} loaded from PluginCapabilityPriority.
+        # Absent capability = use plugin-level default (priority_override or
+        # manifest priority). LOWER number = tried first.
+        self.capability_priorities: dict[str, int] = {}
 
     def refresh_from_db(self) -> None:
-        """Pull persisted per-install state (priority_override) from the DB."""
+        """Pull persisted per-install state (priority_override + per-
+        capability priority overrides) from the DB."""
         try:
-            from plugins.models import InstalledPlugin
+            from plugins.models import InstalledPlugin, PluginCapabilityPriority
             from models import db
             row = db.session.get(InstalledPlugin, self.manifest.id)
             if row is not None:
                 self.priority_override = row.priority_override
+            cap_rows = PluginCapabilityPriority.query.filter_by(plugin_id=self.manifest.id).all()
+            self.capability_priorities = {
+                r.capability_id: int(r.priority) for r in cap_rows
+            }
         except Exception:
             logger.debug("Could not refresh plugin state for %s", self.manifest.id, exc_info=True)
 
@@ -374,15 +385,36 @@ class PluginManager:
 
     def _resolve_capabilities(self, loaded: LoadedPlugin) -> list[str]:
         """Capability IDs this plugin provides: manifest-declared wins;
-        otherwise derived from the plugin's `type`(s)."""
+        otherwise derived from the plugin's `type`(s).
+
+        Phase 1.1 §2: every candidate is validated against its capability
+        contract (the required interface methods). Invalid capabilities are
+        SKIPPED (not the whole plugin) with a clear warning — one plugin can
+        provide several independent capabilities, and a bad declaration must
+        not take down the valid ones or produce a cryptic AttributeError at
+        invocation time."""
         declared = [str(c) for c in (loaded.manifest.capabilities or [])]
         if declared:
-            return declared
-        derived: list[str] = []
-        for t in loaded.manifest.type or []:
-            derived.extend(TYPE_CAPABILITIES.get(t, ()))
-        # Dedupe, keep declaration order.
-        return list(dict.fromkeys(derived))
+            candidates = declared
+        else:
+            derived: list[str] = []
+            for t in loaded.manifest.type or []:
+                derived.extend(TYPE_CAPABILITIES.get(t, ()))
+            candidates = list(dict.fromkeys(derived))
+
+        valid: list[str] = []
+        for cap in candidates:
+            missing = validate_capability_contract(loaded.manifest.id, cap, loaded.instance)
+            if missing:
+                logger.warning(
+                    "Plugin '%s' declares capability '%s' but does not implement it "
+                    "(missing: %s) — capability NOT registered. See "
+                    "fnack.plugin_api.contracts for the expected interface.",
+                    loaded.manifest.id, cap, ", ".join(missing),
+                )
+                continue
+            valid.append(cap)
+        return valid
 
     def _register_capabilities(self, loaded: LoadedPlugin) -> None:
         self.capability_registry.register(
@@ -390,6 +422,10 @@ class PluginManager:
             provider=loaded.instance,
             capabilities=loaded.capabilities,
             priority=self._effective_priority(loaded),
+            priorities={
+                cap: self._effective_priority(loaded, capability=cap)
+                for cap in loaded.capabilities
+            },
         )
 
     def _unregister_capabilities(self, plugin_id: str) -> None:
@@ -434,6 +470,59 @@ class PluginManager:
         )
 
     # -- safe calling: timeout + exception guard + auto-disable ---------------
+
+    def invoke_provider(
+        self,
+        loaded: LoadedPlugin,
+        method_name: str,
+        *args,
+        timeout: float = DOWNLOAD_HOOK_TIMEOUT,
+        **kwargs,
+    ):
+        """RUNTIME provider invocation boundary (Phase 1.1 §3).
+
+        Application services invoke capability providers through THIS method
+        (or `self.executor.run` directly) — never a raw method call, and
+        never `asyncio.run()` scattered through providers. The executor
+        handles sync methods, async methods, awaitable results, timeouts,
+        and provider-error normalization in one place.
+
+        The manager still wraps the executor in the gevent timeout +
+        consecutive-failure + auto-disable guard that call_safe uses, so a
+        hung or crashing provider is retired safely (queue behavior
+        unchanged). Lifecycle hooks (on_load/on_enable/...) may keep using
+        call_safe; runtime capability invocation must use this path.
+        """
+        method = getattr(loaded.instance, method_name, None)
+        if method is None:
+            return None
+        try:
+            # gevent.Timeout guards the WHOLE invocation (sync + async);
+            # ProviderExecutor.run drives any awaitable centrally.
+            try:
+                import gevent
+
+                with gevent.Timeout(timeout):
+                    result = self.executor.run(
+                        loaded.instance, method_name, *args, **kwargs
+                    )
+            except ImportError:
+                result = self.executor.run(
+                    loaded.instance, method_name, *args, **kwargs
+                )
+        except BaseException as exc:  # noqa: BLE001 - untrusted plugin code
+            loaded.consecutive_failures += 1
+            self._buffer_health(loaded, error=str(exc)[:500])
+            logger.exception("Plugin '%s'.%s failed (%d consecutive)",
+                              loaded.manifest.id, method_name, loaded.consecutive_failures)
+            if loaded.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                logger.error("Auto-disabling plugin '%s' after repeated failures", loaded.manifest.id)
+                self.disable_plugin(loaded.manifest.id)
+            return None
+        else:
+            loaded.consecutive_failures = 0
+            self._buffer_health(loaded, error=None)
+            return result
 
     def call_safe(self, loaded: LoadedPlugin, method_name: str, *args, timeout: float = DEFAULT_HOOK_TIMEOUT, **kwargs):
         method = getattr(loaded.instance, method_name, None)
@@ -518,8 +607,21 @@ class PluginManager:
 
     # -- typed accessors used by core (queue_service, metadata_service, ...) -
 
-    def _effective_priority(self, loaded) -> int:
-        """User-facing priority_override when set, else the manifest priority."""
+    def _effective_priority(self, loaded, capability: Optional[str] = None) -> int:
+        """Effective priority for a plugin, optionally per capability
+        (Phase 1.1). Resolution chain, LOWEST number = tried first:
+            capability-specific override > plugin-level priority_override
+            > manifest/class priority.
+
+        Passing no capability returns the plugin-level effective priority
+        (used by the legacy type-ordered getters)."""
+        if capability is not None:
+            cap_override = (loaded.capability_priorities or {}).get(capability)
+            if cap_override is not None:
+                try:
+                    return int(cap_override)
+                except (TypeError, ValueError):
+                    pass
         override = getattr(loaded, "priority_override", None)
         if override is not None:
             try:
@@ -527,6 +629,77 @@ class PluginManager:
             except (TypeError, ValueError):
                 pass
         return int(getattr(loaded.instance, "priority", 100) or 100)
+
+    # -- Phase 1.1: capability-specific priority configuration ---------------
+
+    def get_capability_priorities(self, plugin_id: str) -> dict[str, int]:
+        """{capability_id: effective priority} for a plugin's capabilities.
+        Each value is the capability-specific override if set, else the
+        plugin-level effective priority. Empty dict if plugin unknown."""
+        loaded = self._plugins.get(plugin_id)
+        if loaded is None:
+            return {}
+        return {
+            cap: self._effective_priority(loaded, capability=cap)
+            for cap in (loaded.capabilities or [])
+        }
+
+    def set_capability_priority(
+        self,
+        plugin_id: str,
+        capability_id: str,
+        priority: Optional[int],
+    ) -> dict[str, int]:
+        """Set (or clear with None) the capability-specific priority override
+        for one (plugin, capability). Validates the capability is declared.
+        Returns the updated {capability: effective priority} map.
+
+        Raises ValueError if the plugin or capability is unknown, or the
+        priority is < 1."""
+        loaded = self._plugins.get(plugin_id)
+        if loaded is None:
+            raise ValueError(f"no such plugin: {plugin_id}")
+        if capability_id not in (loaded.capabilities or []):
+            raise ValueError(
+                f"plugin '{plugin_id}' does not declare capability '{capability_id}'"
+            )
+        if priority is not None and int(priority) < 1:
+            raise ValueError("priority must be >= 1")
+
+        # Persist via the existing DB (same session as priority_override).
+        # Outside an app context (architecture tests, bare manager) the
+        # override still applies in-memory — matching refresh_from_db's
+        # tolerance.
+        try:
+            from plugins.models import PluginCapabilityPriority
+            from models import db
+            row = db.session.get(PluginCapabilityPriority, (plugin_id, capability_id))
+            if priority is None:
+                if row is not None:
+                    db.session.delete(row)
+                loaded.capability_priorities.pop(capability_id, None)
+            else:
+                value = int(priority)
+                if row is None:
+                    db.session.add(PluginCapabilityPriority(
+                        plugin_id=plugin_id, capability_id=capability_id, priority=value,
+                    ))
+                else:
+                    row.priority = value
+                loaded.capability_priorities[capability_id] = value
+            db.session.commit()
+        except Exception:
+            logger.debug(
+                "Could not persist capability priority for %s/%s (in-memory only)",
+                plugin_id, capability_id, exc_info=True,
+            )
+            if priority is None:
+                loaded.capability_priorities.pop(capability_id, None)
+            else:
+                loaded.capability_priorities[capability_id] = int(priority)
+        # Keep the registry's ordering in sync.
+        self.refresh_capability_registration(plugin_id)
+        return self.get_capability_priorities(plugin_id)
 
     def _ordered(self, base_cls_name: str) -> list:
         from plugins import base as _base
@@ -632,6 +805,12 @@ class PluginManager:
                 "actions": p.manifest.actions or [],
                 # Phase 1: capability IDs this plugin provides.
                 "capabilities": list(p.capabilities),
+                # Phase 1.1: {capability_id: effective priority} — per-
+                # capability ordering (LOWER = tried first).
+                "capability_priorities": {
+                    cap: self._effective_priority(p, capability=cap)
+                    for cap in (p.capabilities or [])
+                },
                 "load_error": None,
             }
             for p in self._plugins.values()
@@ -654,6 +833,7 @@ class PluginManager:
                 "description": "",
                 "actions": [],
                 "capabilities": [],
+                "capability_priorities": {},
                 "load_error": reason,
             })
         return out

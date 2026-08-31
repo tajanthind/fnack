@@ -58,6 +58,18 @@ class MixedProvider:
         return ["candidate"]
 
 
+class SyncReturningAwaitableProvider:
+    """A sync (def) method that RETURNS an awaitable — Test D: the executor
+    must detect it via inspect.isawaitable and drive it, not return the
+    coroutine object to the caller."""
+
+    def download(self, request) -> str:
+        async def _inner():
+            await asyncio.sleep(0)
+            return "sync-def-awaitable"
+        return _inner()
+
+
 def test_sync_provider_invoke() -> None:
     ex = ProviderExecutor()
     provider = SyncProvider()
@@ -86,6 +98,15 @@ def test_sync_run_entrypoint() -> None:
     assert ex.run(SyncProvider(), "download", None) == "downloaded-sync"
     assert ex.run(AsyncProvider(), "download", None) == "downloaded-async"
     assert ex.run(MixedProvider(), "resolve", None) == ["candidate"]
+
+
+def test_sync_method_returning_awaitable() -> None:
+    """Test D: a sync `def` method returning an awaitable is detected and
+    driven to completion (never returned as a raw coroutine)."""
+    ex = ProviderExecutor()
+    provider = SyncReturningAwaitableProvider()
+    assert asyncio.run(ex.invoke(provider, "download", None)) == "sync-def-awaitable"
+    assert ex.run(provider, "download", None) == "sync-def-awaitable"
 
 
 def test_timeout_on_awaitable() -> None:
@@ -131,6 +152,7 @@ if __name__ == "__main__":
     test_async_provider_invoke()
     test_mixed_provider()
     test_sync_run_entrypoint()
+    test_sync_method_returning_awaitable()
     test_timeout_on_awaitable()
     test_missing_method_raises_provider_error()
     print("test_async_provider_invocation: PASSED")

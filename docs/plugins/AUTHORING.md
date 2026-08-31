@@ -179,9 +179,26 @@ Rules that matter for authors:
   `track.resolve`).
 - A disabled or uninstalled plugin's capabilities **disappear** — core must
   not silently fall back to a hidden implementation (that's the point).
-- Priorities stay core: when several plugins provide the same capability,
-  the registry orders them by priority (lowest number first). The per-plugin
-  Priority field in Settings → Plugins overrides the manifest default.
+- **Priorities stay core, and are capability-specific (Phase 1.1).** When
+  several plugins provide the same capability, the registry orders them by
+  that capability's effective priority (LOWEST number = tried first,
+  deterministic tie-break by plugin_id). Resolution chain:
+  `capability-specific override > plugin-level priority_override > manifest
+  priority`. One plugin can serve different capabilities at different
+  priorities (e.g. `track.resolve` at 5 and `track.metadata` at 30) without
+  multiple instances. The per-plugin Priority field in Settings → Plugins
+  sets the plugin-level default; per-capability overrides are configured via
+  the API (`GET /api/plugins/<id>/capabilities`,
+  `POST /api/plugins/<id>/capabilities/<cap>/priority`) — UI follow-up
+  documented in the Phase 1.1 wayfinder ticket.
+- **Declared capabilities are validated (Phase 1.1).** The runtime checks
+  each declared capability against its contract
+  (`fnack/plugin_api/contracts.py` — the single source of truth for
+  capability → required interface methods). A capability the plugin doesn't
+  actually implement is SKIPPED with a clear warning (plugin id, capability
+  id, missing method); the plugin's other capabilities still load. Never
+  declare a capability you don't implement — you'll get a warning and it
+  won't register.
 
 ### The public SDK (`fnack.plugin_api`)
 
@@ -211,6 +228,15 @@ from fnack.plugin_api import (
 - Errors: raise or handle `CapabilityUnavailable` (no enabled plugin
   provides a capability — a *valid* state, not a bug) and `ProviderError`
   (a specific provider failed, with a stable `code` and `retryable` flag).
+
+**SDK boundary (Phase 1.1 review).** `models.py`, `context.py`, and
+`events.py` are currently TRANSITIONAL re-exports of internal
+`plugins.base`/`plugins.context`/`plugins.events` classes, not yet standalone
+public contracts. That is documented technical debt: plugins may keep using
+them (they import cleanly and never pull in app services or provider
+implementations), and the contracts become fully standalone during Phase 2
+provider extraction. `capabilities.py`, `providers.py`, `errors.py`, and
+`contracts.py` are real, standalone public contracts today.
 
 ---
 
@@ -469,7 +495,9 @@ Never render raw/unescaped user input into slot HTML.
 | `GET /api/plugins` | All loaded plugins with enabled/trust/priority |
 | `GET /api/plugins/grouped` | Same, grouped by type |
 | `POST /api/plugins/<id>/enable` \| `disable` | Toggle (persists row) |
-| `POST /api/plugins/<id>/priority` | `{"priority": N}` or `null` to clear override |
+| `POST /api/plugins/<id>/priority` | `{"priority": N}` or `null` to clear plugin-level override (the default for every capability) |
+| `GET /api/plugins/<id>/capabilities` | Per-capability effective priority + source (`capability`/`plugin`/`manifest`) |
+| `POST /api/plugins/<id>/capabilities/<cap>/priority` | `{"priority": N}` or `null` to clear the capability-specific override |
 | `GET/POST /api/plugins/<id>/settings` | Per-plugin key/value settings |
 | `GET /api/plugins/<id>/health` | failures/last_error/last_run_at |
 | `POST /api/plugins/<id>/uninstall` | Remove (Phase 3 marketplace flow) |

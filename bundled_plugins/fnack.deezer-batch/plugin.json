@@ -14,5 +14,5 @@
   "ui": {"slots": []},
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["artist.search", "artist.discography", "track.metadata", "album.metadata"]
+  "capabilities": ["artist.search", "artist.discography", "track.metadata"]
 }

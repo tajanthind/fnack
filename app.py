@@ -136,7 +136,8 @@ def _plugin_auth_guard():
     headers = {k: v for k, v in request.headers.items()}
     for provider in providers:
         try:
-            user = provider.authenticate(headers)
+            # Phase 1.1 §3: provider invocation via the central executor.
+            user = _pm.executor.run(provider, "authenticate", headers)
         except Exception:
             logger.exception("[AUTH] auth_provider %s failed", getattr(provider, "manifest", None).id if getattr(provider, "manifest", None) else provider)
             continue
@@ -492,7 +493,9 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                     # discography-capable providers are keyed by artist name.
                     key = str(deezer_artist_id) if provider.manifest.id == "fnack.deezer-batch" else artist.name
                     try:
-                        d = provider.get_artist_discography(key)
+                        # Phase 1.1 §3: provider invocation via the central
+                        # executor (sync/async + awaitable detection).
+                        d = _pm.executor.run(provider, "get_artist_discography", key)
                     except Exception:
                         logger.debug("[METADATA] provider %s discography failed, trying next",
                                      provider.manifest.id, exc_info=True)
@@ -530,7 +533,10 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                     enrich_fn = getattr(provider, "enrich", None)
                     if not enrich_fn:
                         continue
-                    enrich_fn(disco.get("artist_name") or artist.name, disco.get("albums") or [])
+                    # Phase 1.1 §3: provider invocation via the central executor.
+                    _pm2.executor.run(provider, "enrich",
+                                      disco.get("artist_name") or artist.name,
+                                      disco.get("albums") or [])
                     enriched = True
                     break
             if not enriched:
@@ -1595,7 +1601,8 @@ def api_navidrome_scan():
         from plugins.manager import plugin_manager as _pm
         if _pm is not None:
             for trig in _pm.get_scan_triggers():
-                ok, msg = trig.trigger_scan()
+                # Phase 1.1 §3: provider invocation via the central executor.
+                ok, msg = _pm.executor.run(trig, "trigger_scan")
                 return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
     except Exception:
         logger.debug("[NAVIDROME] plugin chain skipped, using direct call", exc_info=True)

@@ -86,8 +86,48 @@ def test_plugin_can_import_public_sdk() -> None:
     assert api.SDK_VERSION
 
 
+def test_official_bundle_capability_registration() -> None:
+    """Test E (Phase 1.1): the enabled official bundle registers its
+    capabilities — download.track is served by the two downloaders,
+    fingerprint.identify by acoustid, etc. (validated against contracts)."""
+    import logging
+    logging.disable(logging.WARNING)  # silence expected-contract warnings
+    import tempfile
+    from plugins.manager import init_plugin_manager
+
+    # Load the REAL bundled_plugins dir (no DB) with everything enabled.
+    bundled = ROOT / "bundled_plugins"
+    assert bundled.exists(), "bundled_plugins dir must exist for Test E"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = init_plugin_manager(
+            plugins_dir=tmpdir,
+            bundled_plugins_dir=str(bundled),
+            core_version="0.3.1",
+        )
+        mgr.load_all()  # enable everything discovered
+
+        reg = mgr.capability_registry
+        # Official downloaders serve download.track, priority-ordered.
+        dl = [p.plugin_id for p in reg.providers_for("download.track")]
+        assert "fnack.spotiflac" in dl and "fnack.ytdlp" in dl
+        assert dl.index("fnack.spotiflac") < dl.index("fnack.ytdlp"), \
+            "spotiflac (p10) must be tried before ytdlp (p50)"
+        # fingerprint, media, auth, network, notification, server ext.
+        assert reg.has("fingerprint.identify")
+        assert reg.has("media.scan")
+        assert reg.has("network.route")
+        assert reg.has("server.extension")
+        assert reg.has("notification.event")
+        # Every registered capability passed contract validation.
+        for cap in ["download.track", "fingerprint.identify", "media.scan",
+                    "network.route", "server.extension", "notification.event"]:
+            assert reg.has(cap), f"official bundle must serve {cap}"
+    logging.disable(logging.NOTSET)
+
+
 if __name__ == "__main__":
     test_plugins_never_import_core_internals()
     test_transitional_services_imports_are_documented()
     test_plugin_can_import_public_sdk()
+    test_official_bundle_capability_registration()
     print("test_plugin_boundary: PASSED")
