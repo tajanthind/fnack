@@ -3,7 +3,8 @@
 
 A modular Flask + SocketIO application with Deezer metadata ingestion,
 ISRC-first SpotiFLAC / yt-dlp download pipeline, Sonarr-style artist discography views,
-interactive library import, and full Lidarr emulation.
+and interactive library import. Lidarr emulation ships as the bundled
+`fnack.lidarr` plugin (Newznab/Torznab + SABnzbd), enabled by default.
 """
 
 import nest_asyncio
@@ -38,11 +39,6 @@ from services.deezer_service import (
     search_artist,
 )
 from services.import_service import import_artist_folder, scan_root_folder_candidates
-from services.lidarr_service import (
-    get_api_key,
-    handle_newznab_api,
-    handle_sabnzbd_api,
-)
 from services.navidrome_service import test_navidrome_connection, trigger_navidrome_scan
 from services.watcher_service import start_folder_watcher
 from services.queue_service import (
@@ -425,6 +421,20 @@ def _maintenance_interval_seconds() -> int:
         return _MAINTENANCE_INTERVALS.get(str(val).strip().lower(), 7 * 24 * 3600)
     except Exception:
         return 7 * 24 * 3600
+
+
+_last_retry = 0.0
+
+
+def _retry_interval_seconds() -> int:
+    """Seconds between automatic failed-song retry runs (Brief 7 §5).
+    Same value set as maintenance but DEFAULT 'daily' (per the user's
+    instruction). 0 = at restart only, -1 = off."""
+    try:
+        val = _get_setting("retry_interval", "daily")
+        return _MAINTENANCE_INTERVALS.get(str(val).strip().lower(), 24 * 3600)
+    except Exception:
+        return 24 * 3600
 
 
 def _start_bounded_artist_sync(artist_id: int, deezer_artist_id: int, options: dict):
@@ -1327,9 +1337,10 @@ def api_get_queue():
     })
 
 
-@app.route("/api/queue/retry-failed", methods=["POST"])
-def api_retry_all_failed():
-    """Global retry: Re-queues all failed jobs and tracks in the entire library."""
+def _retry_all_failed() -> int:
+    """Re-queue all failed/error tracks and jobs (shared by the manual
+    'Retry All Failed' button and the scheduled retry task, Brief 7 §5 —
+    one implementation, two triggers)."""
     # 1. Re-queue failed download jobs
     failed_jobs = DownloadJob.query.filter(DownloadJob.status.in_(["failed", "cancelled", "error"])).all()
     for j in failed_jobs:
@@ -1371,6 +1382,13 @@ def api_retry_all_failed():
                 requeued_count += 1
 
     db.session.commit()
+    return requeued_count
+
+
+@app.route("/api/queue/retry-failed", methods=["POST"])
+def api_retry_all_failed():
+    """Global retry: Re-queues all failed jobs and tracks in the entire library."""
+    requeued_count = _retry_all_failed()
     socketio.emit("toast", {"message": f"Re-queued {requeued_count} failed tracks.", "type": "info"})
     return jsonify({"message": f"Re-queued {requeued_count} failed tracks.", "count": requeued_count})
 
@@ -1554,12 +1572,29 @@ def api_navidrome_test():
     url = data.get("url") or _get_setting("navidrome_url")
     user = data.get("user") or _get_setting("navidrome_user")
     token = data.get("token") or _get_setting("navidrome_token")
+    # Brief 7 §1c: this route tests CANDIDATE values the user typed in the
+    # settings form (pre-save), so it must call the direct service with those
+    # values — the scan_trigger plugin chain only knows the STORED config and
+    # cannot express an unsaved candidate. Core by rule 1 (latency-sensitive,
+    # synchronous, user-facing; plugin indirection would regress the UX).
     ok, msg = test_navidrome_connection(url, user, token)
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
 
 @app.route("/api/navidrome/scan", methods=["POST"])
 def api_navidrome_scan():
+    # Brief 7 §1c: triggering a scan of the CONFIGURED Navidrome is exactly a
+    # scan_trigger plugin's job — route through the plugin chain when one is
+    # enabled (fall back to the direct service otherwise, so the route never
+    # breaks with zero plugins installed).
+    try:
+        from plugins.manager import plugin_manager as _pm
+        if _pm is not None:
+            for trig in _pm.get_scan_triggers():
+                ok, msg = trig.trigger_scan()
+                return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
+    except Exception:
+        logger.debug("[NAVIDROME] plugin chain skipped, using direct call", exc_info=True)
     ok, msg = trigger_navidrome_scan(app)
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
@@ -1770,6 +1805,10 @@ def api_settings():
             val = str(data["maintenance_interval"]).strip().lower()
             if val in _MAINTENANCE_INTERVALS:
                 _set_setting("maintenance_interval", val)
+        if "retry_interval" in data:
+            val = str(data["retry_interval"]).strip().lower()
+            if val in _MAINTENANCE_INTERVALS:
+                _set_setting("retry_interval", val)
         if "acoustid_api_key" in data:
             _set_setting("acoustid_api_key", str(data["acoustid_api_key"]).strip())
         if "theme" in data:
@@ -1783,10 +1822,12 @@ def api_settings():
     fallback_fmt = _get_setting("ytdlp_format") or _get_setting("spotdl_format", "opus")
     cookies_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
 
+    from plugins.context import LibraryContext
+
     return jsonify({
         "version": __version__,
         "max_concurrent": int(_get_setting("max_concurrent", str(app.config["MAX_CONCURRENT_DEFAULT"]))),
-        "api_key": get_api_key(app),
+        "api_key": LibraryContext().get_or_create_api_key(),
         "theme": _get_setting("theme", "onyx-dark"),
         "spotiflac_quality": _get_setting("spotiflac_quality", "LOSSLESS"),
         "spotiflac_delay": float(_get_setting("spotiflac_delay", "3.0")),
@@ -1815,6 +1856,7 @@ def api_settings():
         "navidrome_auto_scan": _get_setting("navidrome_auto_scan", "true").lower() == "true",
         "navidrome_db_path": _get_setting("navidrome_db_path", ""),
         "maintenance_interval": _get_setting("maintenance_interval", "weekly"),
+        "retry_interval": _get_setting("retry_interval", "daily"),
         "acoustid_api_key": _get_setting("acoustid_api_key", ""),
     })
 
@@ -1832,34 +1874,6 @@ def api_rotate_key():
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Lidarr Integration Endpoints
-# ══════════════════════════════════════════════════════════════════════
-
-@app.route("/api/sabnzbd", methods=["GET", "POST"])
-@app.route("/api/sabnzbd/api", methods=["GET", "POST"])
-@app.route("/sabnzbd/api", methods=["GET", "POST"])
-def sabnzbd_proxy():
-    return handle_sabnzbd_api(app)
-
-
-@app.route("/api/newznab", methods=["GET"])
-@app.route("/api/newznab/api", methods=["GET"])
-@app.route("/api/torznab", methods=["GET"])
-@app.route("/api/torznab/api", methods=["GET"])
-@app.route("/torznab/api", methods=["GET"])
-def newznab_proxy():
-    return handle_newznab_api(app)
-
-
-@app.route("/api/nzb/<item_type>/<int:item_id>", methods=["GET"])
-def api_nzb_grab(item_type, item_id):
-    # Lidarr downloads the <link> from the search feed verbatim (no ?t=get),
-    # so serve the real NZB directly from the path's item type/id.
-    from services.lidarr_service import _get_nzb
-    return _get_nzb(app, item_type=item_type, item_id=item_id)
-
-
-# ══════════════════════════════════════════════════════════════════════
 #  Socket.IO Real-time Events
 # ══════════════════════════════════════════════════════════════════════
 
@@ -1871,6 +1885,28 @@ def handle_socket_connect():
 # ══════════════════════════════════════════════════════════════════════
 #  Background Workers & Schedulers
 # ══════════════════════════════════════════════════════════════════════
+
+def _periodic_failed_retry_loop():
+    """Brief 7 §5: automatically re-queue failed/error tracks on the
+    configured retry_interval (default daily). Reuses the same interval
+    pattern as library maintenance and the SAME _retry_all_failed() the
+    manual 'Retry All Failed' button calls — one implementation, two
+    triggers."""
+    global _last_retry
+    gevent.sleep(60)
+    while True:
+        try:
+            with app.app_context():
+                secs = _retry_interval_seconds()
+                if secs > 0 and time.time() - _last_retry >= secs:
+                    _last_retry = time.time()
+                    count = _retry_all_failed()
+                    if count:
+                        logger.info("[RETRY] Scheduled retry re-queued %d failed tracks", count)
+        except Exception:
+            logger.exception("[RETRY] Scheduled failed-track retry failed")
+        gevent.sleep(300)
+
 
 def _periodic_discography_sync_loop():
     """Periodic auto-sync for monitored artists based on configured interval."""
@@ -2045,7 +2081,16 @@ with app.app_context():
             types = manifest.get("type", [])
             if isinstance(types, str):
                 types = [types]
-            default_enabled = "auth_provider" not in types
+            # Brief 7 §3: plugins that did NOT exist in 0.2.x ship
+            # disabled-by-default (opt-in, still clearly listed in the
+            # Marketplace) — 0.2.x-parity default posture, not deletion.
+            default_disabled = {
+                "fnack.subsonic",            # Subsonic SERVER API (Phase 4 stretch)
+                "fnack.discord-webhook",     # Phase 4 webhook pack
+                "fnack.ntfy-webhook",        # Phase 4 webhook pack
+                "fnack.reverse-proxy-auth",  # Phase 4 auth (also auth_provider rule)
+            }
+            default_enabled = "auth_provider" not in types and pid not in default_disabled
             db.session.add(InstalledPlugin(
                 id=pid,
                 name=manifest.get("name", pid),
@@ -2148,13 +2193,19 @@ with app.app_context():
         ("enable_duration_check", "true"),
         ("enable_folder_watcher", "true"),
         ("navidrome_auto_scan", "true"),
+        ("maintenance_interval", "weekly"),
+        # Brief 7 §5: default daily (per the user's instruction — unlike
+        # maintenance's weekly), stored explicitly so a fresh install really
+        # has 'daily' rather than only the code fallback.
+        ("retry_interval", "daily"),
         ("theme", "onyx-dark"),
     ]
     for k, v in default_settings:
         if not db.session.get(AppSetting, k):
             db.session.add(AppSetting(key=k, value=v))
     db.session.commit()
-    get_api_key(app)
+    from plugins.context import LibraryContext
+    LibraryContext().get_or_create_api_key()
 
     # Phase 4: register server_extension plugin blueprints (Subsonic API, etc.).
     # Each enabled ServerExtensionPlugin gets a fresh Flask Blueprint scoped to
@@ -2178,6 +2229,7 @@ with app.app_context():
 socketio.start_background_task(start_queue_worker, app, socketio)
 socketio.start_background_task(start_folder_watcher, app, socketio)
 socketio.start_background_task(_periodic_discography_sync_loop)
+socketio.start_background_task(_periodic_failed_retry_loop)
 
 # Retroactive metadata normalization + Navidrome split repair: fix Navidrome
 # album grouping for the existing library on every boot (skips files that

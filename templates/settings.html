@@ -369,6 +369,24 @@
           </button>
         </div>
 
+        <!-- Failed-Song Auto-Retry Schedule (Brief 7 §5) -->
+        <div class="mb-3">
+          <label class="form-label fw-bold small">Failed-Song Auto-Retry Schedule</label>
+          <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setRetryInterval" style="max-width: 260px;">
+            <option value="daily" selected>Daily (Recommended)</option>
+            <option value="weekly">Weekly</option>
+            <option value="restart">Every restart only</option>
+            <option value="manual">Manual only (button below)</option>
+          </select>
+          <div class="form-text text-secondary small">
+            Automatically re-queues every failed/error track on this schedule —
+            same action as the manual "Retry All Failed" button, no clicking.
+          </div>
+          <button type="button" class="btn btn-outline-info btn-sm mt-2" onclick="retryAllFailedNow()">
+            <i class="fas fa-redo me-1"></i>Retry All Failed Now
+          </button>
+        </div>
+
         <!-- Music Storage Path -->
         <div class="mb-3">
           <label class="form-label fw-bold small">Music Storage Path</label>
@@ -398,7 +416,9 @@
           <h5 class="fw-bold m-0"><i class="fas fa-link text-primary me-2"></i>Lidarr Integration</h5>
           <span class="badge bg-primary-subtle text-primary">SABnzbd + Torznab</span>
         </div>
-        <p class="text-secondary small mb-3">Connect Lidarr to fnack as a Download Client and Indexer.</p>
+        <p class="text-secondary small mb-3">Connect Lidarr to fnack as a Download Client and Indexer.
+          These endpoints ship as the bundled <code>fnack.lidarr</code> plugin (Settings → Plugins), enabled by default.
+          If the plugin is disabled or uninstalled, Lidarr will no longer reach fnack.</p>
 
         <div class="mb-3">
           <label class="form-label small fw-bold">API Key</label>
@@ -616,6 +636,7 @@
         _setChecked('setEnableFolderWatcher', s.enable_folder_watcher !== false);
 
         _setVal('setMaintenanceInterval', s.maintenance_interval || 'weekly');
+        _setVal('setRetryInterval', s.retry_interval || 'daily');
 
         setDirty(false);
       } catch (err) {
@@ -903,6 +924,7 @@
       const curWatcher = _getChecked('setEnableFolderWatcher', true);
 
       const curMaintInt = _getVal('setMaintenanceInterval', 'weekly');
+      const curRetryInt = _getVal('setRetryInterval', 'daily');
       const curTheme = _currentTheme;
 
       const isChanged = (
@@ -917,7 +939,8 @@
         curReject !== (_initialSettings.reject_mismatches !== false) ||
         curDurCheck !== (_initialSettings.enable_duration_check !== false) ||
         curWatcher !== (_initialSettings.enable_folder_watcher !== false) ||
-        curMaintInt !== (_initialSettings.maintenance_interval || 'weekly')
+        curMaintInt !== (_initialSettings.maintenance_interval || 'weekly') ||
+        curRetryInt !== (_initialSettings.retry_interval || 'daily')
       );
 
       setDirty(isChanged);
@@ -963,6 +986,7 @@
       _setChecked('setEnableFolderWatcher', _initialSettings.enable_folder_watcher !== false);
 
       _setVal('setMaintenanceInterval', _initialSettings.maintenance_interval || 'weekly');
+      _setVal('setRetryInterval', _initialSettings.retry_interval || 'daily');
 
       setDirty(false);
       showToast('Changes discarded', 'info');
@@ -1010,6 +1034,7 @@
         enable_duration_check: _getChecked('setEnableDurationCheck', true),
         enable_folder_watcher: _getChecked('setEnableFolderWatcher', true),
         maintenance_interval: _getVal('setMaintenanceInterval', 'weekly'),
+        retry_interval: _getVal('setRetryInterval', 'daily'),
       };
 
       try {
@@ -1143,6 +1168,23 @@
           btn.disabled = false;
           btn.innerHTML = '<i class="fas fa-broom me-1"></i>Run Maintenance Now';
         }
+      }
+    }
+
+    // Brief 7 §5: manual "Retry All Failed" from the settings page (the same
+    // route the home page button uses; the scheduled variant calls the same
+    // backend logic).
+    async function retryAllFailedNow() {
+      try {
+        const resp = await fetch('/api/queue/retry-failed', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok) {
+          showToast(data.message || 'Failed tracks re-queued.', 'success');
+        } else {
+          showToast(data.error || 'Could not re-queue failed tracks', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
       }
     }
 

@@ -83,6 +83,31 @@ with app.app_context():
         "class NeedsNewerCore(EventHookPlugin): pass\n"
     )
 
+    # Brief 7 §4 fixture: a multi-type plugin (library_source + server_extension)
+    # shaped like the bundled fnack.lidarr — the extraction of the old
+    # services/lidarr_service.py. Verifies the class can implement both
+    # interfaces and that its register_routes() blueprint actually serves.
+    lidarr_dir = bundled_fixture / "fnack.lidarr"
+    lidarr_dir.mkdir(parents=True, exist_ok=True)
+    (lidarr_dir / "plugin.json").write_text(
+        '{"id":"fnack.lidarr","name":"Lidarr Test","version":"1.0.0",'
+        '"type":["library_source","server_extension"],"api_version":"^1.0",'
+        '"min_core_version":"0.2.0","entry_point":"plugin:LidarrTestPlugin",'
+        '"author":"fnack","description":"test lidarr","permissions":["settings"],'
+        '"settings_schema":[{"key":"api_key","type":"secret","default":""}],'
+        '"ui":{"slots":[]},"dependencies":{},"trust_level":"official"}'
+    )
+    (lidarr_dir / "plugin.py").write_text(
+        "from flask import Blueprint, jsonify\n"
+        "from plugins.base import LibrarySourcePlugin, ServerExtensionPlugin\n"
+        "class LidarrTestPlugin(LibrarySourcePlugin, ServerExtensionPlugin):\n"
+        "    def list_artists(self): return []\n"
+        "    def register_routes(self, blueprint: Blueprint) -> None:\n"
+        "        @blueprint.route('/api/sabnzbd-test', methods=['GET'])\n"
+        "        def sabnzbd_test():\n"
+        "            return jsonify({'ok': True, 'plugin': 'fnack.lidarr'})\n"
+    )
+
     manager = init_plugin_manager(
         plugins_dir=str(Path(__file__).resolve().parent.parent / "examples" / "plugins"),
         bundled_plugins_dir=str(bundled_fixture),
@@ -120,7 +145,24 @@ with app.app_context():
     bp = build_plugins_blueprint(manager, registry)
     app.register_blueprint(bp)
 
+    # Brief 7 §4: register server_extension plugin blueprints BEFORE the
+    # first request (same loop app.py runs for enabled ServerExtensionPlugins,
+    # incl. the bundled fnack.lidarr). The multi-type lidarr fixture must
+    # serve its register_routes() blueprint.
+    from plugins.base import ServerExtensionPlugin
+    from flask import Blueprint as _FlaskBlueprint
+    for _loaded in manager._plugins.values():  # noqa: SLF001 - mirrors app.py
+        if not _loaded.enabled or not isinstance(_loaded.instance, ServerExtensionPlugin):
+            continue
+        _bp = _FlaskBlueprint(f"smoke_{_loaded.manifest.id.replace('.', '_').replace('-', '_')}",
+                              __name__, url_prefix="")
+        _loaded.instance.register_routes(_bp)
+        app.register_blueprint(_bp)
+
     client = app.test_client()
+    r = client.get("/api/sabnzbd-test")
+    print("Lidarr fixture route:", r.status_code, r.json)
+    assert r.status_code == 200 and r.json.get("plugin") == "fnack.lidarr"
     r = client.post("/api/plugins/dev.fnack.example-quality-flag/settings", json={"min_bitrate_kbps": 320})
     print("Settings POST:", r.status_code, r.json)
     assert r.status_code == 200
@@ -209,5 +251,16 @@ with app.app_context():
     r = client.get("/api/plugins/repositories")
     print("Repositories:", r.status_code, r.json)
     assert r.status_code == 200 and isinstance(r.json, list)
+
+    # Brief 7 §4: the multi-type (library_source + server_extension) lidarr
+    # fixture is listed under both types (routes verified above, before the
+    # first request was handled).
+    by_id = {p["id"]: p for p in manager.list_loaded()}
+    assert "fnack.lidarr" in by_id, "multi-type lidarr fixture must load"
+    lidarr_manifest = by_id["fnack.lidarr"]
+    assert "library_source" in lidarr_manifest["type"], \
+        "lidarr fixture must be listed as library_source"
+    assert "server_extension" in lidarr_manifest["type"], \
+        "lidarr fixture must be listed as server_extension"
 
 print("\nSMOKE TEST PASSED")
