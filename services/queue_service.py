@@ -104,7 +104,7 @@ def _legacy_result(success, file_path=None, error=None, source_plugin_id=None, e
     )
 
 
-def _download_via_spotiflac_provider(spotify_url: str, work_dir: Path,
+def _download_via_chain(spotify_url: str, work_dir: Path,
                                      quality: Optional[str] = None,
                                      delay: Optional[float] = None):
     """Manual-download path (Phase 2): download a Spotify URL through the
@@ -621,9 +621,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         save_cover_setting = _get_setting(app, "save_cover_art", "true").lower() != "false"
         cover_filename_setting = _get_setting(app, "cover_art_filename", "cover.jpg")
         embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
-        enable_spotiflac = _get_setting(app, "enable_spotiflac", "true").lower() != "false"
         enable_ytdlp = _get_setting(app, "enable_ytdlp", "true").lower() != "false"
-        spotiflac_delay = float(_get_setting(app, "spotiflac_delay", "1.5"))
         cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
         prefer_yt_music = _get_setting(app, "youtube_source", "youtube_music").lower() == "youtube_music"
         spotify_client_id = _get_setting(app, "spotify_client_id", "")
@@ -770,33 +768,39 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                         "bitrate": existing_match_bitrate,
                     }
 
-        # Step 1: Resolve Spotify link (ISRC-first) if SpotiFLAC is enabled and not already resolved from library.
-        # Routed through the metadata provider chain (capability check on
+        # Step 1: Resolve Spotify link (ISRC-first) if any download provider is
+        # enabled (Phase 2: no SpotiFLAC-specific gate — the plugin's enabled
+        # state in Settings → Plugins governs whether it's in the chain, and a
+        # disabled spotiflac simply isn't a download.track provider). Routed
+        # through the metadata provider chain (capability check on
         # resolve_track_url — e.g. the fnack.spotify plugin) so the resolution
         # logic lives behind the plugin boundary like the other providers;
         # falls back to the direct service call if no provider exposes it.
-        if not verified_file and enable_spotiflac and job_id not in cancel_requested_jobs:
-            spotify_url = None
-            from plugins.manager import plugin_manager as _pm
-            if _pm is not None:
-                for provider in _pm.get_metadata_providers():
-                    if hasattr(provider, "resolve_track_url") and callable(provider.resolve_track_url):
-                        try:
-                            # Phase 1.1 §3: provider invocation through the
-                            # manager's guarded boundary (executor + timeout +
-                            # health/auto-disable), never a raw call.
-                            spotify_url = _pm.invoke_provider(
-                                provider, "resolve_track_url",
-                                track_title,
-                                artist_name,
-                                album_name=album_name,
-                                isrc=isrc,
-                                track_number=track_num,
-                            )
-                            if spotify_url:
-                                break
-                        except Exception as e:
-                            logger.debug("[METADATA] %s resolve_track_url failed: %s", getattr(provider, "manifest", provider), e)
+        spotify_url = None
+        if not verified_file and job_id not in cancel_requested_jobs:
+            from plugins.manager import plugin_manager as _pm0
+            _resolve_enabled = bool(_pm0 is not None and _pm0.has_capability("download.track"))
+            if _resolve_enabled:
+                from plugins.manager import plugin_manager as _pm
+                if _pm is not None:
+                    for provider in _pm.get_metadata_providers():
+                        if hasattr(provider, "resolve_track_url") and callable(provider.resolve_track_url):
+                            try:
+                                # Phase 1.1 §3: provider invocation through the
+                                # manager's guarded boundary (executor + timeout +
+                                # health/auto-disable), never a raw call.
+                                spotify_url = _pm.invoke_provider(
+                                    provider, "resolve_track_url",
+                                    track_title,
+                                    artist_name,
+                                    album_name=album_name,
+                                    isrc=isrc,
+                                    track_number=track_num,
+                                )
+                                if spotify_url:
+                                    break
+                            except Exception as e:
+                                logger.debug("[METADATA] %s resolve_track_url failed: %s", getattr(provider, "manifest", provider), e)
             if not spotify_url:
                 spotify_url = resolve_spotify_url(
                     track_title,
@@ -807,8 +811,6 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     client_id=spotify_client_id,
                     client_secret=spotify_client_secret,
                 )
-        else:
-            spotify_url = None
 
         # Steps 2-4: Downloader plugin chain (Phase 2 — PLUGIN_ARCHITECTURE.md
         # §10 Phase 2 + INTEGRATION.md §6). Priority-sorted plugins replace the
@@ -834,8 +836,11 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         )
 
         downloaders = _pm.get_downloaders() if _pm else []
+        # Phase 2: no SpotiFLAC-specific gate — a disabled spotiflac plugin is
+        # simply not a download.track provider (get_downloaders() reads the
+        # capability registry, which only holds enabled plugins). Only the
+        # still-legacy yt-dlp toggle remains until PR 4.
         engine_gates = {
-            "fnack.spotiflac": enable_spotiflac,
             "fnack.ytdlp": enable_ytdlp,
             "fnack.spotdl": enable_ytdlp,  # spotdl is an alias of the yt-dlp plugin
         }
@@ -864,14 +869,15 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 continue
 
             # Build the options dict from the plugin's own settings with the
-            # legacy AppSetting fallback (behavior-preserving for existing users).
+            # legacy AppSetting fallback (behavior-preserving for existing
+            # users). Phase 2: quality/delay for the SDK spotiflac plugin come
+            # from the plugin's own settings (migrated in on_load); only the
+            # still-legacy ytdlp provider consumes these options.
             options = {}
             try:
                 options["quality"] = dl.context.settings.get("quality") or quality_setting
-                options["delay"] = dl.context.settings.get("delay") or spotiflac_delay
             except Exception:
                 options["quality"] = quality_setting
-                options["delay"] = spotiflac_delay
             try:
                 options["format"] = dl.context.settings.get("format") or fallback_format
                 options["audio_source"] = dl.context.settings.get("audio_source") or ("youtube" if not prefer_yt_music else "youtube_music")
@@ -1295,7 +1301,6 @@ def download_manual_match_track(
         save_cover_setting = _get_setting(app, "save_cover_art", "true").lower() != "false"
         cover_filename_setting = _get_setting(app, "cover_art_filename", "cover.jpg")
         embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
-        spotiflac_delay = float(_get_setting(app, "spotiflac_delay", "1.5"))
         cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
         enable_duration_check = _get_setting(app, "enable_duration_check", "true").lower() != "false"
         strictness_setting = _get_setting(app, "matching_strictness", "standard")
@@ -1335,11 +1340,10 @@ def download_manual_match_track(
         # 1. Spotify URL
         if "open.spotify.com/track/" in target_input or target_input.startswith("spotify:track:"):
             socketio.emit("download_progress", {"track_id": track_id, "progress": 35.0, "status": "downloading"})
-            ok, downloaded_file, last_err = _download_via_spotiflac_provider(
+            ok, downloaded_file, last_err = _download_via_chain(
                 target_input,
                 tmp_work_dir,
                 quality=quality_setting,
-                delay=spotiflac_delay,
             )
             if not ok or not downloaded_file:
                 # Fallback to yt-dlp
@@ -1378,11 +1382,10 @@ def download_manual_match_track(
                 direct_err = last_err or "provided URL failed"
                 spot_url = resolve_spotify_url(track_title, artist_name, album_name, isrc=track_isrc)
                 if spot_url:
-                    ok, downloaded_file, last_err = _download_via_spotiflac_provider(
+                    ok, downloaded_file, last_err = _download_via_chain(
                         spot_url,
                         tmp_work_dir,
                         quality=quality_setting,
-                        delay=spotiflac_delay,
                     )
                     if not downloaded_file:
                         last_err = f"Provided link failed: {direct_err} | Lossless fallback also failed: {last_err}"
@@ -1397,11 +1400,10 @@ def download_manual_match_track(
                 t_info = get_track_info(d_id)
                 spot_url = resolve_spotify_url(t_info.get("title") or track_title, t_info.get("artist_name") or artist_name, isrc=t_info.get("isrc"))
                 if spot_url:
-                    ok, downloaded_file, last_err = _download_via_spotiflac_provider(
+                    ok, downloaded_file, last_err = _download_via_chain(
                         spot_url,
                         tmp_work_dir,
                         quality=quality_setting,
-                        delay=spotiflac_delay,
                     )
                 if not downloaded_file:
                     ok, downloaded_file, last_err = download_track_ytdlp(

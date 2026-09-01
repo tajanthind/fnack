@@ -147,10 +147,12 @@ def test_migration_adapter_normalizes_both_contracts() -> None:
 
 
 def test_manual_download_routes_through_provider() -> None:
-    """The manual path invokes the spotiflac provider via the guarded
-    boundary — no direct core->service call remains."""
+    """The manual path invokes the download.track provider via the guarded
+    boundary — no direct core->service call remains. The helper is
+    provider-neutral (it iterates all download.track providers, not just
+    spotiflac)."""
     from services import queue_service as qs
-    assert hasattr(qs, "_download_via_spotiflac_provider")
+    assert hasattr(qs, "_download_via_chain")
     src = Path(qs.__file__).read_text(encoding="utf-8")
     assert "download_track_spotiflac(" not in src, "manual path must not call the service directly"
     assert "spotiflac_service" not in src, "queue_service must not import the deleted service"
