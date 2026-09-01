@@ -125,7 +125,6 @@ def test_runtime_provider_calls_use_guarded_boundary() -> None:
 # ---------------------------------------------------------------------------
 
 FORBIDDEN_PROVIDER_MODULES = {
-    "services.ytdlp_service",
     "services.spotify_service",
     "services.deezer_service",
     "services.musicbrainz_service",
@@ -142,7 +141,6 @@ TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {
     "app.py": {
         "services.deezer_service": "confirmed interactive search split (HARNESS §2)",
         "services.navidrome_service": "scan/test direct fallback when no scan_trigger plugin (Phase 10 removes)",
-        "services.ytdlp_service": "cookies status config surface (Phase 12 removes)",
         "services.musicbrainz_service": "discography enrichment helper called from sync (Phase 7 removes)",
         "services.acoustid_service": "identify/last-lookup helpers on verify route (Phase 9 removes)",
     },
@@ -153,21 +151,14 @@ TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {
     "queue_service.py": {
         "services.deezer_service": "track info fallback (Phase 6 removes)",
         "services.spotify_service": "URL resolution fallback (Phase 5 removes)",
-        "services.ytdlp_service": "legacy engine path (Phase 4 removes)",
         "services.navidrome_service": "scan fallback (Phase 10 removes)",
         "services.acoustid_service": "fingerprint fallback (Phase 9 removes)",
-    },
-    "ytdlp_service.py": {
-        "services.acoustid_service": "verify-after-download shared helper (Phase 9 removes)",
     },
     "deezer_service.py": {
         "services.itunes_service": "regional album fallback inside provider (Phase 7 removes)",
     },
     "metadata_service.py": {
         "services.navidrome_service": "split-repair scan helper (Phase 10 removes)",
-    },
-    "spotdl_service.py": {
-        "services.ytdlp_service": "alias of the yt-dlp engine (Phase 4 removes)",
     },
 }
 

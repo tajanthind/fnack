@@ -268,6 +268,27 @@ and resets it on that event). Provider settings are plugin-owned
 (`quality`/`delay`/`timeout`) with the legacy global as a one-time fallback
 that migrates into the plugin store.
 
+**Phase 2 (PR 4): yt-dlp extraction.** `fnack.ytdlp` is the second
+authoritative provider: the whole engine moved verbatim into the plugin
+(`ytdlp.py` — CLI invocation, candidate scoring, YouTube Music preference,
+cookies handling, format selection, errors) and `services/ytdlp_service.py`
++ `services/spotdl_service.py` (legacy alias) are deleted. The plugin
+implements the same FINAL SDK `TrackDownloader` contract as spotiflac.
+`DownloadRequest` gained provider-neutral hints the adapter carries:
+`query` (raw URL/search string from the manual-download path), `cookies_path`,
+`audio_source` (`youtube` vs `youtube_music`), and `check_duration` (the
+queue verifies after download, so the provider may skip its internal check).
+Generic core helpers (audio-file verification, AcoustID matching) reach the
+plugin only through the PluginContext facade (`library.verify_audio_file` /
+`library.verify_download_acoustid`) — the plugin never imports `services.*`;
+a lazy guarded fallback keeps `ytdlp.py` usable standalone in tests. The
+cookies settings UI routes through the provider boundary too: `app.py` duck-
+types any enabled `download.track` provider exposing `get_cookies_status` /
+`get_cookies_path`, with minimal core fallbacks. Legacy `ytdlp_format` /
+`spotdl_format` / `spotdl_source` / `youtube_cookies_path` globals are a
+one-time fallback migrated into the plugin store in `on_load` (full legacy-
+setting/UI deletion is deferred to PR 11/12).
+
 ---
 
 ## 3. One section per plugin type

@@ -49,7 +49,6 @@ from services.queue_service import (
     queue_track,
     start_queue_worker,
 )
-from services.ytdlp_service import get_cookies_path, get_cookies_status
 
 from sqlalchemy import case, event, func
 from sqlalchemy.engine import Engine
@@ -1684,10 +1683,78 @@ def api_vpn_config_delete():
 #  Cookies Management API
 # ══════════════════════════════════════════════════════════════════════
 
+def _cookies_provider():
+    """Phase 2: the cookies helpers now live on the yt-dlp provider plugin
+    (it owns cookies handling). Find it provider-neutrally: any enabled
+    download.track provider exposing get_cookies_status(). Returns None when
+    no such provider is loaded."""
+    try:
+        from plugins.manager import plugin_manager as _pm
+        if _pm is None:
+            return None
+        for provider in _pm.get_downloaders():
+            if hasattr(provider, "get_cookies_status") and callable(provider.get_cookies_status):
+                return provider
+    except Exception:
+        pass
+    return None
+
+
+def _cookies_status(custom_path):
+    """Cookies status through the provider (owned by the yt-dlp plugin); a
+    minimal core fallback keeps the settings page working when no cookies-
+    capable provider is loaded."""
+    provider = _cookies_provider()
+    if provider is not None:
+        try:
+            return provider.get_cookies_status(custom_path)
+        except Exception:
+            logger.debug("[COOKIES] provider status failed, using core fallback", exc_info=True)
+    # Core fallback: report the configured path with whatever we can read.
+    from pathlib import Path as _P
+    p = _P(custom_path or "/config/cookies.txt")
+    if p.exists() and p.is_file() and p.stat().st_size > 0:
+        return {
+            "configured": True,
+            "path": str(p),
+            "exists": True,
+            "size_bytes": p.stat().st_size,
+            "cookie_count": sum(1 for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines()
+                                if ln.strip() and not ln.startswith("#")),
+            "last_modified": None,
+            "message": f"Active (file present at {p.name}).",
+        }
+    return {
+        "configured": False,
+        "path": str(p),
+        "exists": False,
+        "size_bytes": 0,
+        "cookie_count": 0,
+        "last_modified": None,
+        "message": "No cookies.txt file found. YouTube may restrict some streams without login.",
+    }
+
+
+def _cookies_path(custom_path):
+    """Resolve the active cookies file through the provider if available,
+    else the configured path when it exists."""
+    provider = _cookies_provider()
+    if provider is not None:
+        try:
+            cp = provider.get_cookies_path(custom_path)
+            if cp:
+                return cp
+        except Exception:
+            logger.debug("[COOKIES] provider path lookup failed, using core fallback", exc_info=True)
+    from pathlib import Path as _P
+    p = _P(custom_path or "/config/cookies.txt")
+    return p if p.exists() and p.is_file() and p.stat().st_size > 0 else None
+
+
 @app.route("/api/cookies/status", methods=["GET"])
 def api_cookies_status():
     custom_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
-    return jsonify(get_cookies_status(custom_path))
+    return jsonify(_cookies_status(custom_path))
 
 
 @app.route("/api/cookies/upload", methods=["POST"])
@@ -1716,7 +1783,7 @@ def api_cookies_upload():
         logger.warning("[COOKIES] Failed to save cookies file: %s", e)
         return jsonify({"error": f"Failed to save cookies file: {e}"}), 500
 
-    st = get_cookies_status(str(dest))
+    st = _cookies_status(str(dest))
     return jsonify({
         "message": f"cookies.txt saved successfully ({st.get('cookie_count', 0)} cookies detected).",
         "status": st,
@@ -1727,7 +1794,7 @@ def api_cookies_upload():
 def api_cookies_delete():
     """Delete the active cookies.txt file."""
     custom_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
-    cp = get_cookies_path(custom_path)
+    cp = _cookies_path(custom_path)
     if cp and cp.exists():
         try:
             cp.unlink()
@@ -1735,7 +1802,7 @@ def api_cookies_delete():
             return jsonify({"error": f"Failed to delete cookies file: {e}"}), 500
     return jsonify({
         "message": "cookies.txt file deleted.",
-        "status": get_cookies_status(custom_path),
+        "status": _cookies_status(custom_path),
     })
 
 
@@ -1846,7 +1913,7 @@ def api_settings():
         "spotify_client_secret": _get_setting("spotify_client_secret", ""),
         "youtube_source": _get_setting("youtube_source", "youtube_music"),
         "youtube_cookies_path": cookies_path,
-        "cookies_status": get_cookies_status(cookies_path),
+        "cookies_status": _cookies_status(cookies_path),
         "ytdlp_format": fallback_fmt,
         "spotdl_format": fallback_fmt,
         "spotdl_source": _get_setting("spotdl_source", "youtube"),

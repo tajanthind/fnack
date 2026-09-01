@@ -17,7 +17,6 @@ from flask_socketio import SocketIO
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
 from services.deezer_service import get_track_info
 from services.spotify_service import resolve_spotify_url
-from services.ytdlp_service import download_track_ytdlp
 from services.verifier_service import STRICTNESS_DELTAS, verify_audio_file
 from services.navidrome_service import trigger_navidrome_scan
 import requests
@@ -50,16 +49,28 @@ def _is_sdk_downloader(provider) -> bool:
         return False
 
 
+def _build_download_request(track_ref, tmp_work_dir, options):
+    """Build an SDK DownloadRequest from the chain's (track, work_dir, options)
+    shape, carrying the provider-neutral hints (query/cookies/check_duration)
+    the ytdlp provider needs."""
+    from fnack.plugin_api.models import DownloadRequest
+    return DownloadRequest(
+        track=track_ref,
+        destination=tmp_work_dir,
+        quality=options.get("quality"),
+        format=options.get("format"),
+        query=options.get("query"),
+        cookies_path=options.get("cookies_path"),
+        audio_source=options.get("audio_source"),
+        check_duration=bool(options.get("check_duration", True)),
+    )
+
+
 def _invoke_downloader_can_handle(pm, provider, track_ref, tmp_work_dir, options) -> bool:
     """Call can_handle through the guarded boundary, adapting the contract."""
     if _is_sdk_downloader(provider):
         from fnack.plugin_api.models import DownloadRequest
-        request = DownloadRequest(
-            track=track_ref,
-            destination=tmp_work_dir,
-            quality=options.get("quality"),
-            format=options.get("format"),
-        )
+        request = _build_download_request(track_ref, tmp_work_dir, options)
         return bool(pm.invoke_provider(provider, "can_handle", request))
     return bool(pm.invoke_provider(provider, "can_handle", track_ref))
 
@@ -71,13 +82,7 @@ def _invoke_downloader_download(pm, provider, track_ref, tmp_work_dir, options,
     Returns a legacy-shaped object (success / file_path / error) so the chain's
     verification code is contract-agnostic."""
     if _is_sdk_downloader(provider):
-        from fnack.plugin_api.models import DownloadRequest
-        request = DownloadRequest(
-            track=track_ref,
-            destination=tmp_work_dir,
-            quality=options.get("quality"),
-            format=options.get("format"),
-        )
+        request = _build_download_request(track_ref, tmp_work_dir, options)
         result = pm.invoke_provider(provider, "download", request, timeout=timeout)
         if result is None:
             return None
@@ -130,6 +135,49 @@ def _download_via_chain(spotify_url: str, work_dir: Path,
             return True, result.file_path, None
         return False, None, (result.error if result else "download failed")
     return False, None, "no download provider available"
+
+
+def _download_via_ytdlp_provider(query_or_url: str, work_dir: Path,
+                                 output_format: Optional[str] = None,
+                                 cookies_path: Optional[str] = None,
+                                 check_duration: bool = True,
+                                 artist_name: Optional[str] = None,
+                                 track_title: Optional[str] = None,
+                                 expected_duration: Optional[float] = None):
+    """Manual-download path (Phase 2): download a raw query/URL (YouTube,
+    SoundCloud, or a search string) through the download.track capability —
+    the fnack.ytdlp provider owns yt-dlp invocation/cookies/scoring — via the
+    guarded manager boundary. NOT a direct core->service call. Returns
+    (success, file_path, error)."""
+    from plugins.manager import plugin_manager as _pm
+    from plugins.base import TrackRef
+    if _pm is None:
+        return False, None, "plugin manager not ready"
+    track_ref = TrackRef(
+        id=0,
+        title=track_title or "",
+        artist_name=artist_name or "",
+        album_name="",
+        duration=expected_duration,
+    )
+    options = {
+        "format": output_format,
+        "cookies_path": cookies_path,
+        "query": query_or_url,
+        "check_duration": check_duration,
+    }
+    for provider in _pm.get_downloaders():
+        if not _invoke_downloader_can_handle(_pm, provider, track_ref, work_dir, options):
+            continue
+        from plugins.manager import DOWNLOAD_HOOK_TIMEOUT
+        result = _invoke_downloader_download(
+            _pm, provider, track_ref, work_dir, options, timeout=DOWNLOAD_HOOK_TIMEOUT)
+        if result and result.success and result.file_path:
+            return True, result.file_path, None
+        return False, None, (result.error if result else "download failed")
+    return False, None, "no download provider available"
+
+
 _executor: Optional[ThreadPoolExecutor] = None
 _running_futures: set = set()
 _queue_lock = threading.Lock()
@@ -1349,29 +1397,29 @@ def download_manual_match_track(
             if not ok or not downloaded_file:
                 # Fallback to yt-dlp
                 socketio.emit("download_progress", {"track_id": track_id, "progress": 60.0, "status": "downloading"})
-                ok, downloaded_file, last_err = download_track_ytdlp(
+                ok, downloaded_file, last_err = _download_via_ytdlp_provider(
                     f"{artist_name} - {track_title}",
                     tmp_work_dir,
                     output_format=fallback_format,
+                    cookies_path=cookies_path,
+                    check_duration=False,
                     artist_name=artist_name,
                     track_title=track_title,
                     expected_duration=expected_duration,
-                    cookies_path=cookies_path,
-                    check_duration=False,
                 )
 
         # 2. YouTube / YouTube Music URL
         elif "youtube.com" in target_input or "youtu.be" in target_input:
             socketio.emit("download_progress", {"track_id": track_id, "progress": 40.0, "status": "downloading"})
-            ok, downloaded_file, last_err = download_track_ytdlp(
+            ok, downloaded_file, last_err = _download_via_ytdlp_provider(
                 target_input,
                 tmp_work_dir,
                 output_format=fallback_format,
+                cookies_path=cookies_path,
+                check_duration=False,
                 artist_name=artist_name,
                 track_title=track_title,
                 expected_duration=expected_duration,
-                cookies_path=cookies_path,
-                check_duration=False,
             )
             # Fallback if direct YouTube URL was blocked or failed: try the
             # official release on a lossless provider (Spotify resolution).
@@ -1407,31 +1455,40 @@ def download_manual_match_track(
                         quality=quality_setting,
                     )
                 if not downloaded_file:
-                    ok, downloaded_file, last_err = download_track_ytdlp(
+                    ok, downloaded_file, last_err = _download_via_ytdlp_provider(
                         f"{artist_name} - {track_title}",
                         tmp_work_dir,
                         output_format=fallback_format,
                         cookies_path=cookies_path,
                         check_duration=False,
+                        artist_name=artist_name,
+                        track_title=track_title,
+                        expected_duration=expected_duration,
                     )
             else:
-                ok, downloaded_file, last_err = download_track_ytdlp(
+                ok, downloaded_file, last_err = _download_via_ytdlp_provider(
                     target_input,
                     tmp_work_dir,
                     output_format=fallback_format,
                     cookies_path=cookies_path,
                     check_duration=False,
+                    artist_name=artist_name,
+                    track_title=track_title,
+                    expected_duration=expected_duration,
                 )
 
         # 4. Raw Query / Other URL
         else:
             socketio.emit("download_progress", {"track_id": track_id, "progress": 40.0, "status": "downloading"})
-            ok, downloaded_file, last_err = download_track_ytdlp(
+            ok, downloaded_file, last_err = _download_via_ytdlp_provider(
                 target_input,
                 tmp_work_dir,
                 output_format=fallback_format,
                 cookies_path=cookies_path,
                 check_duration=False,
+                artist_name=artist_name,
+                track_title=track_title,
+                expected_duration=expected_duration,
             )
 
         if not downloaded_file or not downloaded_file.exists():
