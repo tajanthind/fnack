@@ -126,3 +126,53 @@ class FingerprintEvidence:
     retryable: bool = False
     error_code: Optional[str] = None
     raw: Mapping[str, Any] = field(default_factory=dict)
+
+
+# -- verification (Phase 3) --------------------------------------------------
+
+@dataclass
+class MetadataEvidence:
+    """Normalized metadata evidence for one aspect of a track (tags, duration,
+    ISRC...). Provider-neutral input to VerificationService."""
+    kind: str                       # "tag_artist" | "tag_title" | "duration" | "isrc" | "file"
+    status: str                     # "match" | "mismatch" | "missing" | "unverifiable"
+    expected: Optional[Any] = None
+    actual: Optional[Any] = None
+    detail: Optional[str] = None
+
+
+@dataclass
+class TrackMatch:
+    """A canonical match candidate (what the file actually is, per the best
+    evidence) — used to retag / surface to the user."""
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    album: Optional[str] = None
+    isrc: Optional[str] = None
+    score: float = 0.0
+    provider_id: Optional[str] = None
+
+
+@dataclass
+class VerificationResult:
+    """Provider-neutral verification outcome (Phase 3, MASTER §Verification).
+
+    `status`:
+      - "verified"      — metadata and/or fingerprint evidence confirms the
+                          file is the expected track.
+      - "mismatch"      — evidence (metadata or fingerprint) shows a DIFFERENT
+                          track with high confidence.
+      - "uncertain"     — not enough evidence to decide either way (missing
+                          tags, no fingerprint match) — never treated as a
+                          mismatch.
+      - "provider_error" — a verification provider errored/timeout; the
+                          caller decides policy (retry / uncertain).
+    `score` is a 0..1 confidence the file matches the expected track.
+    """
+    status: str  # "verified" | "mismatch" | "uncertain" | "provider_error"
+    score: float = 0.0
+    reasons: list[str] = field(default_factory=list)
+    metadata_evidence: list[MetadataEvidence] = field(default_factory=list)
+    fingerprint_evidence: list[FingerprintEvidence] = field(default_factory=list)
+    canonical_match: Optional[TrackMatch] = None
+

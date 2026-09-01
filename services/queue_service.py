@@ -495,57 +495,70 @@ def queue_artist_missing(app: Flask, artist_id: int, source: str = "manual") -> 
 
 def _verify_or_rescue(app, downloaded_file, expected_duration, artist_name, track_title,
                       max_duration_delta, reject_mismatches, enable_duration_check):
-    """Verify a downloaded file; on failure, try AcoustID to rescue it.
+    """Verify a downloaded file via VerificationService (Phase 3 — the
+    provider-neutral verification policy combines metadata + fingerprint
+    evidence; the queue's AcoustID-specific rescue semantics are preserved by
+    the service's fingerprint handling, but core has no provider branch).
 
     Returns (v_ok, v_err, meta, caution_info_or_None):
-      * v_ok True,  caution None  -> verified (or AcoustID-confirmed "right
+      * v_ok True,  caution None  -> verified (or fingerprint-confirmed "right
                                      file, wrong tags" — finalize retags it)
-      * v_ok False, caution set   -> AcoustID says it is a DIFFERENT song:
+      * v_ok False, caution set   -> evidence says it is a DIFFERENT song:
                                      keep the file, caller flags the track
                                      with `caution_info` (user decides later)
       * v_ok False, caution None  -> normal rejection; file deleted per
                                      reject_mismatches
     """
-    from services.acoustid_service import verify_download
+    from services.verification_service import VerificationService
+    from fnack.plugin_api.models import TrackRef
 
-    v_ok, v_err, meta = verify_audio_file(
-        downloaded_file,
-        expected_duration_seconds=expected_duration if enable_duration_check else None,
-        expected_artist=artist_name,
-        expected_title=track_title,
-        max_duration_delta=max_duration_delta,
-        delete_on_failure=False,
-    )
-    if v_ok:
-        return True, v_err, meta, None
-
-    # Verification failed — try AcoustID before giving up / deleting
     try:
-        res = verify_download(
-            str(downloaded_file), artist_name, track_title,
-            expected_duration if enable_duration_check else None,
+        result = VerificationService().verify(
+            TrackRef(id=0, title=track_title or "", artist_name=artist_name or "",
+                     album_name="", duration=expected_duration if enable_duration_check else None),
+            Path(downloaded_file),
         )
-    except Exception:
-        res = {"status": "unknown", "info": None}
+    except Exception as exc:
+        logger.debug("[QUEUE] VerificationService failed: %s", exc)
+        result = None
 
-    if res["status"] == "match":
-        logger.info("[QUEUE] AcoustID confirmed '%s - %s' (right file, wrong tags) — accepting", artist_name, track_title)
-        return True, "AcoustID confirmed (fingerprint match)", meta, None
-    if res["status"] == "mismatch":
+    if result is None:
+        if reject_mismatches:
+            try:
+                if os.path.isfile(downloaded_file):
+                    os.remove(downloaded_file)
+            except OSError:
+                pass
+        return False, "verification unavailable", {}, None
+
+    if result.status == "verified":
+        cm = result.canonical_match
+        if cm and cm.title and (cm.title.lower() != (track_title or "").lower()):
+            logger.info("[QUEUE] Fingerprint confirmed '%s - %s' (right file, wrong tags) — accepting",
+                        artist_name, track_title)
+        return True, "; ".join(result.reasons) or "verified", {}, None
+
+    if result.status == "mismatch":
+        cm = result.canonical_match
         logger.warning(
-            "[QUEUE] AcoustID mismatch for '%s - %s': matched to %r — keeping file, flagging for user",
-            artist_name, track_title, (res["info"] or {}).get("matched_title"),
+            "[QUEUE] Verification mismatch for '%s - %s': matched to %r — keeping file, flagging for user",
+            artist_name, track_title, (cm.title if cm else None),
         )
-        return False, "AcoustID mismatch (different song)", meta, res["info"]
+        caution = {
+            "matched_title": cm.title if cm else None,
+            "matched_artists": [cm.artist] if cm and cm.artist else [],
+            "score": (cm.score if cm else 0.0) or 0.0,
+        }
+        return False, "; ".join(result.reasons) or "mismatch", {}, caution
 
-    # Unknown / no fingerprint: normal rejection
+    # uncertain / provider_error: normal rejection
     if reject_mismatches:
         try:
             if os.path.isfile(downloaded_file):
                 os.remove(downloaded_file)
         except OSError:
             pass
-    return False, v_err, meta, None
+    return False, "; ".join(result.reasons) or "not verified", {}, None
 
 
 def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
