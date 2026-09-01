@@ -152,15 +152,17 @@ class LibraryContext:
         return search_track(query, limit=limit)
 
     def get_album_info(self, album_id: int) -> dict:
-        """Deezer album metadata (core-direct; used by the Lidarr plugin to
-        build friendly release names)."""
-        from services.deezer_service import get_album_info
-        return get_album_info(album_id)
+        """Album metadata (Phase 3: via MetadataService — album.metadata
+        capability; used by the Lidarr plugin to build friendly release
+        names)."""
+        from services.metadata_service import MetadataService
+        return MetadataService().get_album_metadata(str(album_id)) or {}
 
     def get_track_info(self, track_id: int) -> dict:
-        """Deezer track metadata (core-direct; see get_album_info)."""
-        from services.deezer_service import get_track_info
-        return get_track_info(track_id)
+        """Track metadata (Phase 3: via MetadataService — track.metadata
+        capability; see get_album_info)."""
+        from services.metadata_service import MetadataService
+        return MetadataService().get_track_metadata(str(track_id)) or {}
 
     def queue_lidarr_grab(self, item_type: str, item_id: int) -> list[int]:
         """Expand a Lidarr grab (a Deezer album or track id) into the local

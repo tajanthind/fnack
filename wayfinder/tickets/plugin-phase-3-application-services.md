@@ -113,3 +113,28 @@ fnack-plugins synced when a provider's impl moves.
   manual path fails cleanly, zero-provider raises). Note: queue still
   imports deezer/spotify/verifier/navidrome/acoustid for metadata/
   verification/media — those are Steps 2–4.
+- **Step 2 DONE (PR 6 = MetadataService)**: `services/metadata_service.py`
+  (new — the old tag-normalization module moved to
+  services/tag_normalization_service.py, 2 script imports updated).
+  MetadataService resolves the metadata capabilities — track.resolve /
+  artist.search / artist.discography / track.metadata / album.metadata —
+  via the registry (priority-ordered, enabled only), first-non-empty policy,
+  manager-boundary invocation, CapabilityUnavailable per capability when
+  zero providers (no hidden fallback). get_artist_discography forwards
+  filter kwargs only to providers that accept them (signature inspection).
+  Callers migrated: app.py api_search_artist / artist sync / api_artist_sync
+  and import_service (search + discography) call MetadataService; the
+  queue's ISRC/genre auto-resolve (get_track_metadata), resolve_track_url
+  and manual-path Deezer-URL handling no longer import deezer/spotify
+  services. app.py keeps get_artist_info direct (no capability exists —
+  onboarding-only, allowlist updated). plugins/context.py get_album_info /
+  get_track_info route through MetadataService. fnack.spotify on_load
+  migrates legacy spotify_client_id/secret; fnack.deezer-batch exposes
+  get_album_info (declares album.metadata) and accepts **filters — synced to
+  fnack-plugins + repackaged. Parity test
+  tests/architecture/test_metadata_service.py (provider-neutral source,
+  zero-provider CapabilityUnavailable per method, first-non-empty policy,
+  filter forwarding, caller migration, module rename). Smoke + 10
+  architecture tests green; live boot verifies real Deezer search / Spotify
+  URL resolution / Deezer track metadata through the capability chain and
+  the zero-provider structured error.

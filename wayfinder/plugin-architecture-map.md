@@ -198,6 +198,10 @@ phase.
   evidence, no acoustid_match rules in core); zero providers → structured
   CapabilityUnavailable; candidate configs supported by
   test_connection(candidate_config). One branch+PR per service.
+  **Step 1 (DownloadService) + Step 2 (MetadataService) done** — PRs #21/#22
+  (queue + app/import metadata callers migrated; tag-normalization service
+  renamed to tag_normalization_service.py; fnack.spotify + fnack.deezer-batch
+  synced). Smoke + 10 architecture tests green.
 
 ## Roadmap (execution carried into the map)
 

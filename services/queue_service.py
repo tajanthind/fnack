@@ -15,8 +15,6 @@ from flask import Flask
 from flask_socketio import SocketIO
 
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
-from services.deezer_service import get_track_info
-from services.spotify_service import resolve_spotify_url
 from services.verifier_service import STRICTNESS_DELTAS, verify_audio_file
 from services.navidrome_service import trigger_navidrome_scan
 import requests
@@ -592,18 +590,19 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
         cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
         prefer_yt_music = _get_setting(app, "youtube_source", "youtube_music").lower() == "youtube_music"
-        spotify_client_id = _get_setting(app, "spotify_client_id", "")
-        spotify_client_secret = _get_setting(app, "spotify_client_secret", "")
         # When the duration check is disabled, skip the duration comparison entirely
         # (any valid audio file is accepted) while keeping basic file validation.
         verify_expected_duration = expected_duration if enable_duration_check else None
         flagged_caution = None  # set when AcoustID flags a kept-but-different file
 
-        # Auto-resolve ISRC and genre from Deezer when missing
+        # Auto-resolve ISRC and genre from a metadata provider when missing
+        # (Phase 3: through MetadataService, capability-based — no direct
+        # services.deezer_service import).
         track_genre = track.genre or None
         if (not isrc or not track_genre) and track_deezer_id:
             try:
-                t_info = get_track_info(track_deezer_id)
+                from services.metadata_service import MetadataService
+                t_info = MetadataService().get_track_metadata(str(track_deezer_id)) or {}
                 if t_info.get("isrc") and not isrc:
                     isrc = t_info["isrc"]
                     track.isrc = isrc
@@ -737,48 +736,29 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     }
 
         # Step 1: Resolve Spotify link (ISRC-first) if any download provider is
-        # enabled (Phase 2: no SpotiFLAC-specific gate — the plugin's enabled
-        # state in Settings → Plugins governs whether it's in the chain, and a
-        # disabled spotiflac simply isn't a download.track provider). Routed
-        # through the metadata provider chain (capability check on
-        # resolve_track_url — e.g. the fnack.spotify plugin) so the resolution
-        # logic lives behind the plugin boundary like the other providers;
-        # falls back to the direct service call if no provider exposes it.
+        # enabled (Phase 2/3: no per-provider gate — a disabled plugin simply
+        # isn't a download.track provider). Routed through MetadataService
+        # (track.resolve capability, e.g. the fnack.spotify plugin) so the
+        # resolution logic lives behind the plugin boundary; no direct
+        # services.spotify_service call and no hidden fallback — if no
+        # track.resolve provider is enabled the URL stays None and the chain
+        # proceeds without a Spotify link (spotiflac can_handle gates on it).
         spotify_url = None
         if not verified_file and job_id not in cancel_requested_jobs:
             from plugins.manager import plugin_manager as _pm0
             _resolve_enabled = bool(_pm0 is not None and _pm0.has_capability("download.track"))
             if _resolve_enabled:
-                from plugins.manager import plugin_manager as _pm
-                if _pm is not None:
-                    for provider in _pm.get_metadata_providers():
-                        if hasattr(provider, "resolve_track_url") and callable(provider.resolve_track_url):
-                            try:
-                                # Phase 1.1 §3: provider invocation through the
-                                # manager's guarded boundary (executor + timeout +
-                                # health/auto-disable), never a raw call.
-                                spotify_url = _pm.invoke_provider(
-                                    provider, "resolve_track_url",
-                                    track_title,
-                                    artist_name,
-                                    album_name=album_name,
-                                    isrc=isrc,
-                                    track_number=track_num,
-                                )
-                                if spotify_url:
-                                    break
-                            except Exception as e:
-                                logger.debug("[METADATA] %s resolve_track_url failed: %s", getattr(provider, "manifest", provider), e)
-            if not spotify_url:
-                spotify_url = resolve_spotify_url(
-                    track_title,
-                    artist_name,
-                    album_name,
-                    isrc=isrc,
-                    track_number=track_num,
-                    client_id=spotify_client_id,
-                    client_secret=spotify_client_secret,
-                )
+                try:
+                    from services.metadata_service import MetadataService
+                    spotify_url = MetadataService().resolve_track_url(
+                        track_title,
+                        artist_name,
+                        album_name=album_name,
+                        isrc=isrc,
+                        track_number=track_num,
+                    )
+                except Exception as e:
+                    logger.debug("[METADATA] resolve_track_url failed: %s", e)
 
         # Steps 2-4: Downloader chain (Phase 3 — DownloadService owns the
         # download.track resolution + provider policy; the queue orchestrates).
@@ -1313,7 +1293,12 @@ def download_manual_match_track(
             if not ok or not downloaded_file:
                 socketio.emit("download_progress", {"track_id": track_id, "progress": 60.0, "status": "downloading"})
                 direct_err = last_err or "provided URL failed"
-                spot_url = resolve_spotify_url(track_title, artist_name, album_name, isrc=track_isrc)
+                try:
+                    from services.metadata_service import MetadataService
+                    spot_url = MetadataService().resolve_track_url(
+                        track_title, artist_name, album_name=album_name, isrc=track_isrc)
+                except Exception:
+                    spot_url = None
                 if spot_url:
                     ok, downloaded_file, last_err = _download_via_chain(
                         spot_url,
@@ -1330,8 +1315,16 @@ def download_manual_match_track(
             m = re.search(r"deezer\.com/track/(\d+)", target_input)
             if m:
                 d_id = int(m.group(1))
-                t_info = get_track_info(d_id)
-                spot_url = resolve_spotify_url(t_info.get("title") or track_title, t_info.get("artist_name") or artist_name, isrc=t_info.get("isrc"))
+                try:
+                    from services.metadata_service import MetadataService
+                    t_info = MetadataService().get_track_metadata(str(d_id)) or {}
+                    spot_url = MetadataService().resolve_track_url(
+                        t_info.get("title") or track_title,
+                        t_info.get("artist_name") or artist_name,
+                        isrc=t_info.get("isrc"),
+                    )
+                except Exception:
+                    spot_url = None
                 if spot_url:
                     ok, downloaded_file, last_err = _download_via_chain(
                         spot_url,
