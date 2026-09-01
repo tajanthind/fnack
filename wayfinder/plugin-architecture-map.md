@@ -202,6 +202,12 @@ phase.
   (queue + app/import metadata callers migrated; tag-normalization service
   renamed to tag_normalization_service.py; fnack.spotify + fnack.deezer-batch
   synced). Smoke + 10 architecture tests green.
+  **Step 3 (FingerprintService + VerificationService) done** — PR #23
+  (provider-neutral verification: normalized FingerprintEvidence via
+  fingerprint.identify; VerificationResult with metadata+fingerprint
+  evidence; queue _verify_or_rescue routes through the service, no
+  acoustid_service import in core; SDK MetadataEvidence/TrackMatch/
+  VerificationResult). Smoke + 11 architecture tests green.
 
 ## Roadmap (execution carried into the map)
 

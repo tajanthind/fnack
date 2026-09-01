@@ -322,8 +322,27 @@ import_service / queue_service call the service instead of importing
 deezer/spotify services; the fnack.spotify plugin migrates legacy
 spotify_client_id/secret in `on_load`, and the fnack.deezer-batch plugin now
 exposes `get_album_info` (declares album.metadata) and accepts **filters.
-Remaining steps: FingerprintService, VerificationService, MediaServerService,
-then Queue/API cleanup.
+**Phase 3, Step 3: FingerprintService + VerificationService.** The brief's
+verification layer is capability-based and provider-neutral.
+`services/fingerprint_service.py` resolves `fingerprint.identify` providers
+(fnack.acoustid today, future providers) via the registry, invokes each
+through the manager boundary (timeout + auto-disable guard), and normalizes
+results into `FingerprintEvidence` — SDK-contract providers pass through,
+legacy `FingerprintResult` (confidence/matched_title/matched_artist) is
+converted; provider errors/timeouts become `error` evidence (never crash);
+provider no_match -> NO evidence (a missing fingerprint is never treated as a
+mismatch). `services/verification_service.py` combines metadata evidence
+(duration + embedded tags via the generic core `verify_audio_file`) with the
+fingerprint evidence into a provider-neutral `VerificationResult`
+(status verified/mismatch/uncertain/provider_error, score, reasons,
+metadata_evidence, fingerprint_evidence, canonical_match). The SERVICE
+compares the matched identity against the expected track (all present
+fields must agree) — no acoustid/provider-specific branch in core. The
+queue's `_verify_or_rescue` now routes through VerificationService (the
+legacy AcoustID rescue semantics are preserved by the evidence comparison;
+the queue no longer imports acoustid_service). New SDK models:
+`MetadataEvidence`, `TrackMatch`, `VerificationResult`. Remaining steps:
+MediaServerService, then Queue/API cleanup.
 
 ---
 

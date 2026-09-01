@@ -138,3 +138,24 @@ fnack-plugins synced when a provider's impl moves.
   architecture tests green; live boot verifies real Deezer search / Spotify
   URL resolution / Deezer track metadata through the capability chain and
   the zero-provider structured error.
+- **Step 3 DONE (PR 7 = FingerprintService + VerificationService)**:
+  `services/fingerprint_service.py` resolves fingerprint.identify providers
+  (fnack.acoustid today) via the registry, invokes through the manager
+  boundary (timeout + auto-disable), normalizes SDK FingerprintEvidence /
+  legacy FingerprintResult into evidence; provider error -> error evidence
+  (never crash); provider no_match -> NO evidence (missing fingerprint never
+  a mismatch). `services/verification_service.py` combines metadata evidence
+  (duration + tags via generic core verify_audio_file) with fingerprint
+  evidence into provider-neutral VerificationResult (verified/mismatch/
+  uncertain/provider_error + score/reasons/evidence/canonical_match); the
+  SERVICE compares matched identity vs expected (all present fields must
+  agree — faithful to the legacy candidate cross-check) — no acoustid branch
+  in core. queue `_verify_or_rescue` routes through VerificationService (no
+  acoustid_service import remains in the queue). New SDK models:
+  MetadataEvidence / TrackMatch / VerificationResult. Parity test
+  tests/architecture/test_verification_service.py (provider-neutral source,
+  zero-provider CapabilityUnavailable, evidence normalization both shapes,
+  agree->verified / contradict->mismatch / no-evidence->uncertain /
+  provider-error, queue-routes-through-service). Smoke + 11 architecture
+  tests green; live boot verifies acoustid provider resolution, no-key
+  identify returns no evidence, verify returns structured results.
