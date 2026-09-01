@@ -212,7 +212,12 @@ phase.
   connection_test via the registry; candidate-config test_connection
   forwards unsaved settings; app/queue navidrome scan+test callers migrated;
   navidrome plugin declares media.health; no navidrome import in queue).
-  Smoke + 12 architecture tests green. Remaining: Step 5 Queue/API cleanup.
+  Smoke + 12 architecture tests green.
+  **Step 5 (Queue/API cleanup) done** — PR #25: queue is a pure orchestrator
+  (generic core + application services only; zero provider imports/IDs);
+  app routes use application services (remaining provider imports documented
+  transitional); test_phase3_completion.py asserts all brief completion
+  criteria. **PHASE 3 COMPLETE** — Smoke + 13 architecture tests green.
 
 ## Roadmap (execution carried into the map)
 
