@@ -161,6 +161,17 @@ phase.
   tests green, smoke green.
 
 
+- [MASTER Phase 2 (PR 3): DownloadService + SpotiFLAC extraction](tickets/plugin-phase-2-spotiflac.md):
+  fnack.spotiflac becomes the authoritative implementation — provider code
+  moved into the plugin (spotiflac.py), plugin implements the FINAL SDK
+  TrackDownloader contract (request-object based, async); queue DownloadService
+  gains a migration adapter (SDK + legacy providers coexist until PR 4);
+  manual-download path routes through the provider boundary; vpn_service
+  emits network.route_changed instead of importing the provider;
+  services/spotiflac_service.py deleted; legacy settings migrate into the
+  plugin store; multi-file plugin support in the manager; parity test added;
+  independence-test allowlist shrank. Smoke + 6 architecture tests green.
+
 ## Roadmap (execution carried into the map)
 
 1. **Phase 0** (`plugin-architecture/phase-0-scaffold`): drop `plugins/` + `examples/`

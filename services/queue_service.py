@@ -17,10 +17,6 @@ from flask_socketio import SocketIO
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
 from services.deezer_service import get_track_info
 from services.spotify_service import resolve_spotify_url
-from services.spotiflac_service import (
-    download_track_spotiflac,
-    is_spotiflac_rate_limited,
-)
 from services.ytdlp_service import download_track_ytdlp
 from services.verifier_service import STRICTNESS_DELTAS, verify_audio_file
 from services.navidrome_service import trigger_navidrome_scan
@@ -33,6 +29,107 @@ MUSIC_DIR = Path("/music")
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
 
 cancel_requested_jobs: Set[int] = set()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 downloader migration adapter (PR 3: DownloadService + SpotiFLAC)
+#
+# The queue chain drives `download.track` providers. fnack.spotiflac now
+# implements the FINAL SDK contract (TrackDownloader: request-object based);
+# fnack.ytdlp still uses the legacy DownloaderPlugin signature until its own
+# extraction (PR 4). This adapter normalizes BOTH to the legacy result shape
+# the chain already consumes (success / file_path / error), so downstream
+# verification is untouched.
+# ---------------------------------------------------------------------------
+
+def _is_sdk_downloader(provider) -> bool:
+    from fnack.plugin_api.providers import TrackDownloader
+    try:
+        return isinstance(provider, TrackDownloader)
+    except TypeError:
+        return False
+
+
+def _invoke_downloader_can_handle(pm, provider, track_ref, tmp_work_dir, options) -> bool:
+    """Call can_handle through the guarded boundary, adapting the contract."""
+    if _is_sdk_downloader(provider):
+        from fnack.plugin_api.models import DownloadRequest
+        request = DownloadRequest(
+            track=track_ref,
+            destination=tmp_work_dir,
+            quality=options.get("quality"),
+            format=options.get("format"),
+        )
+        return bool(pm.invoke_provider(provider, "can_handle", request))
+    return bool(pm.invoke_provider(provider, "can_handle", track_ref))
+
+
+def _invoke_downloader_download(pm, provider, track_ref, tmp_work_dir, options,
+                                timeout: float):
+    """Call download through the guarded boundary, adapting the contract.
+
+    Returns a legacy-shaped object (success / file_path / error) so the chain's
+    verification code is contract-agnostic."""
+    if _is_sdk_downloader(provider):
+        from fnack.plugin_api.models import DownloadRequest
+        request = DownloadRequest(
+            track=track_ref,
+            destination=tmp_work_dir,
+            quality=options.get("quality"),
+            format=options.get("format"),
+        )
+        result = pm.invoke_provider(provider, "download", request, timeout=timeout)
+        if result is None:
+            return None
+        # SDK DownloadResult (provider_id, success, path, error_code, message, ...)
+        return _legacy_result(
+            success=bool(getattr(result, "success", False)),
+            file_path=getattr(result, "path", None),
+            error=getattr(result, "message", None) or getattr(result, "error_code", None),
+            source_plugin_id=getattr(result, "provider_id", None),
+            extra=dict(getattr(result, "metadata", {}) or {}),
+        )
+    return pm.invoke_provider(provider, "download", track_ref, tmp_work_dir, options,
+                              timeout=timeout)
+
+
+def _legacy_result(success, file_path=None, error=None, source_plugin_id=None, extra=None):
+    from plugins.base import DownloadResult
+    return DownloadResult(
+        success=bool(success),
+        file_path=file_path,
+        error=error,
+        source_plugin_id=source_plugin_id,
+        extra=extra or {},
+    )
+
+
+def _download_via_spotiflac_provider(spotify_url: str, work_dir: Path,
+                                     quality: Optional[str] = None,
+                                     delay: Optional[float] = None):
+    """Manual-download path (Phase 2): download a Spotify URL through the
+    fnack.spotiflac provider (the download.track capability), via the guarded
+    manager boundary — NOT a direct core->service call. Returns
+    (success, file_path, error)."""
+    from plugins.manager import plugin_manager as _pm
+    from plugins.base import TrackRef
+    if _pm is None:
+        return False, None, "plugin manager not ready"
+    track_ref = TrackRef(
+        id=0, title="", artist_name="", album_name="",
+        spotify_url=spotify_url,
+    )
+    options = {"quality": quality, "delay": delay}
+    for provider in _pm.get_downloaders():
+        if not _invoke_downloader_can_handle(_pm, provider, track_ref, work_dir, options):
+            continue
+        from plugins.manager import DOWNLOAD_HOOK_TIMEOUT
+        result = _invoke_downloader_download(
+            _pm, provider, track_ref, work_dir, options, timeout=DOWNLOAD_HOOK_TIMEOUT)
+        if result and result.success and result.file_path:
+            return True, result.file_path, None
+        return False, None, (result.error if result else "download failed")
+    return False, None, "no download provider available"
 _executor: Optional[ThreadPoolExecutor] = None
 _running_futures: set = set()
 _queue_lock = threading.Lock()
@@ -763,10 +860,9 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                             dl.manifest.name, artist_name, track_title)
                 failure_reasons.append(f"{dl.manifest.name} skipped (upstream rate limit circuit breaker)")
                 continue
-            if not _pm.invoke_provider(dl, "can_handle", track_ref):
+            if not _invoke_downloader_can_handle(_pm, dl, track_ref, tmp_work_dir, options):
                 continue
 
-            loaded = _pm.get_loaded(dl.manifest.id)  # Phase 1: public API, not private _plugins
             # Build the options dict from the plugin's own settings with the
             # legacy AppSetting fallback (behavior-preserving for existing users).
             options = {}
@@ -796,8 +892,8 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
             # manager's ProviderExecutor boundary (sync/async/awaitable/timeout
             # handled centrally) — same guard + timeout as the old call_safe.
             from plugins.manager import DOWNLOAD_HOOK_TIMEOUT
-            result = _pm.invoke_provider(loaded, "download", track_ref, tmp_work_dir, options,
-                                         timeout=DOWNLOAD_HOOK_TIMEOUT)
+            result = _invoke_downloader_download(_pm, dl, track_ref, tmp_work_dir, options,
+                                                 timeout=DOWNLOAD_HOOK_TIMEOUT)
             if result and result.success and result.file_path:
                 downloaded_file = result.file_path
                 # Step 3: Verify audio file with strict duration + tag checking
@@ -1239,11 +1335,11 @@ def download_manual_match_track(
         # 1. Spotify URL
         if "open.spotify.com/track/" in target_input or target_input.startswith("spotify:track:"):
             socketio.emit("download_progress", {"track_id": track_id, "progress": 35.0, "status": "downloading"})
-            ok, downloaded_file, last_err = download_track_spotiflac(
+            ok, downloaded_file, last_err = _download_via_spotiflac_provider(
                 target_input,
                 tmp_work_dir,
                 quality=quality_setting,
-                rate_limit_delay=spotiflac_delay,
+                delay=spotiflac_delay,
             )
             if not ok or not downloaded_file:
                 # Fallback to yt-dlp
@@ -1282,11 +1378,11 @@ def download_manual_match_track(
                 direct_err = last_err or "provided URL failed"
                 spot_url = resolve_spotify_url(track_title, artist_name, album_name, isrc=track_isrc)
                 if spot_url:
-                    ok, downloaded_file, last_err = download_track_spotiflac(
+                    ok, downloaded_file, last_err = _download_via_spotiflac_provider(
                         spot_url,
                         tmp_work_dir,
                         quality=quality_setting,
-                        rate_limit_delay=spotiflac_delay,
+                        delay=spotiflac_delay,
                     )
                     if not downloaded_file:
                         last_err = f"Provided link failed: {direct_err} | Lossless fallback also failed: {last_err}"
@@ -1301,11 +1397,11 @@ def download_manual_match_track(
                 t_info = get_track_info(d_id)
                 spot_url = resolve_spotify_url(t_info.get("title") or track_title, t_info.get("artist_name") or artist_name, isrc=t_info.get("isrc"))
                 if spot_url:
-                    ok, downloaded_file, last_err = download_track_spotiflac(
+                    ok, downloaded_file, last_err = _download_via_spotiflac_provider(
                         spot_url,
                         tmp_work_dir,
                         quality=quality_setting,
-                        rate_limit_delay=spotiflac_delay,
+                        delay=spotiflac_delay,
                     )
                 if not downloaded_file:
                     ok, downloaded_file, last_err = download_track_ytdlp(

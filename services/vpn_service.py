@@ -22,12 +22,19 @@ LOG_FILE = "/tmp/fnack-vpn.log"
 def _clear_spotiflac_breaker() -> None:
     """After the tunnel is up we have a fresh public IP — reset the SpotiFLAC
     429 circuit breaker so lossless downloads are retried immediately instead
-    of waiting out the 30-300s cool-down on the old rate-limited IP."""
+    of waiting out the 30-300s cool-down on the old rate-limited IP.
+
+    Phase 2: core does NOT import the provider service. It emits the
+    `network.route_changed` event; the fnack.spotiflac plugin (which owns the
+    circuit-breaker state) subscribes and resets itself."""
     try:
-        from services.spotiflac_service import reset_spotiflac_rate_limit
-        reset_spotiflac_rate_limit()
+        from plugins.manager import plugin_manager
+        if plugin_manager is not None:
+            plugin_manager.event_bus.emit("network.route_changed", source="vpn")
+        else:
+            logger.debug("[VPN] plugin manager not ready; route-changed event skipped")
     except Exception as e:
-        logger.debug("[VPN] Could not reset SpotiFLAC breaker: %s", e)
+        logger.debug("[VPN] Could not emit route-changed event: %s", e)
 
 
 def _openvpn_configs() -> list:

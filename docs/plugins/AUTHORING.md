@@ -251,6 +251,23 @@ implementations), and the contracts become fully standalone during Phase 2
 provider extraction. `capabilities.py`, `providers.py`, `errors.py`, and
 `contracts.py` are real, standalone public contracts today.
 
+**Phase 2: provider extraction (PR 3 = DownloadService + SpotiFLAC).**
+`fnack.spotiflac` is the first authoritative provider: its implementation
+moved into the plugin (`spotiflac.py` beside `plugin.py` — the plugin dir is
+on `sys.path` so sibling modules import by name), and the plugin implements
+the FINAL SDK `TrackDownloader` contract (request-object based, async). The
+queue's DownloadService has a **migration adapter**: a provider implementing
+the SDK contract is invoked with a `DownloadRequest` and its SDK
+`DownloadResult` is normalized to the legacy `success/file_path/error` shape
+the verification code consumes; legacy providers (e.g. `fnack.ytdlp`, until
+PR 4) keep the old signature. Core no longer imports
+`services.spotiflac_service` (deleted); the manual-download path routes
+through the provider boundary; `vpn_service` emits `network.route_changed`
+instead of importing the provider (the plugin owns its 429 circuit breaker
+and resets it on that event). Provider settings are plugin-owned
+(`quality`/`delay`/`timeout`) with the legacy global as a one-time fallback
+that migrates into the plugin store.
+
 ---
 
 ## 3. One section per plugin type

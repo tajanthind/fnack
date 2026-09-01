@@ -5,14 +5,15 @@
   "type": ["downloader"],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
-  "entry_point": "plugin:SpotiFLACDownloader",
+  "entry_point": "plugin:SpotiFLACPlugin",
   "author": "fnack",
   "description": "Lossless audio via SpotiFLAC (Tidal/Qobuz/Deezer/SoundCloud, zero-auth). Tried first.",
   "homepage": "",
   "permissions": ["network", "filesystem:downloads"],
   "settings_schema": [
     {"key": "quality", "type": "select", "options": ["LOSSLESS", "HIGH"], "default": "LOSSLESS"},
-    {"key": "delay", "type": "number", "default": "3.0"}
+    {"key": "delay", "type": "number", "default": "3.0"},
+    {"key": "timeout", "type": "number", "default": "180"}
   ],
   "ui": {"slots": []},
   "dependencies": {},

@@ -363,11 +363,19 @@ class PluginManager:
         sys.modules[module_name] = module
         old_front = None
         try:
+            # Phase 2: multi-file plugins (e.g. fnack.spotiflac ships
+            # spotiflac.py alongside plugin.py). The plugin dir must be on
+            # sys.path so `import spotiflac` inside plugin.py resolves; put it
+            # at the FRONT for this import and keep it appended (like deps) for
+            # the plugin's runtime lifetime.
+            if str(plugin_dir) not in sys.path:
+                sys.path.insert(0, str(plugin_dir))
+                old_front = str(plugin_dir)
             if deps_dir is not None and str(deps_dir) not in sys.path:
                 # Front for this import; also appended permanently below so
                 # lazy runtime imports inside plugin methods still resolve.
                 sys.path.insert(0, str(deps_dir))
-                old_front = str(deps_dir)
+                old_front = old_front or str(deps_dir)
             spec.loader.exec_module(module)
         except Exception as exc:  # noqa: BLE001 - deliberately broad, this is untrusted code
             raise PluginLoadError(f"plugin raised on import: {exc}") from exc
@@ -377,6 +385,8 @@ class PluginManager:
                     sys.path.remove(old_front)
                 except ValueError:
                     pass
+        if str(plugin_dir) not in sys.path:
+            sys.path.append(str(plugin_dir))  # keep for the plugin's runtime lifetime
         if deps_dir is not None and str(deps_dir) not in sys.path:
             sys.path.append(str(deps_dir))  # keep for the plugin's runtime lifetime
         return module
@@ -728,6 +738,13 @@ class PluginManager:
         return [p.instance for p in sorted(plugins, key=lambda p: self._effective_priority(p))]
 
     def get_downloaders(self) -> list:
+        """Enabled download.track providers (Phase 2: SDK-contract plugins
+        like fnack.spotiflac implement TrackDownloader, legacy ones still
+        subclass DownloaderPlugin — both serve the same capability)."""
+        from fnack.plugin_api.capabilities import DOWNLOAD_TRACK
+        handles = self.capability_registry.providers_for(DOWNLOAD_TRACK)
+        if handles:
+            return [h.provider for h in handles]
         return self._ordered("DownloaderPlugin")
 
     def get_metadata_providers(self) -> list:
