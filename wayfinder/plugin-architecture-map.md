@@ -208,6 +208,11 @@ phase.
   evidence; queue _verify_or_rescue routes through the service, no
   acoustid_service import in core; SDK MetadataEvidence/TrackMatch/
   VerificationResult). Smoke + 11 architecture tests green.
+  **Step 4 (MediaServerService) done** — PR #24 (media.scan/health/
+  connection_test via the registry; candidate-config test_connection
+  forwards unsaved settings; app/queue navidrome scan+test callers migrated;
+  navidrome plugin declares media.health; no navidrome import in queue).
+  Smoke + 12 architecture tests green. Remaining: Step 5 Queue/API cleanup.
 
 ## Roadmap (execution carried into the map)
 
