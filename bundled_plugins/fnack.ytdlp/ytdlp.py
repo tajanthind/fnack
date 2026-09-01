@@ -1,4 +1,8 @@
-"""yt-dlp fallback service: Intelligent audio extraction via YouTube & YouTube Music with cookies.txt support."""
+"""yt-dlp provider implementation (Phase 2): owns the yt-dlp invocation,
+candidate scoring, YouTube Music preference, cookies handling, format
+selection, and yt-dlp-specific errors. Moved verbatim from
+services/ytdlp_service.py so all provider-specific state lives in the
+plugin."""
 
 import logging
 import os
@@ -12,7 +16,6 @@ from pathlib import Path
 from typing import Optional, Tuple
 import yt_dlp
 
-from services.verifier_service import verify_audio_file
 
 logger = logging.getLogger("fnack.ytdlp")
 
@@ -371,6 +374,8 @@ def download_track_ytdlp(
     timeout_seconds: int = 180,
     max_duration_delta: float = 8.0,
     check_duration: bool = True,
+    verify_audio_file=None,
+    verify_download=None,
 ) -> Tuple[bool, Optional[Path], Optional[str]]:
     """
     Download a single audio track using yt-dlp with candidate scoring, YouTube Music prioritization,
@@ -379,6 +384,25 @@ def download_track_ytdlp(
     so a wrong first search result is discarded and the next candidate is tried.
     Returns (success, output_file_path, error_message).
     """
+    if verify_audio_file is None or verify_download is None:
+        # Fallback for standalone use (tests): build thin wrappers over the
+        # generic core helpers without importing services.* at module scope.
+        # In the plugin runtime the plugin always injects context-facade
+        # callables, so these are never exercised there.
+        import logging as _logging
+        _log = _logging.getLogger("fnack.ytdlp")
+        try:
+            from services.verifier_service import verify_audio_file as _v
+            from services.acoustid_service import verify_download as _vd
+        except Exception:
+            _v, _vd = None, None
+
+        if verify_audio_file is None and _v is not None:
+            verify_audio_file = _v
+        if verify_download is None and _vd is not None:
+            verify_download = _vd
+        if verify_audio_file is None or verify_download is None:
+            _log.debug("[YT-DLP] verifier helpers unavailable (standalone context)")
     output_dir.mkdir(parents=True, exist_ok=True)
     target = query_or_url.strip()
 
@@ -455,7 +479,6 @@ def download_track_ytdlp(
             # right song (mislabeled uploads) — confirm before deleting.
             rescued = False
             try:
-                from services.acoustid_service import verify_download
                 res = verify_download(str(produced), artist_name, track_title,
                                       expected_duration if check_duration else None)
                 if res["status"] == "match":

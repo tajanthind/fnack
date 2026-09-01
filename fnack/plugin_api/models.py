@@ -46,6 +46,16 @@ class DownloadRequest:
     destination: Path
     quality: Optional[str] = None
     format: Optional[str] = None
+    # Phase 2 (PR 4): provider-neutral hints used by search-based downloaders
+    # (fnack.ytdlp). `query` overrides the title-based search string (e.g. a
+    # raw YouTube/Deezer URL from the manual-download path). `cookies_path`
+    # and `audio_source` are config hints; plugins fall back to their own
+    # settings when absent. `check_duration` lets callers skip the provider's
+    # internal duration verification (the queue verifies after download).
+    query: Optional[str] = None
+    cookies_path: Optional[str] = None
+    audio_source: Optional[str] = None
+    check_duration: bool = True
 
 
 @dataclass

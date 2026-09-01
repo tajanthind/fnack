@@ -29,7 +29,20 @@ FORBIDDEN_IMPORTS = re.compile(
 # services.* imports are transitional adapters (MASTER rule 4). Track which
 # plugins still use them so Phase 2+ extraction is auditable; the test only
 # hard-fails on core-internal imports.
+# services.* imports are transitional adapters (MASTER rule 4). Track which
+# plugins still use them so Phase 2+ extraction is auditable; the test only
+# hard-fails on core-internal imports.
 SERVICES_IMPORT = re.compile(r"^\s*(?:from|import)\s+services\.", re.MULTILINE)
+
+# Generic CORE helpers plugins may legitimately call (not provider
+# implementations): the verifier (duration/tag verification policy) and the
+# AcoustID rescue helper are cross-cutting; provider plugins route them via
+# the PluginContext facade in the real runtime, and this allowlist covers the
+# standalone/legacy fallback inside provider modules (Phase 2 transitional).
+PLUGIN_ALLOWED_SERVICES = {
+    "services.verifier_service",
+    "services.acoustid_service",
+}
 
 
 def _plugin_dirs() -> list[Path]:
@@ -57,12 +70,19 @@ def test_plugins_never_import_core_internals() -> None:
 
 def test_transitional_services_imports_are_documented() -> None:
     """Not a hard failure — an inventory so each entry is visible for the
-    extraction phases (plugin -> legacy-service adapter, MASTER rule 4)."""
+    extraction phases (plugin -> legacy-service adapter, MASTER rule 4).
+    Generic core helpers (verifier/acoustid verify) are allowed; provider
+    implementations are not."""
     usage: dict[str, list[str]] = {}
     for pdir in _plugin_dirs():
         for py in pdir.glob("*.py"):
             text = py.read_text(encoding="utf-8")
-            if SERVICES_IMPORT.search(text):
+            # Ignore the allowed generic core-helper modules.
+            filtered = "\n".join(
+                ln for ln in text.splitlines()
+                if not any(m in ln for m in PLUGIN_ALLOWED_SERVICES)
+            )
+            if SERVICES_IMPORT.search(filtered):
                 usage.setdefault(pdir.name, []).append(py.name)
     # The expected transitional adapters (all official plugins still wrapping
     # a legacy service). fnack.discord-webhook / ntfy-webhook / subsonic /
@@ -71,7 +91,7 @@ def test_transitional_services_imports_are_documented() -> None:
     for pid, files in sorted(usage.items()):
         print(f"  {pid}: {', '.join(files)}")
     assert set(usage) <= {
-        "fnack.ytdlp", "fnack.spotify", "fnack.deezer-batch",
+        "fnack.spotify", "fnack.deezer-batch",
         "fnack.musicbrainz", "fnack.itunes", "fnack.acoustid", "fnack.navidrome",
         "fnack.vpn", "fnack.clean-navidrome-artists", "fnack.fix-navidrome-splits",
         "fnack.normalize-album-tags", "fnack.reverify-library",
@@ -111,7 +131,6 @@ def test_official_bundle_capability_registration() -> None:
         import flask  # noqa: F401
         import flask_sqlalchemy  # noqa: F401
         import yt_dlp  # noqa: F401
-        import services.ytdlp_service  # noqa: F401
         import services.spotify_service  # noqa: F401
     except ImportError as exc:
         print(f"SKIPPED test_official_bundle_capability_registration "

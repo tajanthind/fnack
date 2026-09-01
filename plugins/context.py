@@ -319,6 +319,47 @@ class LibraryContext:
         t.caution_info = reason
         db.session.commit()
 
+    def verify_audio_file(
+        self,
+        file_path: Path,
+        expected_duration_seconds: Optional[float] = None,
+        expected_artist: Optional[str] = None,
+        expected_title: Optional[str] = None,
+        max_duration_delta: float = 12.0,
+        delete_on_failure: bool = True,
+    ) -> tuple:
+        """Generic core verification helper (Phase 2, PR 4): plugins call the
+        verifier through the context instead of importing
+        services.verifier_service. Enforces duration delta + embedded-tag
+        match; returns (is_valid, error_reason, file_meta_dict)."""
+        from services.verifier_service import verify_audio_file as _verify
+        return _verify(
+            file_path,
+            expected_duration_seconds=expected_duration_seconds,
+            expected_artist=expected_artist,
+            expected_title=expected_title,
+            max_duration_delta=max_duration_delta,
+            delete_on_failure=delete_on_failure,
+        )
+
+    def verify_download_acoustid(
+        self,
+        file_path: str,
+        expected_artist: Optional[str],
+        expected_title: Optional[str],
+        expected_duration: Optional[float] = None,
+    ) -> dict:
+        """Optional AcoustID rescue for wrong-tags-but-right-audio files
+        (Phase 2, PR 4): exposed generically so plugins don't import
+        services.acoustid_service. Returns a dict with status/match info;
+        fail-soft (empty dict) when AcoustID is disabled or unavailable."""
+        try:
+            from services.acoustid_service import verify_download
+            return verify_download(file_path, expected_artist, expected_title,
+                                   expected_duration if expected_duration else None)
+        except Exception:
+            return {"status": "unsupported"}
+
 
 # --------------------------------------------------------------------------
 # Per-plugin namespaced settings

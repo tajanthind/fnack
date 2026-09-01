@@ -35,7 +35,6 @@ def _runtime_deps_present() -> bool:
         import flask  # noqa: F401
         import flask_sqlalchemy  # noqa: F401
         import yt_dlp  # noqa: F401
-        import services.ytdlp_service  # noqa: F401
         return True
     except ImportError:
         return False

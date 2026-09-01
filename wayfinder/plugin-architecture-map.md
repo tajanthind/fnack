@@ -172,6 +172,20 @@ phase.
   plugin store; multi-file plugin support in the manager; parity test added;
   independence-test allowlist shrank. Smoke + 6 architecture tests green.
 
+
+- [Phase 2 (PR 4): yt-dlp provider extraction](tickets/plugin-phase-2-ytdlp.md):
+  fnack.ytdlp becomes the authoritative implementation — engine moved
+  verbatim into the plugin (ytdlp.py), plugin implements the FINAL SDK
+  TrackDownloader contract; DownloadRequest gains provider-neutral hints
+  (query/cookies_path/audio_source/check_duration); queue adapter carries
+  the hints and normalizes the SDK result; the 5 manual-path
+  download_track_ytdlp calls route through the provider boundary; cookies
+  settings UI routes through the provider (no services import in app.py);
+  services/ytdlp_service.py + spotdl_service.py deleted; legacy settings
+  migrate into the plugin store; verifier/acoustid helpers exposed through
+  the PluginContext facade; parity test added; independence/boundary-test
+  allowlists updated. Smoke + 8 architecture tests green.
+
 ## Roadmap (execution carried into the map)
 
 1. **Phase 0** (`plugin-architecture/phase-0-scaffold`): drop `plugins/` + `examples/`
