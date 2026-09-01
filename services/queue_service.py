@@ -31,14 +31,15 @@ cancel_requested_jobs: Set[int] = set()
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 downloader migration adapter (PR 3: DownloadService + SpotiFLAC)
+# Phase 2 downloader migration adapter (PR 3 + PR 4)
 #
-# The queue chain drives `download.track` providers. fnack.spotiflac now
-# implements the FINAL SDK contract (TrackDownloader: request-object based);
-# fnack.ytdlp still uses the legacy DownloaderPlugin signature until its own
-# extraction (PR 4). This adapter normalizes BOTH to the legacy result shape
-# the chain already consumes (success / file_path / error), so downstream
-# verification is untouched.
+# The queue chain drives `download.track` providers. fnack.spotiflac and
+# fnack.ytdlp both implement the FINAL SDK contract (TrackDownloader:
+# request-object based, async). This adapter normalizes the SDK DownloadResult
+# to the legacy result shape the chain already consumes (success / file_path /
+# error), so downstream verification is untouched. Providers that predate the
+# SDK contract (until their own extraction PR) keep the legacy signature and
+# are invoked with the old arguments — the adapter picks per provider.
 # ---------------------------------------------------------------------------
 
 def _is_sdk_downloader(provider) -> bool:
@@ -669,7 +670,6 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         save_cover_setting = _get_setting(app, "save_cover_art", "true").lower() != "false"
         cover_filename_setting = _get_setting(app, "cover_art_filename", "cover.jpg")
         embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
-        enable_ytdlp = _get_setting(app, "enable_ytdlp", "true").lower() != "false"
         cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
         prefer_yt_music = _get_setting(app, "youtube_source", "youtube_music").lower() == "youtube_music"
         spotify_client_id = _get_setting(app, "spotify_client_id", "")
@@ -884,17 +884,12 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         )
 
         downloaders = _pm.get_downloaders() if _pm else []
-        # Phase 2: no SpotiFLAC-specific gate — a disabled spotiflac plugin is
-        # simply not a download.track provider (get_downloaders() reads the
-        # capability registry, which only holds enabled plugins). Only the
-        # still-legacy yt-dlp toggle remains until PR 4.
-        engine_gates = {
-            "fnack.ytdlp": enable_ytdlp,
-            "fnack.spotdl": enable_ytdlp,  # spotdl is an alias of the yt-dlp plugin
-        }
-        enabled_any = any(
-            engine_gates.get(dl.manifest.id, True) for dl in downloaders
-        )
+        # Phase 2: capability-driven chain — get_downloaders() reads the
+        # download.track capability registry, which only holds ENABLED
+        # providers. There is no per-provider gate here: disabling a provider
+        # plugin (e.g. fnack.ytdlp) removes it from the registry, so it never
+        # appears in `downloaders`. Core operates on capabilities, not
+        # provider IDs.
 
         for _dl_idx, dl in enumerate(downloaders):
             if job_id in cancel_requested_jobs:
@@ -924,10 +919,6 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 options["audio_source"] = "youtube_music" if prefer_yt_music else "youtube"
                 options["cookies_path"] = cookies_path
 
-            if not engine_gates.get(dl.manifest.id, True):
-                logger.info("[QUEUE] %s disabled in settings, skipping for '%s - %s'",
-                            dl.manifest.name, artist_name, track_title)
-                continue
             if _pm.invoke_provider(dl, "is_rate_limited"):
                 logger.info("[QUEUE] %s rate-limited; trying next downloader for '%s - %s'",
                             dl.manifest.name, artist_name, track_title)
@@ -987,7 +978,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 err = (result.error if result else "download returned no result")
                 failure_reasons.append(f"{dl.manifest.name} failed: {err}")
 
-        if not verified_file and not enabled_any:
+        if not verified_file and not downloaders:
             failure_reasons.append("No enabled download providers are available")
 
         if job_id in cancel_requested_jobs:

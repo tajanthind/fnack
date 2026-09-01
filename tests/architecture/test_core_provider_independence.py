@@ -220,10 +220,6 @@ def test_provider_id_branches_frozen_to_transitional_allowlist() -> None:
             stripped = line.strip()
             if any(frag in stripped for frag in allowed):
                 continue
-            # engine_gates is a settings-toggle dict key in queue_service, not
-            # a behavioral branch — removed in Phase 2.
-            if path.name == "queue_service.py" and "engine_gates" in stripped:
-                continue
             violations.append(f"{path.name}:{lineno}: {stripped}")
     assert not violations, (
         "New provider-ID branches in core are forbidden (MASTER §Zero provider "

@@ -87,7 +87,8 @@ phase.
   resort. `fnack.itunes.get_artist_discography` now returns a real album
   list (keyed by artist name) so the fallback is genuine when Deezer is
   disabled. The downloader loop was audited: it IS a real chain (no
-  hardcoded-ID skip; `engine_gates` is legacy-setting gating only).
+  hardcoded-ID skip; per-provider gates removed in Phase 2 PRs 3+4 — the
+  capability registry is the only enable/disable mechanism).
 - [Decide: bundled-plugin single source of truth](tickets/plugin-bundled-sync-of-truth.md):
   `tajanthind/fnack-plugins/plugins/` is the SOURCE of truth for first-party
   plugin code; fnack's `bundled_plugins/` is the vendored copy baked into the
