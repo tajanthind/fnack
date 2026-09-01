@@ -159,3 +159,23 @@ fnack-plugins synced when a provider's impl moves.
   provider-error, queue-routes-through-service). Smoke + 11 architecture
   tests green; live boot verifies acoustid provider resolution, no-key
   identify returns no evidence, verify returns structured results.
+- **Step 4 DONE (PR 8 = MediaServerService)**: `services/media_server_service.py`
+  resolves media.scan / media.health / media.connection_test via the
+  capability registry (fnack.navidrome today), first-success policy, zero
+  providers -> CapabilityUnavailable per method; the service never names
+  Navidrome. Candidate configuration: test_connection(candidate_config)
+  forwards UNSAVED settings to providers that accept them (signature
+  inspection) — the settings UI validates a typed-but-not-saved config
+  through the application service, removing the direct core provider-service
+  access the old route justified. fnack.navidrome plugin gained
+  test_connection(candidate_config=...) + health() and declares
+  media.health (synced + repackaged). Callers migrated: app.py
+  /api/navidrome/test + /api/navidrome/scan routes and queue post-download
+  auto-scans route through the service (run_auto_split_repair split-repair
+  task has no capability yet — stays transitional; independence allowlist
+  updated). Parity test tests/architecture/test_media_server_service.py
+  (provider-neutral source, zero-provider CapabilityUnavailable,
+  scan/health first-success, candidate-config forwarding both provider
+  shapes, caller migration). Smoke + 12 architecture tests green; live boot
+  verifies scan/test/health through the capability chain, zero-provider
+  structured error, and the scan route.

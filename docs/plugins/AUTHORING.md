@@ -341,8 +341,22 @@ fields must agree) — no acoustid/provider-specific branch in core. The
 queue's `_verify_or_rescue` now routes through VerificationService (the
 legacy AcoustID rescue semantics are preserved by the evidence comparison;
 the queue no longer imports acoustid_service). New SDK models:
-`MetadataEvidence`, `TrackMatch`, `VerificationResult`. Remaining steps:
-MediaServerService, then Queue/API cleanup.
+`MetadataEvidence`, `TrackMatch`, `VerificationResult`.
+
+**Phase 3, Step 4: MediaServerService.** `services/media_server_service.py`
+resolves `media.scan` / `media.health` / `media.connection_test` via the
+capability registry (fnack.navidrome today) — first provider returning a
+usable result wins; zero providers -> `CapabilityUnavailable` per method; the
+service never names Navidrome. Candidate configuration (brief §Candidate
+configuration): `test_connection(candidate_config)` forwards UNSAVED settings
+to providers that accept them (signature inspection), so the settings UI can
+validate a typed-but-not-saved config through the application service — the
+direct core provider-service access that the old route justified is gone.
+The navidrome plugin gained `test_connection(candidate_config=...)` +
+`health()` and declares `media.health`. app.py's `/api/navidrome/test` +
+`/api/navidrome/scan` routes and the queue's post-download auto-scans route
+through the service (the split-repair library task `run_auto_split_repair`
+has no capability yet — stays transitional). Remaining: Queue/API cleanup.
 
 ---
 

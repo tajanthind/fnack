@@ -16,7 +16,6 @@ from flask_socketio import SocketIO
 
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
 from services.verifier_service import STRICTNESS_DELTAS, verify_audio_file
-from services.navidrome_service import trigger_navidrome_scan
 import requests
 
 logger = logging.getLogger("fnack.queue")
@@ -1010,11 +1009,13 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 except Exception as ce:
                     logger.debug("[QUEUE] Duplicate cleanup note: %s", ce)
 
-                # Trigger Navidrome automatic scan if configured
+                # Trigger media-server auto-scan if configured (Phase 3: via
+                # MediaServerService — media.scan capability).
                 try:
-                    trigger_navidrome_scan(app)
+                    from services.media_server_service import MediaServerService
+                    MediaServerService().scan()
                 except Exception as ne:
-                    logger.debug("[QUEUE] Navidrome auto-scan trigger note: %s", ne)
+                    logger.debug("[QUEUE] media auto-scan trigger note: %s", ne)
 
                 socketio.emit("download_progress", {
                     "job_id": job_id,
@@ -1512,9 +1513,11 @@ def download_manual_match_track(
         except Exception:
             pass
 
-        # Trigger Navidrome auto-scan
+        # Trigger media-server auto-scan (Phase 3: via MediaServerService —
+        # media.scan capability).
         try:
-            trigger_navidrome_scan(app)
+            from services.media_server_service import MediaServerService
+            MediaServerService().scan()
         except Exception:
             pass
 

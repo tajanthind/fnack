@@ -34,7 +34,6 @@ from models import Album, AppSetting, Artist, DownloadJob, Track, db
 import plugins.models  # noqa: F401 — registers the plugin tables with `db` (INTEGRATION.md §2)
 from plugins.manager import init_plugin_manager  # noqa: E402 — plugin framework (Phase 0)
 from services.import_service import import_artist_folder, scan_root_folder_candidates
-from services.navidrome_service import test_navidrome_connection, trigger_navidrome_scan
 from services.watcher_service import start_folder_watcher
 from services.queue_service import (
     cancel_job,
@@ -1566,31 +1565,22 @@ def api_navidrome_test():
     url = data.get("url") or _get_setting("navidrome_url")
     user = data.get("user") or _get_setting("navidrome_user")
     token = data.get("token") or _get_setting("navidrome_token")
-    # Brief 7 §1c: this route tests CANDIDATE values the user typed in the
-    # settings form (pre-save), so it must call the direct service with those
-    # values — the scan_trigger plugin chain only knows the STORED config and
-    # cannot express an unsaved candidate. Core by rule 1 (latency-sensitive,
-    # synchronous, user-facing; plugin indirection would regress the UX).
-    ok, msg = test_navidrome_connection(url, user, token)
+    # Phase 3: candidate-config connection test through the application
+    # service (media.connection_test capability) — the route validates
+    # UNSAVED values the user typed in the settings form. The service passes
+    # the candidate config to providers that accept it.
+    from services.media_server_service import MediaServerService
+    ok, msg = MediaServerService().test_connection(
+        {"url": url, "user": user, "token": token})
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
 
 @app.route("/api/navidrome/scan", methods=["POST"])
 def api_navidrome_scan():
-    # Brief 7 §1c: triggering a scan of the CONFIGURED Navidrome is exactly a
-    # scan_trigger plugin's job — route through the plugin chain when one is
-    # enabled (fall back to the direct service otherwise, so the route never
-    # breaks with zero plugins installed).
-    try:
-        from plugins.manager import plugin_manager as _pm
-        if _pm is not None:
-            for trig in _pm.get_scan_triggers():
-                # Phase 1.1 §3: provider invocation via the central executor.
-                ok, msg = _pm.invoke_provider(trig, "trigger_scan")
-                return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
-    except Exception:
-        logger.debug("[NAVIDROME] plugin chain skipped, using direct call", exc_info=True)
-    ok, msg = trigger_navidrome_scan(app)
+    # Phase 3: triggering a scan of the CONFIGURED media server is exactly a
+    # media.scan capability's job — route through MediaServerService.
+    from services.media_server_service import MediaServerService
+    ok, msg = MediaServerService().scan()
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
 
