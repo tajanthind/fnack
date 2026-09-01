@@ -179,3 +179,16 @@ fnack-plugins synced when a provider's impl moves.
   shapes, caller migration). Smoke + 12 architecture tests green; live boot
   verifies scan/test/health through the capability chain, zero-provider
   structured error, and the scan route.
+- **Step 5 DONE (PR 9 = Queue/API cleanup)**: the queue is a pure
+  orchestrator — imports only generic core (verifier_service, models,
+  requests) plus the four application services; zero provider imports, zero
+  provider-ID branches (verified at source level). API routes use application
+  services; the only remaining app.py provider imports are the documented
+  transitional ones (musicbrainz enrich, acoustid manual-identify, navidrome
+  fix-splits — no capability in the MASTER set). New
+  tests/architecture/test_phase3_completion.py asserts ALL brief completion
+  criteria: queue provider-free, queue orchestrates through the services,
+  app routes use services, zero providers -> CapabilityUnavailable per
+  service, multiple providers work, provider errors never crash the queue.
+  Smoke + 13 architecture tests green; live boot confirms all capabilities
+  resolve and routes serve through the services. PHASE 3 COMPLETE.

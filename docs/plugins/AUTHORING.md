@@ -356,7 +356,23 @@ The navidrome plugin gained `test_connection(candidate_config=...)` +
 `health()` and declares `media.health`. app.py's `/api/navidrome/test` +
 `/api/navidrome/scan` routes and the queue's post-download auto-scans route
 through the service (the split-repair library task `run_auto_split_repair`
-has no capability yet — stays transitional). Remaining: Queue/API cleanup.
+has no capability yet — stays transitional).
+
+**Phase 3, Step 5: Queue/API cleanup + completion criteria.** The queue is
+now a pure orchestrator: it imports only generic core (verifier_service,
+models, requests) plus the four application services; it has zero provider
+imports and zero provider-ID branches. API routes use application services;
+the only remaining direct provider-service imports in app.py are the
+documented transitional ones (musicbrainz enrich, acoustid manual-identify,
+navidrome fix-splits — none has a capability in the MASTER set). New
+`tests/architecture/test_phase3_completion.py` asserts the brief's
+completion criteria at source level: queue provider-free, queue orchestrates
+through the services, app routes use services, zero providers ->
+CapabilityUnavailable per service, multiple providers work (first-success /
+first-non-empty / evidence fan-out), provider errors never crash the queue.
+Phase 3 complete: DownloadService / MetadataService / FingerprintService /
+VerificationService / MediaServerService all capability-based; verification
+provider-neutral; candidate-config test_connection supported.
 
 ---
 
