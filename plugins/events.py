@@ -30,6 +30,10 @@ KNOWN_EVENTS = [
     "queue.job_completed",
     "queue.job_failed",
     "maintenance.run",
+    # Phase 2: emitted by core (vpn_service) after a tunnel change; provider
+    # plugins that own state (e.g. fnack.spotiflac's 429 circuit breaker)
+    # subscribe and reset themselves.
+    "network.route_changed",
 ]
 
 

@@ -71,7 +71,7 @@ def test_transitional_services_imports_are_documented() -> None:
     for pid, files in sorted(usage.items()):
         print(f"  {pid}: {', '.join(files)}")
     assert set(usage) <= {
-        "fnack.spotiflac", "fnack.ytdlp", "fnack.spotify", "fnack.deezer-batch",
+        "fnack.ytdlp", "fnack.spotify", "fnack.deezer-batch",
         "fnack.musicbrainz", "fnack.itunes", "fnack.acoustid", "fnack.navidrome",
         "fnack.vpn", "fnack.clean-navidrome-artists", "fnack.fix-navidrome-splits",
         "fnack.normalize-album-tags", "fnack.reverify-library",
@@ -104,15 +104,15 @@ def test_official_bundle_capability_registration() -> None:
     from plugins.manager import init_plugin_manager
 
     # The real bundled plugins import the runtime stack; if that stack is
-    # missing here, this test cannot run (skip, don't fail). The plugins
-    # import `services.*` (which need flask/flask_sqlalchemy/yt_dlp) rather
-    # than the `spotiflac` package directly.
+    # missing here, this test cannot run (skip, don't fail). The remaining
+    # transitional plugins import `services.*` (which need
+    # flask/flask_sqlalchemy/yt_dlp).
     try:
         import flask  # noqa: F401
         import flask_sqlalchemy  # noqa: F401
         import yt_dlp  # noqa: F401
-        import services.spotiflac_service  # noqa: F401
         import services.ytdlp_service  # noqa: F401
+        import services.spotify_service  # noqa: F401
     except ImportError as exc:
         print(f"SKIPPED test_official_bundle_capability_registration "
               f"(runtime deps unavailable here: {exc})")

@@ -125,7 +125,6 @@ def test_runtime_provider_calls_use_guarded_boundary() -> None:
 # ---------------------------------------------------------------------------
 
 FORBIDDEN_PROVIDER_MODULES = {
-    "services.spotiflac_service",
     "services.ytdlp_service",
     "services.spotify_service",
     "services.deezer_service",
@@ -154,7 +153,6 @@ TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {
     "queue_service.py": {
         "services.deezer_service": "track info fallback (Phase 6 removes)",
         "services.spotify_service": "URL resolution fallback (Phase 5 removes)",
-        "services.spotiflac_service": "legacy engine path (Phase 3 removes)",
         "services.ytdlp_service": "legacy engine path (Phase 4 removes)",
         "services.navidrome_service": "scan fallback (Phase 10 removes)",
         "services.acoustid_service": "fingerprint fallback (Phase 9 removes)",
@@ -170,9 +168,6 @@ TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {
     },
     "spotdl_service.py": {
         "services.ytdlp_service": "alias of the yt-dlp engine (Phase 4 removes)",
-    },
-    "vpn_service.py": {
-        "services.spotiflac_service": "circuit-breaker reset on tunnel change (Phase 3 removes)",
     },
 }
 

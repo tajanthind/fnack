@@ -1,4 +1,9 @@
-"""SpotiFLAC CLI service: Downloads true lossless FLAC without authentication via Tidal/Qobuz/SoundCloud/Deezer."""
+"""SpotiFLAC provider implementation (Phase 2): owns the CLI process invocation,
+Xvfb handling, extension management, retries, rate limiting, and the 429
+circuit breaker. Moved verbatim from services/spotiflac_service.py so all
+provider-specific state lives in the plugin.
+
+Downloads true lossless FLAC without authentication via Tidal/Qobuz/SoundCloud/Deezer."""
 
 import logging
 import os

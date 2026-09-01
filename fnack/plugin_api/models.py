@@ -26,12 +26,16 @@ from typing import Any, Mapping, Optional
 # TRANSITIONAL (Phase 1.1 §4): these are internal-class re-exports, not yet
 # standalone public contracts.
 from plugins.base import (  # noqa: F401
-    DownloadResult,
     FingerprintResult,
     RecommendationItem,
     TaskResult,
     TrackRef,
 )
+
+# NOTE: DownloadResult is deliberately NOT re-exported from plugins.base.
+# Phase 2 makes the SDK's DownloadResult the FINAL contract shape (below);
+# legacy plugins keep importing the old class from plugins.base directly.
+# The queue chain's migration adapter normalizes between the two.
 
 
 # -- download.track ---------------------------------------------------------
@@ -42,6 +46,23 @@ class DownloadRequest:
     destination: Path
     quality: Optional[str] = None
     format: Optional[str] = None
+
+
+@dataclass
+class DownloadResult:
+    """FINAL SDK download result (Phase 2, MASTER §Verification).
+
+    Provider-neutral: `provider_id` names WHO downloaded (never hardwired in
+    core), `path` is the produced audio file, `error_code`/`message` are
+    structured, `retryable` tells the DownloadService whether the next
+    provider in the chain should be tried."""
+    provider_id: str
+    success: bool
+    path: Optional[Path] = None
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+    retryable: bool = False
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 # -- track.resolve ----------------------------------------------------------
