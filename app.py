@@ -33,13 +33,7 @@ from flask_socketio import SocketIO, emit
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
 import plugins.models  # noqa: F401 — registers the plugin tables with `db` (INTEGRATION.md §2)
 from plugins.manager import init_plugin_manager  # noqa: E402 — plugin framework (Phase 0)
-from services.deezer_service import (
-    get_artist_discography,
-    get_artist_info,
-    search_artist,
-)
 from services.import_service import import_artist_folder, scan_root_folder_candidates
-from services.navidrome_service import test_navidrome_connection, trigger_navidrome_scan
 from services.watcher_service import start_folder_watcher
 from services.queue_service import (
     cancel_job,
@@ -278,7 +272,10 @@ def api_search_artist():
     if not q or len(q) < 2:
         return jsonify([])
     try:
-        results = search_artist(q, limit=8)
+        # Phase 3: application service (artist.search capability) — not a
+        # direct services.deezer_service call.
+        from services.metadata_service import MetadataService
+        results = MetadataService().search_artist(q, limit=8)
         return jsonify(results)
     except Exception as e:
         logger.exception("Artist search failed")
@@ -475,40 +472,19 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
         logger.info("[DEEZER] Starting background discography fetch for artist '%s' (%d)", artist.name, deezer_artist_id)
 
     try:
-        # Phase 2 (PLUGIN_ARCHITECTURE.md §10 Phase 2): metadata providers are a
-        # priority chain — Deezer batch (p10) authoritative, then MusicBrainz
-        # (p20, enrichment-only), Spotify (p30), iTunes (p40). Iterate the
-        # chain in priority order; the FIRST provider that returns a usable
-        # discography wins. Fall back to the direct Deezer service call only if
-        # the whole chain yields nothing (e.g. all providers disabled), so
-        # behavior never degrades for existing users.
+        # Phase 3: MetadataService (artist.discography capability) owns the
+        # provider chain — Deezer batch (p10) authoritative, then MusicBrainz
+        # (p20, enrichment-only), Spotify (p30), iTunes (p40), first usable
+        # discography wins. No direct services.deezer_service call and no
+        # hidden fallback: if no artist.discography provider is enabled the
+        # service returns the empty shape (MASTER rule 3).
         disco = None
         served_by = None
         try:
-            from plugins.manager import plugin_manager as _pm
-            if _pm is not None:
-                for provider in _pm.get_metadata_providers():
-                    # Deezer is keyed by the artist's deezer id; other
-                    # discography-capable providers are keyed by artist name.
-                    key = str(deezer_artist_id) if provider.manifest.id == "fnack.deezer-batch" else artist.name
-                    try:
-                        # Phase 1.1 §3: provider invocation via the central
-                        # executor (sync/async + awaitable detection).
-                        d = _pm.invoke_provider(provider, "get_artist_discography", key)
-                    except Exception:
-                        logger.debug("[METADATA] provider %s discography failed, trying next",
-                                     provider.manifest.id, exc_info=True)
-                        continue
-                    if d and d.get("albums"):
-                        disco = d
-                        served_by = provider.manifest.id
-                        logger.info("[METADATA] Discography served by %s for '%s'", served_by, artist.name)
-                        break
-        except Exception:
-            logger.debug("[DEEZER] plugin chain skipped, using direct call", exc_info=True)
-        if not disco:
-            disco = get_artist_discography(
-                deezer_artist_id,
+            from services.metadata_service import MetadataService
+            disco = MetadataService().get_artist_discography(
+                str(deezer_artist_id),
+                artist_name=artist.name,
                 filter_remixes=options.get("filter_remixes", True),
                 filter_lofi=options.get("filter_lofi", True),
                 filter_live=options.get("filter_live", True),
@@ -517,7 +493,13 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                 include_singles=options.get("include_singles", True),
                 include_compilations=options.get("include_compilations", False),
             )
-            served_by = "core:deezer_service"
+            if disco and disco.get("albums"):
+                served_by = "metadata_service"
+                logger.info("[METADATA] Discography served for '%s' (%d albums)",
+                            artist.name, len(disco.get("albums", [])))
+        except Exception:
+            logger.debug("[METADATA] discography fetch failed, using empty shape", exc_info=True)
+            disco = {"artist_name": artist.name, "albums": []}
 
         # MusicBrainz enrichment (additive only; regional artists are
         # negative-cached and never probed; fail-soft on any error). Routed
@@ -891,7 +873,9 @@ def api_artist_sync(artist_id):
 
     deezer_id = int(artist.spotify_id) if artist.spotify_id.isdigit() else None
     if not deezer_id:
-        res = search_artist(artist.name, limit=1)
+        # Phase 3: application service (artist.search capability).
+        from services.metadata_service import MetadataService
+        res = MetadataService().search_artist(artist.name, limit=1)
         if res:
             deezer_id = res[0]["id"]
 
@@ -1581,31 +1565,22 @@ def api_navidrome_test():
     url = data.get("url") or _get_setting("navidrome_url")
     user = data.get("user") or _get_setting("navidrome_user")
     token = data.get("token") or _get_setting("navidrome_token")
-    # Brief 7 §1c: this route tests CANDIDATE values the user typed in the
-    # settings form (pre-save), so it must call the direct service with those
-    # values — the scan_trigger plugin chain only knows the STORED config and
-    # cannot express an unsaved candidate. Core by rule 1 (latency-sensitive,
-    # synchronous, user-facing; plugin indirection would regress the UX).
-    ok, msg = test_navidrome_connection(url, user, token)
+    # Phase 3: candidate-config connection test through the application
+    # service (media.connection_test capability) — the route validates
+    # UNSAVED values the user typed in the settings form. The service passes
+    # the candidate config to providers that accept it.
+    from services.media_server_service import MediaServerService
+    ok, msg = MediaServerService().test_connection(
+        {"url": url, "user": user, "token": token})
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
 
 @app.route("/api/navidrome/scan", methods=["POST"])
 def api_navidrome_scan():
-    # Brief 7 §1c: triggering a scan of the CONFIGURED Navidrome is exactly a
-    # scan_trigger plugin's job — route through the plugin chain when one is
-    # enabled (fall back to the direct service otherwise, so the route never
-    # breaks with zero plugins installed).
-    try:
-        from plugins.manager import plugin_manager as _pm
-        if _pm is not None:
-            for trig in _pm.get_scan_triggers():
-                # Phase 1.1 §3: provider invocation via the central executor.
-                ok, msg = _pm.invoke_provider(trig, "trigger_scan")
-                return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
-    except Exception:
-        logger.debug("[NAVIDROME] plugin chain skipped, using direct call", exc_info=True)
-    ok, msg = trigger_navidrome_scan(app)
+    # Phase 3: triggering a scan of the CONFIGURED media server is exactly a
+    # media.scan capability's job — route through MediaServerService.
+    from services.media_server_service import MediaServerService
+    ok, msg = MediaServerService().scan()
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
 

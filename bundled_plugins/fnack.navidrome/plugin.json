@@ -47,5 +47,5 @@
   },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["media.scan", "media.connection_test"]
+  "capabilities": ["media.scan", "media.connection_test", "media.health"]
 }

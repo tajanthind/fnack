@@ -15,10 +15,7 @@ from flask import Flask
 from flask_socketio import SocketIO
 
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
-from services.deezer_service import get_track_info
-from services.spotify_service import resolve_spotify_url
 from services.verifier_service import STRICTNESS_DELTAS, verify_audio_file
-from services.navidrome_service import trigger_navidrome_scan
 import requests
 
 logger = logging.getLogger("fnack.queue")
@@ -497,57 +494,70 @@ def queue_artist_missing(app: Flask, artist_id: int, source: str = "manual") -> 
 
 def _verify_or_rescue(app, downloaded_file, expected_duration, artist_name, track_title,
                       max_duration_delta, reject_mismatches, enable_duration_check):
-    """Verify a downloaded file; on failure, try AcoustID to rescue it.
+    """Verify a downloaded file via VerificationService (Phase 3 — the
+    provider-neutral verification policy combines metadata + fingerprint
+    evidence; the queue's AcoustID-specific rescue semantics are preserved by
+    the service's fingerprint handling, but core has no provider branch).
 
     Returns (v_ok, v_err, meta, caution_info_or_None):
-      * v_ok True,  caution None  -> verified (or AcoustID-confirmed "right
+      * v_ok True,  caution None  -> verified (or fingerprint-confirmed "right
                                      file, wrong tags" — finalize retags it)
-      * v_ok False, caution set   -> AcoustID says it is a DIFFERENT song:
+      * v_ok False, caution set   -> evidence says it is a DIFFERENT song:
                                      keep the file, caller flags the track
                                      with `caution_info` (user decides later)
       * v_ok False, caution None  -> normal rejection; file deleted per
                                      reject_mismatches
     """
-    from services.acoustid_service import verify_download
+    from services.verification_service import VerificationService
+    from fnack.plugin_api.models import TrackRef
 
-    v_ok, v_err, meta = verify_audio_file(
-        downloaded_file,
-        expected_duration_seconds=expected_duration if enable_duration_check else None,
-        expected_artist=artist_name,
-        expected_title=track_title,
-        max_duration_delta=max_duration_delta,
-        delete_on_failure=False,
-    )
-    if v_ok:
-        return True, v_err, meta, None
-
-    # Verification failed — try AcoustID before giving up / deleting
     try:
-        res = verify_download(
-            str(downloaded_file), artist_name, track_title,
-            expected_duration if enable_duration_check else None,
+        result = VerificationService().verify(
+            TrackRef(id=0, title=track_title or "", artist_name=artist_name or "",
+                     album_name="", duration=expected_duration if enable_duration_check else None),
+            Path(downloaded_file),
         )
-    except Exception:
-        res = {"status": "unknown", "info": None}
+    except Exception as exc:
+        logger.debug("[QUEUE] VerificationService failed: %s", exc)
+        result = None
 
-    if res["status"] == "match":
-        logger.info("[QUEUE] AcoustID confirmed '%s - %s' (right file, wrong tags) — accepting", artist_name, track_title)
-        return True, "AcoustID confirmed (fingerprint match)", meta, None
-    if res["status"] == "mismatch":
+    if result is None:
+        if reject_mismatches:
+            try:
+                if os.path.isfile(downloaded_file):
+                    os.remove(downloaded_file)
+            except OSError:
+                pass
+        return False, "verification unavailable", {}, None
+
+    if result.status == "verified":
+        cm = result.canonical_match
+        if cm and cm.title and (cm.title.lower() != (track_title or "").lower()):
+            logger.info("[QUEUE] Fingerprint confirmed '%s - %s' (right file, wrong tags) — accepting",
+                        artist_name, track_title)
+        return True, "; ".join(result.reasons) or "verified", {}, None
+
+    if result.status == "mismatch":
+        cm = result.canonical_match
         logger.warning(
-            "[QUEUE] AcoustID mismatch for '%s - %s': matched to %r — keeping file, flagging for user",
-            artist_name, track_title, (res["info"] or {}).get("matched_title"),
+            "[QUEUE] Verification mismatch for '%s - %s': matched to %r — keeping file, flagging for user",
+            artist_name, track_title, (cm.title if cm else None),
         )
-        return False, "AcoustID mismatch (different song)", meta, res["info"]
+        caution = {
+            "matched_title": cm.title if cm else None,
+            "matched_artists": [cm.artist] if cm and cm.artist else [],
+            "score": (cm.score if cm else 0.0) or 0.0,
+        }
+        return False, "; ".join(result.reasons) or "mismatch", {}, caution
 
-    # Unknown / no fingerprint: normal rejection
+    # uncertain / provider_error: normal rejection
     if reject_mismatches:
         try:
             if os.path.isfile(downloaded_file):
                 os.remove(downloaded_file)
         except OSError:
             pass
-    return False, v_err, meta, None
+    return False, "; ".join(result.reasons) or "not verified", {}, None
 
 
 def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
@@ -592,18 +602,19 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         embed_cover_setting = _get_setting(app, "embed_cover_art", "true").lower() != "false"
         cookies_path = _get_setting(app, "youtube_cookies_path", "/config/cookies.txt")
         prefer_yt_music = _get_setting(app, "youtube_source", "youtube_music").lower() == "youtube_music"
-        spotify_client_id = _get_setting(app, "spotify_client_id", "")
-        spotify_client_secret = _get_setting(app, "spotify_client_secret", "")
         # When the duration check is disabled, skip the duration comparison entirely
         # (any valid audio file is accepted) while keeping basic file validation.
         verify_expected_duration = expected_duration if enable_duration_check else None
         flagged_caution = None  # set when AcoustID flags a kept-but-different file
 
-        # Auto-resolve ISRC and genre from Deezer when missing
+        # Auto-resolve ISRC and genre from a metadata provider when missing
+        # (Phase 3: through MetadataService, capability-based — no direct
+        # services.deezer_service import).
         track_genre = track.genre or None
         if (not isrc or not track_genre) and track_deezer_id:
             try:
-                t_info = get_track_info(track_deezer_id)
+                from services.metadata_service import MetadataService
+                t_info = MetadataService().get_track_metadata(str(track_deezer_id)) or {}
                 if t_info.get("isrc") and not isrc:
                     isrc = t_info["isrc"]
                     track.isrc = isrc
@@ -737,48 +748,29 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     }
 
         # Step 1: Resolve Spotify link (ISRC-first) if any download provider is
-        # enabled (Phase 2: no SpotiFLAC-specific gate — the plugin's enabled
-        # state in Settings → Plugins governs whether it's in the chain, and a
-        # disabled spotiflac simply isn't a download.track provider). Routed
-        # through the metadata provider chain (capability check on
-        # resolve_track_url — e.g. the fnack.spotify plugin) so the resolution
-        # logic lives behind the plugin boundary like the other providers;
-        # falls back to the direct service call if no provider exposes it.
+        # enabled (Phase 2/3: no per-provider gate — a disabled plugin simply
+        # isn't a download.track provider). Routed through MetadataService
+        # (track.resolve capability, e.g. the fnack.spotify plugin) so the
+        # resolution logic lives behind the plugin boundary; no direct
+        # services.spotify_service call and no hidden fallback — if no
+        # track.resolve provider is enabled the URL stays None and the chain
+        # proceeds without a Spotify link (spotiflac can_handle gates on it).
         spotify_url = None
         if not verified_file and job_id not in cancel_requested_jobs:
             from plugins.manager import plugin_manager as _pm0
             _resolve_enabled = bool(_pm0 is not None and _pm0.has_capability("download.track"))
             if _resolve_enabled:
-                from plugins.manager import plugin_manager as _pm
-                if _pm is not None:
-                    for provider in _pm.get_metadata_providers():
-                        if hasattr(provider, "resolve_track_url") and callable(provider.resolve_track_url):
-                            try:
-                                # Phase 1.1 §3: provider invocation through the
-                                # manager's guarded boundary (executor + timeout +
-                                # health/auto-disable), never a raw call.
-                                spotify_url = _pm.invoke_provider(
-                                    provider, "resolve_track_url",
-                                    track_title,
-                                    artist_name,
-                                    album_name=album_name,
-                                    isrc=isrc,
-                                    track_number=track_num,
-                                )
-                                if spotify_url:
-                                    break
-                            except Exception as e:
-                                logger.debug("[METADATA] %s resolve_track_url failed: %s", getattr(provider, "manifest", provider), e)
-            if not spotify_url:
-                spotify_url = resolve_spotify_url(
-                    track_title,
-                    artist_name,
-                    album_name,
-                    isrc=isrc,
-                    track_number=track_num,
-                    client_id=spotify_client_id,
-                    client_secret=spotify_client_secret,
-                )
+                try:
+                    from services.metadata_service import MetadataService
+                    spotify_url = MetadataService().resolve_track_url(
+                        track_title,
+                        artist_name,
+                        album_name=album_name,
+                        isrc=isrc,
+                        track_number=track_num,
+                    )
+                except Exception as e:
+                    logger.debug("[METADATA] resolve_track_url failed: %s", e)
 
         # Steps 2-4: Downloader chain (Phase 3 — DownloadService owns the
         # download.track resolution + provider policy; the queue orchestrates).
@@ -1017,11 +1009,13 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 except Exception as ce:
                     logger.debug("[QUEUE] Duplicate cleanup note: %s", ce)
 
-                # Trigger Navidrome automatic scan if configured
+                # Trigger media-server auto-scan if configured (Phase 3: via
+                # MediaServerService — media.scan capability).
                 try:
-                    trigger_navidrome_scan(app)
+                    from services.media_server_service import MediaServerService
+                    MediaServerService().scan()
                 except Exception as ne:
-                    logger.debug("[QUEUE] Navidrome auto-scan trigger note: %s", ne)
+                    logger.debug("[QUEUE] media auto-scan trigger note: %s", ne)
 
                 socketio.emit("download_progress", {
                     "job_id": job_id,
@@ -1313,7 +1307,12 @@ def download_manual_match_track(
             if not ok or not downloaded_file:
                 socketio.emit("download_progress", {"track_id": track_id, "progress": 60.0, "status": "downloading"})
                 direct_err = last_err or "provided URL failed"
-                spot_url = resolve_spotify_url(track_title, artist_name, album_name, isrc=track_isrc)
+                try:
+                    from services.metadata_service import MetadataService
+                    spot_url = MetadataService().resolve_track_url(
+                        track_title, artist_name, album_name=album_name, isrc=track_isrc)
+                except Exception:
+                    spot_url = None
                 if spot_url:
                     ok, downloaded_file, last_err = _download_via_chain(
                         spot_url,
@@ -1330,8 +1329,16 @@ def download_manual_match_track(
             m = re.search(r"deezer\.com/track/(\d+)", target_input)
             if m:
                 d_id = int(m.group(1))
-                t_info = get_track_info(d_id)
-                spot_url = resolve_spotify_url(t_info.get("title") or track_title, t_info.get("artist_name") or artist_name, isrc=t_info.get("isrc"))
+                try:
+                    from services.metadata_service import MetadataService
+                    t_info = MetadataService().get_track_metadata(str(d_id)) or {}
+                    spot_url = MetadataService().resolve_track_url(
+                        t_info.get("title") or track_title,
+                        t_info.get("artist_name") or artist_name,
+                        isrc=t_info.get("isrc"),
+                    )
+                except Exception:
+                    spot_url = None
                 if spot_url:
                     ok, downloaded_file, last_err = _download_via_chain(
                         spot_url,
@@ -1506,9 +1513,11 @@ def download_manual_match_track(
         except Exception:
             pass
 
-        # Trigger Navidrome auto-scan
+        # Trigger media-server auto-scan (Phase 3: via MediaServerService —
+        # media.scan capability).
         try:
-            trigger_navidrome_scan(app)
+            from services.media_server_service import MediaServerService
+            MediaServerService().scan()
         except Exception:
             pass
 

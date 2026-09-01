@@ -59,8 +59,21 @@ class NavidromePlugin(ScanTriggerPlugin):
         except Exception:
             return False, "Navidrome scan failed (no app context)"
 
-    def test_connection(self) -> tuple[bool, str]:
+    def test_connection(self, candidate_config: Optional[dict] = None) -> tuple[bool, str]:
+        """Test the connection — STORED config, optionally overridden by the
+        caller's UNSAVED candidate values (Phase 3 §Candidate configuration:
+        the settings UI validates typed-but-not-saved values through the
+        application service)."""
+        url = (candidate_config or {}).get("url") or self.context.settings.get("url") or self._global_setting("navidrome_url")
+        user = (candidate_config or {}).get("user") or self.context.settings.get("user") or self._global_setting("navidrome_user")
+        token = (candidate_config or {}).get("token") or self.context.settings.get("token") or self._global_setting("navidrome_token")
+        return test_navidrome_connection(url, user, token)
+
+    def health(self) -> dict:
+        """media.health: reachability + auth status of the configured server
+        (ping.view is the health probe — same check as the connection test)."""
         url = self.context.settings.get("url") or self._global_setting("navidrome_url")
         user = self.context.settings.get("user") or self._global_setting("navidrome_user")
         token = self.context.settings.get("token") or self._global_setting("navidrome_token")
-        return test_navidrome_connection(url, user, token)
+        ok, msg = test_navidrome_connection(url, user, token)
+        return {"ok": ok, "message": msg, "configured": bool(url)}

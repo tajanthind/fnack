@@ -305,8 +305,74 @@ hidden fallback). The queue builds a `DownloadRequest`, calls
 handles the SDK `DownloadResult` (provider_id/success/path/message/retryable/
 metadata); per-provider verification policy stays queue-owned until
 `VerificationService` lands. Provider-invocation adapters live in the
-service, not in the queue. Later steps add MetadataService, FingerprintService,
-VerificationService, MediaServerService and migrate API routes to them.
+service, not in the queue.
+
+**Phase 3, Step 2: MetadataService.** `services/metadata_service.py` (new —
+the old tag-normalization module moved to `services/tag_normalization_service.py`)
+owns the metadata capabilities: `resolve_track_url` (track.resolve),
+`search_artist` (artist.search), `get_artist_discography` (artist.discography),
+`get_track_metadata` (track.metadata), `get_album_metadata` (album.metadata).
+Each resolves its capability through the registry (priority-ordered, enabled
+only), applies the first-non-empty policy, and invokes providers through the
+manager's ProviderExecutor boundary; zero providers -> `CapabilityUnavailable`
+per capability (no hidden fallback). `get_artist_discography` forwards
+filter kwargs only to providers that accept them (signature inspection), so
+Deezer's filter_remixes/... still apply through the chain. app.py /
+import_service / queue_service call the service instead of importing
+deezer/spotify services; the fnack.spotify plugin migrates legacy
+spotify_client_id/secret in `on_load`, and the fnack.deezer-batch plugin now
+exposes `get_album_info` (declares album.metadata) and accepts **filters.
+**Phase 3, Step 3: FingerprintService + VerificationService.** The brief's
+verification layer is capability-based and provider-neutral.
+`services/fingerprint_service.py` resolves `fingerprint.identify` providers
+(fnack.acoustid today, future providers) via the registry, invokes each
+through the manager boundary (timeout + auto-disable guard), and normalizes
+results into `FingerprintEvidence` — SDK-contract providers pass through,
+legacy `FingerprintResult` (confidence/matched_title/matched_artist) is
+converted; provider errors/timeouts become `error` evidence (never crash);
+provider no_match -> NO evidence (a missing fingerprint is never treated as a
+mismatch). `services/verification_service.py` combines metadata evidence
+(duration + embedded tags via the generic core `verify_audio_file`) with the
+fingerprint evidence into a provider-neutral `VerificationResult`
+(status verified/mismatch/uncertain/provider_error, score, reasons,
+metadata_evidence, fingerprint_evidence, canonical_match). The SERVICE
+compares the matched identity against the expected track (all present
+fields must agree) — no acoustid/provider-specific branch in core. The
+queue's `_verify_or_rescue` now routes through VerificationService (the
+legacy AcoustID rescue semantics are preserved by the evidence comparison;
+the queue no longer imports acoustid_service). New SDK models:
+`MetadataEvidence`, `TrackMatch`, `VerificationResult`.
+
+**Phase 3, Step 4: MediaServerService.** `services/media_server_service.py`
+resolves `media.scan` / `media.health` / `media.connection_test` via the
+capability registry (fnack.navidrome today) — first provider returning a
+usable result wins; zero providers -> `CapabilityUnavailable` per method; the
+service never names Navidrome. Candidate configuration (brief §Candidate
+configuration): `test_connection(candidate_config)` forwards UNSAVED settings
+to providers that accept them (signature inspection), so the settings UI can
+validate a typed-but-not-saved config through the application service — the
+direct core provider-service access that the old route justified is gone.
+The navidrome plugin gained `test_connection(candidate_config=...)` +
+`health()` and declares `media.health`. app.py's `/api/navidrome/test` +
+`/api/navidrome/scan` routes and the queue's post-download auto-scans route
+through the service (the split-repair library task `run_auto_split_repair`
+has no capability yet — stays transitional).
+
+**Phase 3, Step 5: Queue/API cleanup + completion criteria.** The queue is
+now a pure orchestrator: it imports only generic core (verifier_service,
+models, requests) plus the four application services; it has zero provider
+imports and zero provider-ID branches. API routes use application services;
+the only remaining direct provider-service imports in app.py are the
+documented transitional ones (musicbrainz enrich, acoustid manual-identify,
+navidrome fix-splits — none has a capability in the MASTER set). New
+`tests/architecture/test_phase3_completion.py` asserts the brief's
+completion criteria at source level: queue provider-free, queue orchestrates
+through the services, app routes use services, zero providers ->
+CapabilityUnavailable per service, multiple providers work (first-success /
+first-non-empty / evidence fan-out), provider errors never crash the queue.
+Phase 3 complete: DownloadService / MetadataService / FingerprintService /
+VerificationService / MediaServerService all capability-based; verification
+provider-neutral; candidate-config test_connection supported.
 
 ---
 

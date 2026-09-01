@@ -139,25 +139,21 @@ FORBIDDEN_PROVIDER_MODULES = {
 # file -> {module: reason}. Later phases delete these entries.
 TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {
     "app.py": {
-        "services.deezer_service": "confirmed interactive search split (HARNESS §2)",
-        "services.navidrome_service": "scan/test direct fallback when no scan_trigger plugin (Phase 10 removes)",
+        "services.deezer_service": "onboarding artist-info lookup (get_artist_info — no capability yet; Phase 6 removes)",
+        "services.navidrome_service": "split-repair library task run_auto_split_repair (no capability yet; Phase 10 removes)",
         "services.musicbrainz_service": "discography enrichment helper called from sync (Phase 7 removes)",
         "services.acoustid_service": "identify/last-lookup helpers on verify route (Phase 9 removes)",
     },
     "import_service.py": {
-        "services.deezer_service": "batch discography fetch via metadata chain (Phase 5/6 removes)",
         "services.musicbrainz_service": "batch enrichment via metadata chain (Phase 7 removes)",
     },
     "queue_service.py": {
-        "services.deezer_service": "track info fallback (Phase 6 removes)",
-        "services.spotify_service": "URL resolution fallback (Phase 5 removes)",
-        "services.navidrome_service": "scan fallback (Phase 10 removes)",
         "services.acoustid_service": "fingerprint fallback (Phase 9 removes)",
     },
     "deezer_service.py": {
         "services.itunes_service": "regional album fallback inside provider (Phase 7 removes)",
     },
-    "metadata_service.py": {
+    "tag_normalization_service.py": {
         "services.navidrome_service": "split-repair scan helper (Phase 10 removes)",
     },
 }
@@ -198,12 +194,10 @@ def test_provider_imports_frozen_to_transitional_allowlist() -> None:
 ID_BRANCH_RE = re.compile(r"""(?:==|!=|is not|is)\s*["']fnack\.[a-z0-9\-]+["']""")
 
 # Transitional: the deezer-batch discography keying (per-provider artist id
-# vs name) shipped in PR #6. Replaced when the metadata capability boundary
-# lands (Phase 5/6). file -> set of allowed line fragments.
-TRANSITIONAL_ID_BRANCHES: dict[str, set[str]] = {
-    "app.py": {"provider.manifest.id == \"fnack.deezer-batch\""},
-    "import_service.py": {"provider.manifest.id == \"fnack.deezer-batch\""},
-}
+# vs name) shipped in PR #6. REMOVED in Phase 3 Step 2 (MetadataService owns
+# the artist.discography chain and never branches on provider IDs). No
+# entries remain; a new provider-ID branch anywhere in core is forbidden.
+TRANSITIONAL_ID_BRANCHES: dict[str, set[str]] = {}
 
 
 def test_provider_id_branches_frozen_to_transitional_allowlist() -> None:

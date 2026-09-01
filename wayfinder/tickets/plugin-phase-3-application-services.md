@@ -113,3 +113,82 @@ fnack-plugins synced when a provider's impl moves.
   manual path fails cleanly, zero-provider raises). Note: queue still
   imports deezer/spotify/verifier/navidrome/acoustid for metadata/
   verification/media — those are Steps 2–4.
+- **Step 2 DONE (PR 6 = MetadataService)**: `services/metadata_service.py`
+  (new — the old tag-normalization module moved to
+  services/tag_normalization_service.py, 2 script imports updated).
+  MetadataService resolves the metadata capabilities — track.resolve /
+  artist.search / artist.discography / track.metadata / album.metadata —
+  via the registry (priority-ordered, enabled only), first-non-empty policy,
+  manager-boundary invocation, CapabilityUnavailable per capability when
+  zero providers (no hidden fallback). get_artist_discography forwards
+  filter kwargs only to providers that accept them (signature inspection).
+  Callers migrated: app.py api_search_artist / artist sync / api_artist_sync
+  and import_service (search + discography) call MetadataService; the
+  queue's ISRC/genre auto-resolve (get_track_metadata), resolve_track_url
+  and manual-path Deezer-URL handling no longer import deezer/spotify
+  services. app.py keeps get_artist_info direct (no capability exists —
+  onboarding-only, allowlist updated). plugins/context.py get_album_info /
+  get_track_info route through MetadataService. fnack.spotify on_load
+  migrates legacy spotify_client_id/secret; fnack.deezer-batch exposes
+  get_album_info (declares album.metadata) and accepts **filters — synced to
+  fnack-plugins + repackaged. Parity test
+  tests/architecture/test_metadata_service.py (provider-neutral source,
+  zero-provider CapabilityUnavailable per method, first-non-empty policy,
+  filter forwarding, caller migration, module rename). Smoke + 10
+  architecture tests green; live boot verifies real Deezer search / Spotify
+  URL resolution / Deezer track metadata through the capability chain and
+  the zero-provider structured error.
+- **Step 3 DONE (PR 7 = FingerprintService + VerificationService)**:
+  `services/fingerprint_service.py` resolves fingerprint.identify providers
+  (fnack.acoustid today) via the registry, invokes through the manager
+  boundary (timeout + auto-disable), normalizes SDK FingerprintEvidence /
+  legacy FingerprintResult into evidence; provider error -> error evidence
+  (never crash); provider no_match -> NO evidence (missing fingerprint never
+  a mismatch). `services/verification_service.py` combines metadata evidence
+  (duration + tags via generic core verify_audio_file) with fingerprint
+  evidence into provider-neutral VerificationResult (verified/mismatch/
+  uncertain/provider_error + score/reasons/evidence/canonical_match); the
+  SERVICE compares matched identity vs expected (all present fields must
+  agree — faithful to the legacy candidate cross-check) — no acoustid branch
+  in core. queue `_verify_or_rescue` routes through VerificationService (no
+  acoustid_service import remains in the queue). New SDK models:
+  MetadataEvidence / TrackMatch / VerificationResult. Parity test
+  tests/architecture/test_verification_service.py (provider-neutral source,
+  zero-provider CapabilityUnavailable, evidence normalization both shapes,
+  agree->verified / contradict->mismatch / no-evidence->uncertain /
+  provider-error, queue-routes-through-service). Smoke + 11 architecture
+  tests green; live boot verifies acoustid provider resolution, no-key
+  identify returns no evidence, verify returns structured results.
+- **Step 4 DONE (PR 8 = MediaServerService)**: `services/media_server_service.py`
+  resolves media.scan / media.health / media.connection_test via the
+  capability registry (fnack.navidrome today), first-success policy, zero
+  providers -> CapabilityUnavailable per method; the service never names
+  Navidrome. Candidate configuration: test_connection(candidate_config)
+  forwards UNSAVED settings to providers that accept them (signature
+  inspection) — the settings UI validates a typed-but-not-saved config
+  through the application service, removing the direct core provider-service
+  access the old route justified. fnack.navidrome plugin gained
+  test_connection(candidate_config=...) + health() and declares
+  media.health (synced + repackaged). Callers migrated: app.py
+  /api/navidrome/test + /api/navidrome/scan routes and queue post-download
+  auto-scans route through the service (run_auto_split_repair split-repair
+  task has no capability yet — stays transitional; independence allowlist
+  updated). Parity test tests/architecture/test_media_server_service.py
+  (provider-neutral source, zero-provider CapabilityUnavailable,
+  scan/health first-success, candidate-config forwarding both provider
+  shapes, caller migration). Smoke + 12 architecture tests green; live boot
+  verifies scan/test/health through the capability chain, zero-provider
+  structured error, and the scan route.
+- **Step 5 DONE (PR 9 = Queue/API cleanup)**: the queue is a pure
+  orchestrator — imports only generic core (verifier_service, models,
+  requests) plus the four application services; zero provider imports, zero
+  provider-ID branches (verified at source level). API routes use application
+  services; the only remaining app.py provider imports are the documented
+  transitional ones (musicbrainz enrich, acoustid manual-identify, navidrome
+  fix-splits — no capability in the MASTER set). New
+  tests/architecture/test_phase3_completion.py asserts ALL brief completion
+  criteria: queue provider-free, queue orchestrates through the services,
+  app routes use services, zero providers -> CapabilityUnavailable per
+  service, multiple providers work, provider errors never crash the queue.
+  Smoke + 13 architecture tests green; live boot confirms all capabilities
+  resolve and routes serve through the services. PHASE 3 COMPLETE.

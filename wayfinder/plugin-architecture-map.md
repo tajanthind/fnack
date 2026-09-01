@@ -198,6 +198,26 @@ phase.
   evidence, no acoustid_match rules in core); zero providers → structured
   CapabilityUnavailable; candidate configs supported by
   test_connection(candidate_config). One branch+PR per service.
+  **Step 1 (DownloadService) + Step 2 (MetadataService) done** — PRs #21/#22
+  (queue + app/import metadata callers migrated; tag-normalization service
+  renamed to tag_normalization_service.py; fnack.spotify + fnack.deezer-batch
+  synced). Smoke + 10 architecture tests green.
+  **Step 3 (FingerprintService + VerificationService) done** — PR #23
+  (provider-neutral verification: normalized FingerprintEvidence via
+  fingerprint.identify; VerificationResult with metadata+fingerprint
+  evidence; queue _verify_or_rescue routes through the service, no
+  acoustid_service import in core; SDK MetadataEvidence/TrackMatch/
+  VerificationResult). Smoke + 11 architecture tests green.
+  **Step 4 (MediaServerService) done** — PR #24 (media.scan/health/
+  connection_test via the registry; candidate-config test_connection
+  forwards unsaved settings; app/queue navidrome scan+test callers migrated;
+  navidrome plugin declares media.health; no navidrome import in queue).
+  Smoke + 12 architecture tests green.
+  **Step 5 (Queue/API cleanup) done** — PR #25: queue is a pure orchestrator
+  (generic core + application services only; zero provider imports/IDs);
+  app routes use application services (remaining provider imports documented
+  transitional); test_phase3_completion.py asserts all brief completion
+  criteria. **PHASE 3 COMPLETE** — Smoke + 13 architecture tests green.
 
 ## Roadmap (execution carried into the map)
 
