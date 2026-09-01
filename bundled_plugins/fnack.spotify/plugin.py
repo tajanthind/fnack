@@ -14,6 +14,18 @@ from services.spotify_service import resolve_spotify_url
 class SpotifyProvider(MetadataProviderPlugin):
     priority = 30
 
+    def on_load(self) -> None:
+        # Phase 3 settings migration: plugin setting is authoritative; legacy
+        # globals are a one-time fallback migrated into the plugin store.
+        legacy_map = {
+            "client_id": ("spotify_client_id", ""),
+            "client_secret": ("spotify_client_secret", ""),
+        }
+        for key, (legacy_key, default) in legacy_map.items():
+            if not self.context.settings.get(key):
+                legacy = self.context.library.get_setting(legacy_key, "")
+                self.context.settings.set(key, legacy or default)
+
     def search_artist(self, name: str) -> list[dict]:
         return []
 

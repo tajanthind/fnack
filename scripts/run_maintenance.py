@@ -29,7 +29,7 @@ sys.path.insert(0, "/app/services")
 
 from flask import Flask  # noqa: E402
 from models import db  # noqa: E402
-from services.metadata_service import MUSIC_ROOT, normalize_album_tags  # noqa: E402
+from services.tag_normalization_service import MUSIC_ROOT, normalize_album_tags  # noqa: E402
 
 DB_URI = os.environ.get("SQLALCHEMY_DATABASE_URI", "sqlite:////config/fnack.db")
 LOCK_FILE = os.environ.get("MAINTENANCE_LOCK", "/downloads/work/maintenance.lock")

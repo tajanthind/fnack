@@ -10,7 +10,6 @@ from typing import Optional
 import mutagen
 
 from models import Album, Artist, Track, db
-from services.deezer_service import get_artist_discography, search_artist
 
 logger = logging.getLogger("fnack.import")
 
@@ -41,9 +40,12 @@ def _cached_search_artist(query: str, limit: int = 6) -> list:
     if hit and now - hit["ts"] < _SEARCH_TTL_SECONDS:
         return hit["results"]
     try:
-        results = search_artist(query, limit=limit)
+        # Phase 3: MetadataService (artist.search capability) — no direct
+        # services.deezer_service call.
+        from services.metadata_service import MetadataService
+        results = MetadataService().search_artist(query, limit=limit)
     except Exception as e:
-        logger.debug("[IMPORT] Deezer search failed for '%s': %s", query, e)
+        logger.debug("[IMPORT] Artist search failed for '%s': %s", query, e)
         results = []
     _deezer_search_cache[key] = {"ts": now, "results": results}
     return results
@@ -250,41 +252,30 @@ def import_artist_folder(
     audio_files = [f for f in artist_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
     opts = filter_options or {}
 
-    # If deezer_artist_id not provided, try to search
+    # If deezer_artist_id not provided, try to search (Phase 3: application
+    # service — artist.search capability).
     if not deezer_artist_id:
-        results = search_artist(folder_name, limit=1)
+        try:
+            from services.metadata_service import MetadataService
+            results = MetadataService().search_artist(folder_name, limit=1)
+        except Exception:
+            results = []
         if results:
             deezer_artist_id = results[0]["id"]
 
     if not deezer_artist_id:
         return {"error": f"Could not resolve Deezer artist for folder '{folder_name}'"}
 
-    # Fetch discography (Phase 2: metadata provider chain in priority order —
-    # Deezer p10 authoritative, then MusicBrainz p20 / Spotify p30 / iTunes p40.
-    # First provider with a usable discography wins; direct service call is the
-    # last resort, so behavior never degrades for existing users).
+    # Fetch discography (Phase 3: MetadataService owns the artist.discography
+    # chain — Deezer p10 authoritative, then MusicBrainz p20 / Spotify p30 /
+    # iTunes p40, first usable discography wins. No direct services.deezer
+    # call, no hidden fallback).
     disco = None
     try:
-        from plugins.manager import plugin_manager as _pm
-        if _pm is not None:
-            for provider in _pm.get_metadata_providers():
-                key = str(deezer_artist_id) if provider.manifest.id == "fnack.deezer-batch" else folder_name
-                try:
-                    # Phase 1.1 §3: provider invocation via the central executor.
-                    d = _pm.invoke_provider(provider, "get_artist_discography", key)
-                except Exception:
-                    logger.debug("[METADATA] provider %s discography failed, trying next",
-                                 provider.manifest.id, exc_info=True)
-                    continue
-                if d and d.get("albums"):
-                    disco = d
-                    logger.info("[METADATA] Discography served by %s for '%s'", provider.manifest.id, folder_name)
-                    break
-    except Exception:
-        logger.debug("[DEEZER] plugin chain skipped, using direct call", exc_info=True)
-    if not disco:
-        disco = get_artist_discography(
-            deezer_artist_id,
+        from services.metadata_service import MetadataService
+        disco = MetadataService().get_artist_discography(
+            str(deezer_artist_id),
+            artist_name=folder_name,
             filter_remixes=opts.get("filter_remixes", True),
             filter_lofi=opts.get("filter_lofi", True),
             filter_live=opts.get("filter_live", True),
@@ -293,6 +284,12 @@ def import_artist_folder(
             include_singles=opts.get("include_singles", True),
             include_compilations=opts.get("include_compilations", False),
         )
+        if disco and disco.get("albums"):
+            logger.info("[METADATA] Discography served for '%s' (%d albums)",
+                        folder_name, len(disco.get("albums", [])))
+    except Exception:
+        logger.debug("[METADATA] discography fetch failed, using empty shape", exc_info=True)
+        disco = {"artist_name": folder_name, "albums": []}
 
     # MusicBrainz enrichment (additive only, fail-soft, regional negative cache)
     try:

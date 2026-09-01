@@ -305,8 +305,25 @@ hidden fallback). The queue builds a `DownloadRequest`, calls
 handles the SDK `DownloadResult` (provider_id/success/path/message/retryable/
 metadata); per-provider verification policy stays queue-owned until
 `VerificationService` lands. Provider-invocation adapters live in the
-service, not in the queue. Later steps add MetadataService, FingerprintService,
-VerificationService, MediaServerService and migrate API routes to them.
+service, not in the queue.
+
+**Phase 3, Step 2: MetadataService.** `services/metadata_service.py` (new —
+the old tag-normalization module moved to `services/tag_normalization_service.py`)
+owns the metadata capabilities: `resolve_track_url` (track.resolve),
+`search_artist` (artist.search), `get_artist_discography` (artist.discography),
+`get_track_metadata` (track.metadata), `get_album_metadata` (album.metadata).
+Each resolves its capability through the registry (priority-ordered, enabled
+only), applies the first-non-empty policy, and invokes providers through the
+manager's ProviderExecutor boundary; zero providers -> `CapabilityUnavailable`
+per capability (no hidden fallback). `get_artist_discography` forwards
+filter kwargs only to providers that accept them (signature inspection), so
+Deezer's filter_remixes/... still apply through the chain. app.py /
+import_service / queue_service call the service instead of importing
+deezer/spotify services; the fnack.spotify plugin migrates legacy
+spotify_client_id/secret in `on_load`, and the fnack.deezer-batch plugin now
+exposes `get_album_info` (declares album.metadata) and accepts **filters.
+Remaining steps: FingerprintService, VerificationService, MediaServerService,
+then Queue/API cleanup.
 
 ---
 

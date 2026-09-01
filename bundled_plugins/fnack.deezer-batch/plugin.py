@@ -23,8 +23,14 @@ class DeezerBatchProvider(MetadataProviderPlugin):
     def search_artist(self, name: str) -> list[dict]:
         return search_artist(name, limit=10)
 
-    def get_artist_discography(self, provider_artist_id: str) -> dict:
-        return get_artist_discography(int(provider_artist_id))
+    def get_artist_discography(self, provider_artist_id: str, **filters) -> dict:
+        """Discography with the caller's filters (filter_remixes/...).
+        Accepts **filters so MetadataService can pass them through (the
+        service inspects signatures and only forwards accepted kwargs)."""
+        return get_artist_discography(int(provider_artist_id), **filters)
+
+    def get_album_info(self, provider_album_id: str) -> Optional[dict]:
+        return get_album_info(int(provider_album_id))
 
     def get_track_info(self, provider_track_id: str) -> Optional[dict]:
         return get_track_info(int(provider_track_id))
