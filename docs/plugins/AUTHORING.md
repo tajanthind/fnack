@@ -278,6 +278,11 @@ implements the same FINAL SDK `TrackDownloader` contract as spotiflac.
 `query` (raw URL/search string from the manual-download path), `cookies_path`,
 `audio_source` (`youtube` vs `youtube_music`), and `check_duration` (the
 queue verifies after download, so the provider may skip its internal check).
+The `engine_gates` dict (provider-ID-keyed toggles like `enable_ytdlp`) is
+REMOVED from the queue chain: core never names a provider or checks a
+provider-specific toggle — the download.track capability registry is the
+ONLY enable/disable mechanism (a disabled provider plugin simply isn't in
+`get_downloaders()`).
 Generic core helpers (audio-file verification, AcoustID matching) reach the
 plugin only through the PluginContext facade (`library.verify_audio_file` /
 `library.verify_download_acoustid`) — the plugin never imports `services.*`;

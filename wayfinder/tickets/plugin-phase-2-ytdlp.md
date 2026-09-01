@@ -36,10 +36,13 @@ the still-legacy providers until their own PRs).
    `_build_download_request` now carries the hints; the chain still
    normalizes the SDK `DownloadResult` to the legacy
    `success/file_path/error` shape so downstream verification is untouched.
-   Engine gates reduced to `{"fnack.ytdlp": enable_ytdlp,
-   "fnack.spotdl": enable_ytdlp}` — the spotiflac gate is gone (its
-   extraction PR removed it); `enable_ytdlp` itself stays until the
-   settings-migration PR (PR 11/12) per the reviewer's table.
+   The `engine_gates` dict (provider-ID-keyed toggles, incl. the
+   `enable_ytdlp` setting) is REMOVED — core no longer knows that
+   `fnack.ytdlp` exists or has a toggle. Disabling a provider plugin
+   removes it from the download.track capability registry, which is the
+   only mechanism (same as spotiflac since PR 3). The inert legacy
+   `enable_ytdlp`/`enable_spotiflac` AppSetting keys remain as migration
+   surface until PR 11/12.
 5. **Manual-download path** — the 5 remaining `download_track_ytdlp(...)`
    calls in `download_manual_match_track` now route through
    `_download_via_ytdlp_provider(...)` (guarded manager boundary over the
@@ -76,7 +79,8 @@ the still-legacy providers until their own PRs).
 - `download()` coerces `request.destination` with `Path(...)` — the SDK
   contract types it as Path, but string paths from any caller must not
   crash the plugin.
-- `enable_ytdlp` engine gate deliberately NOT removed here: reviewer's
-  table (PR #16 review) says keep until the settings-migration PR; the
-  gate is now purely cosmetic (both engine entries map to the same SDK
-  provider) and is cleaned up with legacy settings in PR 11/12.
+- The `engine_gates` mechanism is gone entirely (reviewer's PR #16 table
+  said "keep until yt-dlp extraction" — extraction is this PR). The
+  capability registry is the ONLY enable/disable mechanism for providers;
+  the inert legacy `enable_ytdlp`/`enable_spotiflac` AppSetting keys are
+  removed together with the rest of the legacy settings in PR 11/12.

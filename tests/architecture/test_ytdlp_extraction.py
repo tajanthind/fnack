@@ -15,6 +15,10 @@ Verifies the Phase 2 extraction contract for fnack.ytdlp:
    boundary, not a direct core->service call.
 5. The cookies settings UI routes through the provider (duck-typed), with a
    core fallback.
+6. The download chain is provider-neutral: no `enable_ytdlp` toggle and no
+   provider-ID-keyed gate (engine_gates) in core — disabling the fnack.ytdlp
+   plugin removes it from the download.track capability registry, which is
+   the ONLY mechanism.
 
 Run from the repo root:
 
@@ -142,6 +146,32 @@ def test_manual_download_routes_through_provider() -> None:
     assert "spotdl_service" not in src, "queue_service must not import the deleted spotdl alias"
 
 
+def test_no_ytdlp_gate_in_chain_source() -> None:
+    """Source-level: the download chain must not contain a yt-dlp-specific
+    gate/branch. Disabling the fnack.ytdlp plugin removes it from the
+    download.track capability registry (get_downloaders() returns only
+    enabled providers) — that is the ONLY mechanism; core must not also
+    check `enable_ytdlp` or a provider-ID-keyed engine_gates dict."""
+    src = (ROOT / "services" / "queue_service.py").read_text(encoding="utf-8")
+    forbidden = [
+        "enable_ytdlp",       # legacy provider-specific toggle
+        "engine_gates",       # provider-ID-keyed gate dict
+        '"fnack.ytdlp"',      # provider-ID keyed gate/branch
+        "'fnack.ytdlp'",
+        '"fnack.spotdl"',     # spotdl alias keyed gate
+        "'fnack.spotdl'",
+    ]
+    for needle in forbidden:
+        assert needle not in src, (
+            f"queue_service.py must have no yt-dlp-specific gate/branch "
+            f"(found {needle!r}) — the chain must be capability-driven, not "
+            f"provider-ID-driven"
+        )
+    # The chain must be capability-driven: it resolves providers via the
+    # download.track capability, never by naming a provider.
+    assert "download.track" in src
+
+
 def test_cookies_ui_routes_through_provider() -> None:
     """app.py's cookies routes use the provider (duck-typed), not a direct
     services import; a core fallback keeps the page working."""
@@ -162,5 +192,6 @@ if __name__ == "__main__":
     test_plugin_implements_sdk_downloader_contract()
     test_migration_adapter_passes_hints_and_normalizes()
     test_manual_download_routes_through_provider()
+    test_no_ytdlp_gate_in_chain_source()
     test_cookies_ui_routes_through_provider()
     print("test_ytdlp_extraction: PASSED")
