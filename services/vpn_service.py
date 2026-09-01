@@ -19,14 +19,12 @@ VPN_DIR = Path(os.environ.get("VPN_DIR", "/config/vpn"))
 LOG_FILE = "/tmp/fnack-vpn.log"
 
 
-def _clear_spotiflac_breaker() -> None:
-    """After the tunnel is up we have a fresh public IP — reset the SpotiFLAC
-    429 circuit breaker so lossless downloads are retried immediately instead
-    of waiting out the 30-300s cool-down on the old rate-limited IP.
+def _emit_route_changed() -> None:
+    """After the tunnel is up we have a fresh public IP. Provider plugins that
+    own rate-limit/circuit-breaker state (e.g. fnack.spotiflac's 429 breaker)
+    subscribe to `network.route_changed` and reset themselves.
 
-    Phase 2: core does NOT import the provider service. It emits the
-    `network.route_changed` event; the fnack.spotiflac plugin (which owns the
-    circuit-breaker state) subscribes and resets itself."""
+    Phase 2: core never imports a provider service; it only emits the event."""
     try:
         from plugins.manager import plugin_manager
         if plugin_manager is not None:
@@ -255,7 +253,7 @@ def start_vpn() -> Tuple[bool, str]:
         if not _tun_interfaces():
             return False, "OpenVPN started but the tunnel did not come up. Check the VPN logs (Settings -> VPN or docker logs)."
         logger.info("[VPN] OpenVPN tunnel up via %s", cfg.name)
-        _clear_spotiflac_breaker()
+        _emit_route_changed()
         return True, f"OpenVPN connected via {cfg.name}"
 
     # WireGuard
@@ -266,7 +264,7 @@ def start_vpn() -> Tuple[bool, str]:
             logger.info("[VPN] WireGuard tunnel up via %s", wg.name)
             _enable_split_mode()
             _restore_docker_dns()
-            _clear_spotiflac_breaker()
+            _emit_route_changed()
             return True, f"WireGuard connected via {wg.name} (split mode: downloads via tunnel, dashboard direct)"
         err_text = (r.stderr or r.stdout or "").strip()[:300]
         logger.warning("[VPN] WireGuard failed to start via %s: %s", wg.name, err_text)
