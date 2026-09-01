@@ -73,7 +73,7 @@ def test_chain_works_with_spotiflac_disabled() -> None:
     import logging
     logging.disable(logging.WARNING)
     import tempfile
-    from services.queue_service import (
+    from services.download_service import (
         _invoke_downloader_can_handle,
         _invoke_downloader_download,
     )
@@ -172,34 +172,33 @@ def test_no_spotiflac_branch_in_chain_source() -> None:
 
 
 def test_process_track_job_loop_builds_options_before_can_handle() -> None:
-    """Regression test for the critical review finding: `_process_track_job`'s
-    downloader loop previously passed `options` to `can_handle()` BEFORE
-    building the dict, which would raise `UnboundLocalError` on the first
-    provider (Python treats `options` as local because `options = {}` appears
-    later in the same function).
+    """Regression test for the critical review finding: the downloader loop
+    previously passed `options` to `can_handle()` BEFORE building the dict,
+    which would raise `UnboundLocalError` on the first provider (Python
+    treats `options` as local because `options = {}` appears later in the
+    same function).
 
-    Driving the full loop needs a live DB + network download, so this is a
-    precise SOURCE-ORDER check: in the downloader loop, the `options = {}`
-    assignment must lexically precede the `can_handle` call. (A real call
-    that fails with UnboundLocalError would violate this ordering.)
+    The loop moved into DownloadService (Phase 3) — the invariant now lives
+    in `services/download_service.py::DownloadService.download`: the
+    provider options must be built before `_invoke_downloader_can_handle` is
+    called. (A real call that fails with UnboundLocalError would violate
+    this ordering.)
     """
-    src = (ROOT / "services" / "queue_service.py").read_text(encoding="utf-8")
+    src = (ROOT / "services" / "download_service.py").read_text(encoding="utf-8")
     lines = src.splitlines()
 
-    # Find the loop's can_handle invocation and the options assignment.
+    # Find download()'s can_handle invocation and the options assignment.
     can_handle_line = None
     options_assign_line = None
     for i, line in enumerate(lines):
         if "_invoke_downloader_can_handle(" in line:
             can_handle_line = i
-        if line.strip() == "options = {}":
-            # The FIRST assignment in _process_track_job (there may be others
-            # in later helpers — take the one before the loop body).
+        if "options = self._provider_options(" in line:
             if options_assign_line is None:
                 options_assign_line = i
 
-    assert can_handle_line is not None, "must find _invoke_downloader_can_handle in queue_service"
-    assert options_assign_line is not None, "must find options = {} in queue_service"
+    assert can_handle_line is not None, "must find _invoke_downloader_can_handle in download_service"
+    assert options_assign_line is not None, "must find options = self._provider_options( in download_service"
     assert options_assign_line < can_handle_line, (
         "options must be built BEFORE can_handle in the downloader loop "
         f"(options at line {options_assign_line + 1}, can_handle at line "

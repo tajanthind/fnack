@@ -87,9 +87,9 @@ def test_plugin_implements_sdk_downloader_contract() -> None:
 
 
 def test_migration_adapter_normalizes_both_contracts() -> None:
-    """The queue chain's adapter maps an SDK DownloadResult to the legacy
-    shape (success/file_path/error) and keeps legacy providers working."""
-    from services.queue_service import (
+    """DownloadService's adapter invokes both SDK and legacy providers and
+    returns the FINAL SDK DownloadResult shape (provider_id/success/path)."""
+    from services.download_service import (
         _is_sdk_downloader,
         _invoke_downloader_can_handle,
         _invoke_downloader_download,
@@ -126,7 +126,7 @@ def test_migration_adapter_normalizes_both_contracts() -> None:
     tr = LegacyTrackRef(id=1, title="T", artist_name="A", album_name="B")
     assert _invoke_downloader_can_handle(fm, legacy, tr, _P("/tmp"), {}) is True
     res = _invoke_downloader_download(fm, legacy, tr, _P("/tmp"), {}, 10)
-    assert res.success is True and res.file_path == _P("/tmp/legacy.flac")
+    assert res.success is True and res.path == _P("/tmp/legacy.flac")
 
     # New-contract provider: SDK shape normalized to legacy shape.
     class SdkDownloader:
@@ -142,8 +142,8 @@ def test_migration_adapter_normalizes_both_contracts() -> None:
                          spotify_url="https://open.spotify.com/track/x")
     assert _invoke_downloader_can_handle(fm, sdk, tr2, _P("/tmp"), {}) is True
     res2 = _invoke_downloader_download(fm, sdk, tr2, _P("/tmp"), {}, 10)
-    assert res2.success is True and res2.file_path == _P("/tmp/new.flac")
-    assert res2.source_plugin_id == "fnack.spotiflac"
+    assert res2.success is True and res2.path == _P("/tmp/new.flac")
+    assert res2.provider_id == "fnack.spotiflac"
 
 
 def test_manual_download_routes_through_provider() -> None:
