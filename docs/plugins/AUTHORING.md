@@ -225,6 +225,19 @@ from fnack.plugin_api import (
   `NotificationProvider`, `NetworkRouter`) and `ProviderExecutor`, the one
   place that runs provider methods — sync or async (awaitables are detected
   with `inspect.isawaitable`; never call `asyncio.run()` in your plugin).
+- **Runtime invocation boundary (Phase 1.1).** Application services call
+  providers through `PluginManager.invoke_provider(...)` — never a raw
+  method call and never `manager.executor.run(...)` directly. The manager's
+  boundary routes through ProviderExecutor AND applies the gevent timeout +
+  consecutive-failure + auto-disable + health guard, so every provider path
+  gets the same safety. `invoke_provider` accepts either a LoadedPlugin or a
+  provider instance.
+- **Two contracts, explicitly (Phase 1.1).** The runtime VALIDATES the
+  CURRENT COMPATIBILITY CONTRACT (`fnack/plugin_api/contracts.py` — the
+  actual FNACK method names like `can_handle(track)` / `resolve_track_url`),
+  while `providers.py` protocols describe the FINAL SDK CONTRACT (request-
+  object signatures). Phase 2 bridges them with a migration adapter; do NOT
+  rewrite plugins to the new protocol signatures as a 1.1 cleanup.
 - Errors: raise or handle `CapabilityUnavailable` (no enabled plugin
   provides a capability — a *valid* state, not a bug) and `ProviderError`
   (a specific provider failed, with a stable `code` and `retryable` flag).
@@ -495,7 +508,9 @@ Never render raw/unescaped user input into slot HTML.
 | `GET /api/plugins` | All loaded plugins with enabled/trust/priority |
 | `GET /api/plugins/grouped` | Same, grouped by type |
 | `POST /api/plugins/<id>/enable` \| `disable` | Toggle (persists row) |
-| `POST /api/plugins/<id>/priority` | `{"priority": N}` or `null` to clear plugin-level override (the default for every capability) |
+| `POST /api/plugins/<id>/priority` | `{"priority": N}` or `null` to clear plugin-level override (the default for every capability); non-integer -> 400 |
+| `GET /api/plugins/export` | Full config blob; now includes per-plugin `capability_priorities` |
+| `POST /api/plugins/import` | Restores repos/install/settings/priorities incl. `capability_priorities` |
 | `GET /api/plugins/<id>/capabilities` | Per-capability effective priority + source (`capability`/`plugin`/`manifest`) |
 | `POST /api/plugins/<id>/capabilities/<cap>/priority` | `{"priority": N}` or `null` to clear the capability-specific override |
 | `GET/POST /api/plugins/<id>/settings` | Per-plugin key/value settings |

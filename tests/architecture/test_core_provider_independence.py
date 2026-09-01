@@ -16,6 +16,20 @@ what Phase 1 can honestly guarantee:
      capability boundary lands). Adding a NEW branch fails.
   5. Missing capability is a valid state: CapabilityUnavailable, no fallback.
 
+IMPORTANT — what this test is and is not (Phase 1.1 review):
+
+- It is a REGRESSION FENCE, not a final architectural guarantee. Passing it
+  does NOT mean core is provider-independent today: the TRANSITIONAL
+  allowlist below still permits core -> provider-service imports (queue,
+  app, import_service) and one provider-ID branch. Those exist because
+  Phase 1/1.1 deliberately did not move provider implementations.
+- Phase 2's job is to SHRINK this allowlist entry by entry as each provider
+  is extracted (each entry names its removal phase). The fence's real value
+  is that any NEW import/branch added without extending the allowlist fails
+  CI immediately.
+- The final state (Definition of Done in the MASTER) is: allowlist empty,
+  core provider imports = 0, provider-ID branches = 0.
+
 As later phases remove each transitional entry, this allowlist shrinks.
 
 Run from the repo root:
@@ -77,6 +91,32 @@ def test_core_uses_public_manager_api() -> None:
         "Core business logic must use PluginManager's public API "
         f"(get_plugin/get_loaded/get_plugin_capabilities/capability_registry), "
         f"never the private _plugins dict:\n" + "\n".join(violations)
+    )
+
+
+EXECUTOR_BYPASS_RE = re.compile(r"(?:_pm|plugin_manager|_pm2)\.executor\.run\b")
+
+
+def test_runtime_provider_calls_use_guarded_boundary() -> None:
+    """Phase 1.1 review §1: application services must invoke capability
+    providers through PluginManager.invoke_provider() — never
+    `_pm.executor.run(...)` directly. The executor is the manager's
+    invocation MECHANISM; the guarded boundary (timeout + consecutive-
+    failure + auto-disable + health) is the API. A direct executor.run in
+    app code means a provider can fail without health/auto-disable."""
+    scan = [ROOT / "app.py", *(ROOT / "services").glob("*.py")]
+    violations = []
+    for path in scan:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if EXECUTOR_BYPASS_RE.search(line) and not line.strip().startswith("#"):
+                violations.append(f"{path.name}:{lineno}: {line.strip()}")
+    assert not violations, (
+        "Application services must invoke providers via "
+        "PluginManager.invoke_provider() (the guarded boundary), never "
+        f"manager.executor.run() directly:\n" + "\n".join(violations)
     )
 
 
@@ -237,6 +277,7 @@ def test_missing_capability_is_a_valid_state() -> None:
 if __name__ == "__main__":
     test_sdk_never_imports_core_internals()
     test_core_uses_public_manager_api()
+    test_runtime_provider_calls_use_guarded_boundary()
     test_provider_imports_frozen_to_transitional_allowlist()
     test_provider_id_branches_frozen_to_transitional_allowlist()
     test_missing_capability_is_a_valid_state()

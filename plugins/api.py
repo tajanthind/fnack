@@ -116,7 +116,10 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         if "priority" not in payload:
             return jsonify({"error": "priority is required"}), 400
         raw = payload.get("priority")
-        value = None if raw is None else int(raw)
+        try:
+            value = None if raw is None else int(raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "priority must be an integer"}), 400
         if value is not None and value < 1:
             return jsonify({"error": "priority must be >= 1"}), 400
         row = _ensure_installed_row(manager, plugin_id, enabled=True)
@@ -168,7 +171,10 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         if "priority" not in payload:
             return jsonify({"error": "priority is required"}), 400
         raw = payload.get("priority")
-        value = None if raw is None else int(raw)
+        try:
+            value = None if raw is None else int(raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "priority must be an integer"}), 400
         if value is not None and value < 1:
             return jsonify({"error": "priority must be >= 1"}), 400
         try:
@@ -392,12 +398,20 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
                 k: ("<redacted>" if k.lower() in _SECRET_KEYS or "secret" in k.lower() or "token" in k.lower() or "key" in k.lower() else v)
                 for k, v in settings.items()
             }
+            # Phase 1.1: export capability-specific priority overrides so a
+            # full config move preserves them (not just priority_override).
+            from plugins.models import PluginCapabilityPriority
+            cap_priorities = {
+                cp.capability_id: cp.priority
+                for cp in PluginCapabilityPriority.query.filter_by(plugin_id=row.id).all()
+            }
             plugins[row.id] = {
                 "version": row.version,
                 "enabled": row.enabled,
                 "trust_level": row.trust_level,
                 "settings": redacted,
                 "priority_override": row.priority_override,
+                "capability_priorities": cap_priorities,
             }
         return jsonify({"repos": repos, "plugins": plugins})
 
@@ -422,6 +436,26 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
                     row.enabled = bool(meta.get("enabled", True))
                     if meta.get("priority_override") is not None:
                         row.priority_override = meta["priority_override"]
+                    # Phase 1.1: restore capability-specific priority overrides
+                    # (written directly — the manager re-registers on next
+                    # enable; values are small, non-secret integers).
+                    from plugins.models import PluginCapabilityPriority
+                    for cap_id, cap_prio in (meta.get("capability_priorities") or {}).items():
+                        if cap_prio is None:
+                            continue
+                        try:
+                            value = int(cap_prio)
+                        except (TypeError, ValueError):
+                            continue
+                        if value < 1:
+                            continue
+                        cp_row = db.session.get(PluginCapabilityPriority, (pid, str(cap_id)))
+                        if cp_row is None:
+                            db.session.add(PluginCapabilityPriority(
+                                plugin_id=pid, capability_id=str(cap_id), priority=value,
+                            ))
+                        else:
+                            cp_row.priority = value
                     for k, v in (meta.get("settings") or {}).items():
                         if v == "<redacted>":
                             continue

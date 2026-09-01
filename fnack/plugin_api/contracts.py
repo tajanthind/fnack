@@ -7,8 +7,31 @@ actually implemented by the loaded plugin object; a capability whose
 contract methods are missing is skipped (not the whole plugin) with a clear
 warning.
 
-Method names are the ACTUAL interfaces already established by FNACK
-(plugins/base.py + the bundled official plugins), NOT invented names:
+## Two contracts, explicitly
+
+- **CURRENT COMPATIBILITY CONTRACT** (this file): what the runtime validates
+  today. Method names are the ACTUAL interfaces already established by FNACK
+  (plugins/base.py + the bundled official plugins) — the OLD, working
+  signatures, e.g. `can_handle(track: TrackRef)`,
+  `download(track, dest_dir, options)`, `resolve_track_url(...)`.
+- **FINAL SDK CONTRACT** (fnack/plugin_api/providers.py): the aspirational
+  capability protocols — e.g. `TrackDownloader.can_handle(request:
+  DownloadRequest)`, `TrackResolver.resolve(request: TrackResolveRequest)`.
+  They intentionally differ (request objects instead of positional args).
+
+These two MUST NOT be treated as the same thing. Phase 2 inserts a migration
+adapter layer:
+
+    CURRENT COMPATIBILITY CONTRACT (this file)
+            ↓ Phase 2 migration adapter
+    FINAL SDK CONTRACT (providers.py)
+
+Until that adapter lands, the runtime validates and invokes the CURRENT
+contract, and the SDK protocols are documentation of the target shape — do
+NOT rewrite existing plugins to the new protocol signatures as a
+"Phase 1.1 cleanup" (that is Phase 2 work, done one provider at a time).
+
+## Method names (CURRENT contract)
 
     download.track        -> DownloaderPlugin.can_handle / download
     track.resolve         -> Spotify plugin's resolve_track_url

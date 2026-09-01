@@ -271,7 +271,7 @@ def import_artist_folder(
                 key = str(deezer_artist_id) if provider.manifest.id == "fnack.deezer-batch" else folder_name
                 try:
                     # Phase 1.1 §3: provider invocation via the central executor.
-                    d = _pm.executor.run(provider, "get_artist_discography", key)
+                    d = _pm.invoke_provider(provider, "get_artist_discography", key)
                 except Exception:
                     logger.debug("[METADATA] provider %s discography failed, trying next",
                                  provider.manifest.id, exc_info=True)
@@ -304,7 +304,7 @@ def import_artist_folder(
                 if not enrich_fn:
                     continue
                 # Phase 1.1 §3: provider invocation via the central executor.
-                _pm2.executor.run(provider, "enrich",
+                _pm2.invoke_provider(provider, "enrich",
                                   disco.get("artist_name") or folder_name,
                                   disco.get("albums") or [])
                 enriched = True

@@ -685,9 +685,10 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 for provider in _pm.get_metadata_providers():
                     if hasattr(provider, "resolve_track_url") and callable(provider.resolve_track_url):
                         try:
-                            # Phase 1.1 §3: provider invocation via the central
-                            # executor (sync/async + awaitable detection).
-                            spotify_url = _pm.executor.run(
+                            # Phase 1.1 §3: provider invocation through the
+                            # manager's guarded boundary (executor + timeout +
+                            # health/auto-disable), never a raw call.
+                            spotify_url = _pm.invoke_provider(
                                 provider, "resolve_track_url",
                                 track_title,
                                 artist_name,
@@ -757,12 +758,12 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 logger.info("[QUEUE] %s disabled in settings, skipping for '%s - %s'",
                             dl.manifest.name, artist_name, track_title)
                 continue
-            if dl.is_rate_limited():
+            if _pm.invoke_provider(dl, "is_rate_limited"):
                 logger.info("[QUEUE] %s rate-limited; trying next downloader for '%s - %s'",
                             dl.manifest.name, artist_name, track_title)
                 failure_reasons.append(f"{dl.manifest.name} skipped (upstream rate limit circuit breaker)")
                 continue
-            if not dl.can_handle(track_ref):
+            if not _pm.invoke_provider(dl, "can_handle", track_ref):
                 continue
 
             loaded = _pm.get_loaded(dl.manifest.id)  # Phase 1: public API, not private _plugins
