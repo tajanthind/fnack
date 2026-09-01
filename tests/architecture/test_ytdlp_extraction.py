@@ -89,8 +89,8 @@ def test_plugin_implements_sdk_downloader_contract() -> None:
 
 def test_migration_adapter_passes_hints_and_normalizes() -> None:
     """The adapter builds a DownloadRequest carrying query/cookies/
-    check_duration and normalizes the SDK DownloadResult to the legacy shape."""
-    from services.queue_service import (
+    check_duration and returns the FINAL SDK DownloadResult shape."""
+    from services.download_service import (
         _build_download_request,
         _invoke_downloader_can_handle,
         _invoke_downloader_download,
@@ -128,8 +128,8 @@ def test_migration_adapter_passes_hints_and_normalizes() -> None:
             "check_duration": False, "format": "opus"}
     assert _invoke_downloader_can_handle(fm, provider, tr, _P("/tmp"), opts) is True
     result = _invoke_downloader_download(fm, provider, tr, _P("/tmp"), opts, 10)
-    assert result.success is True and result.file_path == _P("/tmp/out.opus")
-    assert result.source_plugin_id == "fnack.ytdlp"
+    assert result.success is True and result.path == _P("/tmp/out.opus")
+    assert result.provider_id == "fnack.ytdlp"
     # _build_download_request carries the hints into an SDK request.
     req = _build_download_request(tr, _P("/tmp"), opts)
     assert req.query == "https://youtu.be/xyz" and req.check_duration is False

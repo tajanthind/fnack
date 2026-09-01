@@ -31,111 +31,40 @@ cancel_requested_jobs: Set[int] = set()
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 downloader migration adapter (PR 3 + PR 4)
+# Phase 2/3 download chain (PR 3 + PR 4 + Phase 3)
 #
-# The queue chain drives `download.track` providers. fnack.spotiflac and
-# fnack.ytdlp both implement the FINAL SDK contract (TrackDownloader:
-# request-object based, async). This adapter normalizes the SDK DownloadResult
-# to the legacy result shape the chain already consumes (success / file_path /
-# error), so downstream verification is untouched. Providers that predate the
-# SDK contract (until their own extraction PR) keep the legacy signature and
-# are invoked with the old arguments — the adapter picks per provider.
+# The queue drives the `download.track` capability through DownloadService
+# (services/download_service.py) — the application service owns provider
+# resolution, the sequential-fallback policy, and the per-provider invocation
+# (SDK DownloadRequest for fnack.spotiflac / fnack.ytdlp, legacy signature for
+# pre-SDK providers, all via the manager's ProviderExecutor boundary). The
+# queue supplies the per-provider verification policy (verify hook) and the
+# progress events; core never names a provider.
 # ---------------------------------------------------------------------------
-
-def _is_sdk_downloader(provider) -> bool:
-    from fnack.plugin_api.providers import TrackDownloader
-    try:
-        return isinstance(provider, TrackDownloader)
-    except TypeError:
-        return False
-
-
-def _build_download_request(track_ref, tmp_work_dir, options):
-    """Build an SDK DownloadRequest from the chain's (track, work_dir, options)
-    shape, carrying the provider-neutral hints (query/cookies/check_duration)
-    the ytdlp provider needs."""
-    from fnack.plugin_api.models import DownloadRequest
-    return DownloadRequest(
-        track=track_ref,
-        destination=tmp_work_dir,
-        quality=options.get("quality"),
-        format=options.get("format"),
-        query=options.get("query"),
-        cookies_path=options.get("cookies_path"),
-        audio_source=options.get("audio_source"),
-        check_duration=bool(options.get("check_duration", True)),
-    )
-
-
-def _invoke_downloader_can_handle(pm, provider, track_ref, tmp_work_dir, options) -> bool:
-    """Call can_handle through the guarded boundary, adapting the contract."""
-    if _is_sdk_downloader(provider):
-        from fnack.plugin_api.models import DownloadRequest
-        request = _build_download_request(track_ref, tmp_work_dir, options)
-        return bool(pm.invoke_provider(provider, "can_handle", request))
-    return bool(pm.invoke_provider(provider, "can_handle", track_ref))
-
-
-def _invoke_downloader_download(pm, provider, track_ref, tmp_work_dir, options,
-                                timeout: float):
-    """Call download through the guarded boundary, adapting the contract.
-
-    Returns a legacy-shaped object (success / file_path / error) so the chain's
-    verification code is contract-agnostic."""
-    if _is_sdk_downloader(provider):
-        request = _build_download_request(track_ref, tmp_work_dir, options)
-        result = pm.invoke_provider(provider, "download", request, timeout=timeout)
-        if result is None:
-            return None
-        # SDK DownloadResult (provider_id, success, path, error_code, message, ...)
-        return _legacy_result(
-            success=bool(getattr(result, "success", False)),
-            file_path=getattr(result, "path", None),
-            error=getattr(result, "message", None) or getattr(result, "error_code", None),
-            source_plugin_id=getattr(result, "provider_id", None),
-            extra=dict(getattr(result, "metadata", {}) or {}),
-        )
-    return pm.invoke_provider(provider, "download", track_ref, tmp_work_dir, options,
-                              timeout=timeout)
-
-
-def _legacy_result(success, file_path=None, error=None, source_plugin_id=None, extra=None):
-    from plugins.base import DownloadResult
-    return DownloadResult(
-        success=bool(success),
-        file_path=file_path,
-        error=error,
-        source_plugin_id=source_plugin_id,
-        extra=extra or {},
-    )
-
 
 def _download_via_chain(spotify_url: str, work_dir: Path,
                                      quality: Optional[str] = None,
                                      delay: Optional[float] = None):
-    """Manual-download path (Phase 2): download a Spotify URL through the
-    fnack.spotiflac provider (the download.track capability), via the guarded
-    manager boundary — NOT a direct core->service call. Returns
+    """Manual-download path (Phase 3): download a Spotify URL through the
+    download.track capability via DownloadService (the application service
+    owns provider policy) — NOT a direct core->service call. Returns
     (success, file_path, error)."""
-    from plugins.manager import plugin_manager as _pm
+    from services.download_service import CapabilityUnavailable, DownloadService
     from plugins.base import TrackRef
-    if _pm is None:
-        return False, None, "plugin manager not ready"
-    track_ref = TrackRef(
-        id=0, title="", artist_name="", album_name="",
-        spotify_url=spotify_url,
+    from fnack.plugin_api.models import DownloadRequest
+    request = DownloadRequest(
+        track=TrackRef(id=0, title="", artist_name="", album_name="",
+                       spotify_url=spotify_url),
+        destination=work_dir,
+        quality=quality,
     )
-    options = {"quality": quality, "delay": delay}
-    for provider in _pm.get_downloaders():
-        if not _invoke_downloader_can_handle(_pm, provider, track_ref, work_dir, options):
-            continue
-        from plugins.manager import DOWNLOAD_HOOK_TIMEOUT
-        result = _invoke_downloader_download(
-            _pm, provider, track_ref, work_dir, options, timeout=DOWNLOAD_HOOK_TIMEOUT)
-        if result and result.success and result.file_path:
-            return True, result.file_path, None
-        return False, None, (result.error if result else "download failed")
-    return False, None, "no download provider available"
+    try:
+        result = DownloadService().download(request, stop_on_first_attempt=True)
+    except CapabilityUnavailable:
+        return False, None, "no download provider available"
+    if result and result.success and result.path:
+        return True, result.path, None
+    return False, None, (result.message if result else "download failed")
 
 
 def _download_via_ytdlp_provider(query_or_url: str, work_dir: Path,
@@ -145,38 +74,29 @@ def _download_via_ytdlp_provider(query_or_url: str, work_dir: Path,
                                  artist_name: Optional[str] = None,
                                  track_title: Optional[str] = None,
                                  expected_duration: Optional[float] = None):
-    """Manual-download path (Phase 2): download a raw query/URL (YouTube,
-    SoundCloud, or a search string) through the download.track capability —
-    the fnack.ytdlp provider owns yt-dlp invocation/cookies/scoring — via the
-    guarded manager boundary. NOT a direct core->service call. Returns
-    (success, file_path, error)."""
-    from plugins.manager import plugin_manager as _pm
+    """Manual-download path (Phase 3): download a raw query/URL (YouTube,
+    SoundCloud, or a search string) through the download.track capability via
+    DownloadService (the application service owns provider policy) — NOT a
+    direct core->service call. Returns (success, file_path, error)."""
+    from services.download_service import CapabilityUnavailable, DownloadService
     from plugins.base import TrackRef
-    if _pm is None:
-        return False, None, "plugin manager not ready"
-    track_ref = TrackRef(
-        id=0,
-        title=track_title or "",
-        artist_name=artist_name or "",
-        album_name="",
-        duration=expected_duration,
+    from fnack.plugin_api.models import DownloadRequest
+    request = DownloadRequest(
+        track=TrackRef(id=0, title=track_title or "", artist_name=artist_name or "",
+                       album_name="", duration=expected_duration),
+        destination=work_dir,
+        format=output_format,
+        cookies_path=cookies_path,
+        query=query_or_url,
+        check_duration=check_duration,
     )
-    options = {
-        "format": output_format,
-        "cookies_path": cookies_path,
-        "query": query_or_url,
-        "check_duration": check_duration,
-    }
-    for provider in _pm.get_downloaders():
-        if not _invoke_downloader_can_handle(_pm, provider, track_ref, work_dir, options):
-            continue
-        from plugins.manager import DOWNLOAD_HOOK_TIMEOUT
-        result = _invoke_downloader_download(
-            _pm, provider, track_ref, work_dir, options, timeout=DOWNLOAD_HOOK_TIMEOUT)
-        if result and result.success and result.file_path:
-            return True, result.file_path, None
-        return False, None, (result.error if result else "download failed")
-    return False, None, "no download provider available"
+    try:
+        result = DownloadService().download(request, stop_on_first_attempt=True)
+    except CapabilityUnavailable:
+        return False, None, "no download provider available"
+    if result and result.success and result.path:
+        return True, result.path, None
+    return False, None, (result.message if result else "download failed")
 
 
 _executor: Optional[ThreadPoolExecutor] = None
@@ -860,15 +780,20 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                     client_secret=spotify_client_secret,
                 )
 
-        # Steps 2-4: Downloader plugin chain (Phase 2 — PLUGIN_ARCHITECTURE.md
-        # §10 Phase 2 + INTEGRATION.md §6). Priority-sorted plugins replace the
-        # old hardcoded spotiflac → yt-dlp sequence; each plugin is verified
-        # right after its download (preserves the AcoustID rescue semantics and
-        # which failure surfaces first). A plugin disabled in Settings → Plugins
-        # is skipped by get_downloaders() itself (capability registry holds
-        # only enabled providers — no per-provider gate exists here).
+        # Steps 2-4: Downloader chain (Phase 3 — DownloadService owns the
+        # download.track resolution + provider policy; the queue orchestrates).
+        # Priority-ordered providers from the capability registry; each is
+        # verified right after its download via the verify hook (preserves the
+        # AcoustID rescue semantics and which failure surfaces first). A
+        # plugin disabled in Settings → Plugins is skipped by the registry
+        # itself — no per-provider gate exists anywhere.
         from plugins.base import TrackRef
-        from plugins.manager import plugin_manager as _pm
+        from fnack.plugin_api.models import DownloadRequest
+        from services.download_service import (
+            CapabilityUnavailable,
+            DownloadService,
+            VerifyVerdict,
+        )
 
         track_ref = TrackRef(
             id=track_id,
@@ -883,81 +808,53 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
             track_number=track_num,
         )
 
-        downloaders = _pm.get_downloaders() if _pm else []
-        # Phase 2: capability-driven chain — get_downloaders() reads the
-        # download.track capability registry, which only holds ENABLED
-        # providers. There is no per-provider gate here: disabling a provider
-        # plugin (e.g. fnack.ytdlp) removes it from the registry, so it never
-        # appears in `downloaders`. Core operates on capabilities, not
-        # provider IDs.
+        def _verify_hook(result):
+            """Per-provider verification policy (queue-owned until
+            VerificationService lands): accept / flag / reject."""
+            v_ok, v_err, meta, flagged = _verify_or_rescue(
+                app, result.path, verify_expected_duration,
+                artist_name, track_title, max_duration_delta,
+                reject_mismatches, enable_duration_check,
+            )
+            if v_ok:
+                return VerifyVerdict("accept", meta=meta)
+            if flagged:
+                return VerifyVerdict("flag", meta=meta, caution=flagged)
+            return VerifyVerdict("reject", error=v_err)
 
-        for _dl_idx, dl in enumerate(downloaders):
-            if job_id in cancel_requested_jobs:
-                break
-            # If the dedup copy (Step 0) already produced a verified file,
-            # skip the whole chain — never re-download over a good local file
-            # (this would downgrade a FLAC to opus, a behavior regression).
-            if verified_file:
-                break
-            # Build the provider options FIRST (before can_handle/download):
-            # plugin settings are authoritative, with the legacy AppSetting
-            # fallback for still-legacy providers (behavior-preserving).
-            # Phase 2: quality/delay for the SDK spotiflac plugin come from the
-            # plugin's own settings (migrated in on_load); only the still-
-            # legacy ytdlp provider consumes these options.
-            options = {}
-            try:
-                options["quality"] = dl.context.settings.get("quality") or quality_setting
-            except Exception:
-                options["quality"] = quality_setting
-            try:
-                options["format"] = dl.context.settings.get("format") or fallback_format
-                options["audio_source"] = dl.context.settings.get("audio_source") or ("youtube" if not prefer_yt_music else "youtube_music")
-                options["cookies_path"] = dl.context.settings.get("cookies_path") or cookies_path
-            except Exception:
-                options["format"] = fallback_format
-                options["audio_source"] = "youtube_music" if prefer_yt_music else "youtube"
-                options["cookies_path"] = cookies_path
-
-            if _pm.invoke_provider(dl, "is_rate_limited"):
-                logger.info("[QUEUE] %s rate-limited; trying next downloader for '%s - %s'",
-                            dl.manifest.name, artist_name, track_title)
-                failure_reasons.append(f"{dl.manifest.name} skipped (upstream rate limit circuit breaker)")
-                continue
-            if not _invoke_downloader_can_handle(_pm, dl, track_ref, tmp_work_dir, options):
-                continue
-
+        def _on_progress(idx, provider):
             # Preserve the old UI feel: 35% for the primary (first) downloader,
             # 60% for fallbacks.
+            manifest = getattr(provider, "manifest", None)
+            name = getattr(manifest, "name", None) or "provider"
             socketio.emit("download_progress", {"job_id": job_id, "track_id": track_id,
-                                                "progress": 35.0 if _dl_idx == 0 else 60.0,
+                                                "progress": 35.0 if idx == 0 else 60.0,
                                                 "status": "downloading"})
-            logger.info("[QUEUE] Attempting %s for '%s - %s'", dl.manifest.name, artist_name, track_title)
-            # Downloads need a long timeout (10s default would kill mid-download).
-            # Phase 1.1 §3: runtime provider invocation goes through the
-            # manager's ProviderExecutor boundary (sync/async/awaitable/timeout
-            # handled centrally) — same guard + timeout as the old call_safe.
-            from plugins.manager import DOWNLOAD_HOOK_TIMEOUT
-            result = _invoke_downloader_download(_pm, dl, track_ref, tmp_work_dir, options,
-                                                 timeout=DOWNLOAD_HOOK_TIMEOUT)
-            if result and result.success and result.file_path:
-                downloaded_file = result.file_path
-                # Step 3: Verify audio file with strict duration + tag checking
-                # (with optional AcoustID rescue: confirm wrong-tags files,
-                # flag different-song files for the user instead of deleting)
-                v_ok, v_err, meta, flagged = _verify_or_rescue(
-                    app, downloaded_file, verify_expected_duration,
-                    artist_name, track_title, max_duration_delta,
-                    reject_mismatches, enable_duration_check,
-                )
-                if v_ok:
-                    verified_file = downloaded_file
-                    file_meta = meta
-                    break
-                if flagged:
-                    flagged_caution = flagged
-                    verified_file = downloaded_file  # keep file; user decides
-                    file_meta = meta
+            logger.info("[QUEUE] Attempting %s for '%s - %s'", name, artist_name, track_title)
+
+        request = DownloadRequest(
+            track=track_ref,
+            destination=tmp_work_dir,
+            quality=quality_setting,
+            format=fallback_format,
+            audio_source="youtube_music" if prefer_yt_music else "youtube",
+            cookies_path=cookies_path,
+            check_duration=enable_duration_check,
+        )
+        if verified_file or job_id in cancel_requested_jobs:
+            pass  # dedup copy already produced a file / cancelled — skip chain
+        else:
+            try:
+                result = DownloadService().download(
+                    request, verify=_verify_hook, on_progress=_on_progress)
+            except CapabilityUnavailable:
+                result = None
+            if result is not None and result.success and result.path:
+                downloaded_file = result.path
+                verified_file = downloaded_file
+                file_meta = dict((result.metadata or {}).get("file_meta") or {})
+                flagged_caution = (result.metadata or {}).get("caution")
+                if flagged_caution:
                     # Plugin framework (Phase 4): notify webhook plugins when
                     # AcoustID flags a kept-but-different file.
                     try:
@@ -966,20 +863,16 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                             plugin_manager.event_bus.emit(
                                 "track.caution_flagged",
                                 track_id=track_id,
-                                matched_title=flagged.get("matched_title"),
-                                matched_artist=(flagged.get("matched_artists") or [None])[0],
-                                score=flagged.get("score"),
+                                matched_title=flagged_caution.get("matched_title"),
+                                matched_artist=(flagged_caution.get("matched_artists") or [None])[0],
+                                score=flagged_caution.get("score"),
                             )
                     except Exception:
                         logger.debug("[QUEUE] plugin caution event skipped", exc_info=True)
-                    break
-                failure_reasons.append(f"{dl.manifest.name} verification failed: {v_err}")
             else:
-                err = (result.error if result else "download returned no result")
-                failure_reasons.append(f"{dl.manifest.name} failed: {err}")
-
-        if not verified_file and not downloaders:
-            failure_reasons.append("No enabled download providers are available")
+                err = (result.message if result is not None
+                       else "No enabled download providers are available")
+                failure_reasons.append(err)
 
         if job_id in cancel_requested_jobs:
             _handle_cancellation(app, socketio, job_id, track_id, tmp_work_dir)

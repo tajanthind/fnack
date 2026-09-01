@@ -187,6 +187,18 @@ phase.
   the PluginContext facade; parity test added; independence/boundary-test
   allowlists updated. Smoke + 8 architecture tests green.
 
+
+- [Phase 3: Application Services, Verification, and Queue decoupling](tickets/plugin-phase-3-application-services.md):
+  the new 03 brief renumbers Phase 3 as the application-services layer
+  (the marketplace Phase 3 below is separate/landed). `queue_service.py`
+  becomes an orchestrator: DownloadService / MetadataService /
+  FingerprintService / VerificationService / MediaServerService each resolve
+  capabilities and own provider policy; queue + API routes call services,
+  never provider services; verification is provider-neutral (normalized
+  evidence, no acoustid_match rules in core); zero providers → structured
+  CapabilityUnavailable; candidate configs supported by
+  test_connection(candidate_config). One branch+PR per service.
+
 ## Roadmap (execution carried into the map)
 
 1. **Phase 0** (`plugin-architecture/phase-0-scaffold`): drop `plugins/` + `examples/`

@@ -294,6 +294,20 @@ types any enabled `download.track` provider exposing `get_cookies_status` /
 one-time fallback migrated into the plugin store in `on_load` (full legacy-
 setting/UI deletion is deferred to PR 11/12).
 
+**Phase 3 (application services):** the queue orchestrates; application
+services own capability policy. `services/download_service.py` (Step 1)
+resolves `download.track` and applies the download policy — rate-limit skip,
+can_handle gate, sequential fallback, optional per-provider verification
+feedback via a `verify` hook — and raises `CapabilityUnavailable(
+"download.track", "download_track")` when no enabled provider exists (no
+hidden fallback). The queue builds a `DownloadRequest`, calls
+`DownloadService().download(request, verify=..., on_progress=...)`, and
+handles the SDK `DownloadResult` (provider_id/success/path/message/retryable/
+metadata); per-provider verification policy stays queue-owned until
+`VerificationService` lands. Provider-invocation adapters live in the
+service, not in the queue. Later steps add MetadataService, FingerprintService,
+VerificationService, MediaServerService and migrate API routes to them.
+
 ---
 
 ## 3. One section per plugin type
