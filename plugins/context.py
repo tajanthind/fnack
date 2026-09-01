@@ -134,7 +134,15 @@ class LibraryContext:
         """Live album search (deezer, core-direct). Same underlying function
         the interactive search endpoint uses — the confirmed search split
         keeps interactive/search paths core, calling the bundled provider
-        directly rather than through the plugin chain."""
+        directly rather than through the plugin chain.
+
+        NOTE (Phase 1.1 review §3): this is a KNOWN Deezer-hardwired boundary
+        inside the supposedly-generic PluginContext (it imports
+        services.deezer_service). It exists so the Lidarr plugin can search
+        without reaching into services. Phase 2 removes it: the Lidarr plugin
+        will call the metadata capability instead, and PluginContext stays
+        provider-generic. Do NOT "solve" this by adding more generic-looking
+        Deezer methods here."""
         from services.deezer_service import search_album
         return search_album(query, limit=limit)
 

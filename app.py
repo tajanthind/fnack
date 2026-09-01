@@ -137,7 +137,7 @@ def _plugin_auth_guard():
     for provider in providers:
         try:
             # Phase 1.1 §3: provider invocation via the central executor.
-            user = _pm.executor.run(provider, "authenticate", headers)
+            user = _pm.invoke_provider(provider, "authenticate", headers)
         except Exception:
             logger.exception("[AUTH] auth_provider %s failed", getattr(provider, "manifest", None).id if getattr(provider, "manifest", None) else provider)
             continue
@@ -495,7 +495,7 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                     try:
                         # Phase 1.1 §3: provider invocation via the central
                         # executor (sync/async + awaitable detection).
-                        d = _pm.executor.run(provider, "get_artist_discography", key)
+                        d = _pm.invoke_provider(provider, "get_artist_discography", key)
                     except Exception:
                         logger.debug("[METADATA] provider %s discography failed, trying next",
                                      provider.manifest.id, exc_info=True)
@@ -534,7 +534,7 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                     if not enrich_fn:
                         continue
                     # Phase 1.1 §3: provider invocation via the central executor.
-                    _pm2.executor.run(provider, "enrich",
+                    _pm2.invoke_provider(provider, "enrich",
                                       disco.get("artist_name") or artist.name,
                                       disco.get("albums") or [])
                     enriched = True
@@ -1602,7 +1602,7 @@ def api_navidrome_scan():
         if _pm is not None:
             for trig in _pm.get_scan_triggers():
                 # Phase 1.1 §3: provider invocation via the central executor.
-                ok, msg = _pm.executor.run(trig, "trigger_scan")
+                ok, msg = _pm.invoke_provider(trig, "trigger_scan")
                 return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
     except Exception:
         logger.debug("[NAVIDROME] plugin chain skipped, using direct call", exc_info=True)

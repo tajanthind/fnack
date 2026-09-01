@@ -471,9 +471,19 @@ class PluginManager:
 
     # -- safe calling: timeout + exception guard + auto-disable ---------------
 
+    def _loaded_for_instance(self, instance) -> Optional[LoadedPlugin]:
+        """Reverse-lookup: the LoadedPlugin whose `.instance` is `instance`.
+        Used by invoke_provider when call sites hold a provider INSTANCE
+        (e.g. from get_metadata_providers()/get_scan_triggers()) instead of
+        the LoadedPlugin wrapper."""
+        for loaded in self._plugins.values():
+            if loaded.instance is instance:
+                return loaded
+        return None
+
     def invoke_provider(
         self,
-        loaded: LoadedPlugin,
+        loaded: LoadedPlugin | object,
         method_name: str,
         *args,
         timeout: float = DOWNLOAD_HOOK_TIMEOUT,
@@ -482,17 +492,26 @@ class PluginManager:
         """RUNTIME provider invocation boundary (Phase 1.1 §3).
 
         Application services invoke capability providers through THIS method
-        (or `self.executor.run` directly) — never a raw method call, and
+        — never a raw method call, never `self.executor.run` directly, and
         never `asyncio.run()` scattered through providers. The executor
         handles sync methods, async methods, awaitable results, timeouts,
-        and provider-error normalization in one place.
+        and provider-error normalization in one place; the manager wraps it
+        in the gevent timeout + consecutive-failure + auto-disable guard so
+        a hung or crashing provider is retired safely (queue behavior
+        unchanged).
 
-        The manager still wraps the executor in the gevent timeout +
-        consecutive-failure + auto-disable guard that call_safe uses, so a
-        hung or crashing provider is retired safely (queue behavior
-        unchanged). Lifecycle hooks (on_load/on_enable/...) may keep using
-        call_safe; runtime capability invocation must use this path.
+        `loaded` may be a LoadedPlugin (from get_loaded()) or a provider
+        INSTANCE (from get_metadata_providers()/get_scan_triggers()/the
+        capability registry) — the manager resolves the instance back to its
+        LoadedPlugin for the guard.
+
+        Lifecycle hooks (on_load/on_enable/...) may keep using call_safe;
+        runtime capability invocation must use this path.
         """
+        if not isinstance(loaded, LoadedPlugin):
+            loaded = self._loaded_for_instance(loaded)
+            if loaded is None:
+                return None
         method = getattr(loaded.instance, method_name, None)
         if method is None:
             return None

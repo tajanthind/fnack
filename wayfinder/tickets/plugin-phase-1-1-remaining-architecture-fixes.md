@@ -151,3 +151,43 @@ standalone public contracts today. No broad rewrite.
 ## Blocked by
 
 (none)
+
+---
+
+## Follow-up review fixes (post-PR #13 review, branch plugin-architecture/phase-1-1-fixes)
+
+Reviewer findings addressed:
+
+1. **Every provider call now goes through the guarded boundary.** Removed the
+   7 remaining direct `_pm.executor.run(...)` calls in app.py /
+   import_service.py / queue_service.py (authenticate, get_artist_discography,
+   enrich, trigger_scan, resolve_track_url) plus `can_handle` /
+   `is_rate_limited` — all now route through `PluginManager.invoke_provider()`.
+   `invoke_provider` now accepts a provider INSTANCE (resolves the LoadedPlugin
+   via `_loaded_for_instance`) so call sites that hold instances from
+   `get_metadata_providers()`/`get_scan_triggers()` use the same guarded path.
+   New architecture test `test_runtime_provider_calls_use_guarded_boundary`
+   forbids direct `manager.executor.run` in app code (regression fence).
+2. **SDK-protocol vs runtime-contract transition made explicit.**
+   `contracts.py` documents CURRENT COMPATIBILITY CONTRACT (validated today)
+   vs FINAL SDK CONTRACT (providers.py protocols) and the Phase 2 migration
+   adapter — existing plugins must NOT be rewritten to protocol signatures as
+   a 1.1 cleanup.
+3. **PluginContext Deezer boundary documented** as Phase-2 removal (Lidarr ->
+   metadata capability; PluginContext stays generic; no new generic-looking
+   Deezer methods).
+4. **Regression-fence nature of the transitional allowlist documented** in
+   test_core_provider_independence.py (passing != provider-independent today;
+   Phase 2 shrinks the allowlist).
+5. **Duplicate `_buffer_health` verified absent in merged code** — the merged
+   `invoke_provider` has exactly one buffer call per path (failure/success);
+   the double-call existed only in an intermediate draft.
+6. **Config export/import now carries `capability_priorities`** (per-plugin
+   dict of capability_id -> priority), restored on import.
+7. **Priority API returns clean 400 on non-integer** (`{"priority": "banana"}`
+   -> 400 "priority must be an integer", no unhandled ValueError) in both
+   the plugin-level and capability-level endpoints.
+8. **Test E (official bundle) is environment-resilient**: it imports the real
+   bundled plugins, so in a bare env without the runtime stack it reports
+   SKIPPED with the missing dep rather than failing the architecture suite;
+   in fnack's real venv/container it runs fully.

@@ -254,6 +254,37 @@ with app.app_context():
     r = client.post("/api/plugins/fnack.spotiflac/capabilities/not.a.cap/priority",
                     json={"priority": 5})
     assert r.status_code == 400
+    # Phase 1.1 §7: non-integer priority -> clean 400, no unhandled ValueError.
+    r = client.post("/api/plugins/fnack.spotiflac/capabilities/download.track/priority",
+                    json={"priority": "banana"})
+    assert r.status_code == 400 and "integer" in r.json.get("error", "")
+    r = client.post("/api/plugins/fnack.spotiflac/priority", json={"priority": "banana"})
+    assert r.status_code == 400 and "integer" in r.json.get("error", "")
+
+    # Phase 1.1 §6: config export carries capability_priorities; import
+    # restores them. (Ensure an InstalledPlugin row exists so the export
+    # includes the plugin — the enable endpoint creates the row.)
+    r = client.post("/api/plugins/fnack.spotiflac/enable")
+    assert r.status_code == 200
+    r = client.post("/api/plugins/fnack.spotiflac/capabilities/download.track/priority",
+                    json={"priority": 7})
+    assert r.status_code == 200
+    r = client.get("/api/plugins/export")
+    print("Export status:", r.status_code)
+    assert r.status_code == 200
+    exported = r.json
+    assert "fnack.spotiflac" in exported["plugins"]
+    assert exported["plugins"]["fnack.spotiflac"]["capability_priorities"] == {"download.track": 7}, \
+        "export must include capability_priorities"
+    # Import a modified blob — the endpoint must accept capability_priorities
+    # and restore them for plugins that install successfully (same condition
+    # as settings restore; the fixture has no repo so install is skipped, but
+    # the handler must not choke on the field).
+    blob = exported
+    blob["plugins"]["fnack.spotiflac"]["capability_priorities"] = {"download.track": 11}
+    r = client.post("/api/plugins/import", json=blob)
+    print("Import status:", r.status_code)
+    assert r.status_code == 200
 
     # Brief 6 §3: updating a bundled plugin is refused (they update with the
     # fnack image).
