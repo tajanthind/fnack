@@ -172,8 +172,50 @@ def test_no_spotiflac_branch_in_chain_source() -> None:
     assert "download.track" in src
 
 
+def test_process_track_job_loop_builds_options_before_can_handle() -> None:
+    """Regression test for the critical review finding: `_process_track_job`'s
+    downloader loop previously passed `options` to `can_handle()` BEFORE
+    building the dict, which would raise `UnboundLocalError` on the first
+    provider (Python treats `options` as local because `options = {}` appears
+    later in the same function).
+
+    Driving the full loop needs a live DB + network download, so this is a
+    precise SOURCE-ORDER check: in the downloader loop, the `options = {}`
+    assignment must lexically precede the `can_handle` call. (A real call
+    that fails with UnboundLocalError would violate this ordering.)
+    """
+    src = (ROOT / "services" / "queue_service.py").read_text(encoding="utf-8")
+    lines = src.splitlines()
+
+    # Find the loop's can_handle invocation and the options assignment.
+    can_handle_line = None
+    options_assign_line = None
+    for i, line in enumerate(lines):
+        if "_invoke_downloader_can_handle(" in line:
+            can_handle_line = i
+        if line.strip() == "options = {}":
+            # The FIRST assignment in _process_track_job (there may be others
+            # in later helpers — take the one before the loop body).
+            if options_assign_line is None:
+                options_assign_line = i
+
+    assert can_handle_line is not None, "must find _invoke_downloader_can_handle in queue_service"
+    assert options_assign_line is not None, "must find options = {} in queue_service"
+    assert options_assign_line < can_handle_line, (
+        "options must be built BEFORE can_handle in the downloader loop "
+        f"(options at line {options_assign_line + 1}, can_handle at line "
+        f"{can_handle_line + 1}) — otherwise UnboundLocalError"
+    )
+
+    # Sanity: the can_handle call is inside a loop (there is a `for` before it).
+    loop_start = max(i for i, line in enumerate(lines[:can_handle_line])
+                     if line.startswith("        for "))
+    assert loop_start < can_handle_line, "can_handle must be inside the downloader loop"
+
+
 if __name__ == "__main__":
     test_chain_works_with_spotiflac_disabled()
     test_chain_works_with_spotiflac_uninstalled()
     test_no_spotiflac_branch_in_chain_source()
+    test_process_track_job_loop_builds_options_before_can_handle()
     print("test_negative_spotiflac_removal: PASSED")

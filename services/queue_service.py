@@ -856,23 +856,12 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
             # (this would downgrade a FLAC to opus, a behavior regression).
             if verified_file:
                 break
-            if not engine_gates.get(dl.manifest.id, True):
-                logger.info("[QUEUE] %s disabled in settings, skipping for '%s - %s'",
-                            dl.manifest.name, artist_name, track_title)
-                continue
-            if _pm.invoke_provider(dl, "is_rate_limited"):
-                logger.info("[QUEUE] %s rate-limited; trying next downloader for '%s - %s'",
-                            dl.manifest.name, artist_name, track_title)
-                failure_reasons.append(f"{dl.manifest.name} skipped (upstream rate limit circuit breaker)")
-                continue
-            if not _invoke_downloader_can_handle(_pm, dl, track_ref, tmp_work_dir, options):
-                continue
-
-            # Build the options dict from the plugin's own settings with the
-            # legacy AppSetting fallback (behavior-preserving for existing
-            # users). Phase 2: quality/delay for the SDK spotiflac plugin come
-            # from the plugin's own settings (migrated in on_load); only the
-            # still-legacy ytdlp provider consumes these options.
+            # Build the provider options FIRST (before can_handle/download):
+            # plugin settings are authoritative, with the legacy AppSetting
+            # fallback for still-legacy providers (behavior-preserving).
+            # Phase 2: quality/delay for the SDK spotiflac plugin come from the
+            # plugin's own settings (migrated in on_load); only the still-
+            # legacy ytdlp provider consumes these options.
             options = {}
             try:
                 options["quality"] = dl.context.settings.get("quality") or quality_setting
@@ -886,6 +875,18 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 options["format"] = fallback_format
                 options["audio_source"] = "youtube_music" if prefer_yt_music else "youtube"
                 options["cookies_path"] = cookies_path
+
+            if not engine_gates.get(dl.manifest.id, True):
+                logger.info("[QUEUE] %s disabled in settings, skipping for '%s - %s'",
+                            dl.manifest.name, artist_name, track_title)
+                continue
+            if _pm.invoke_provider(dl, "is_rate_limited"):
+                logger.info("[QUEUE] %s rate-limited; trying next downloader for '%s - %s'",
+                            dl.manifest.name, artist_name, track_title)
+                failure_reasons.append(f"{dl.manifest.name} skipped (upstream rate limit circuit breaker)")
+                continue
+            if not _invoke_downloader_can_handle(_pm, dl, track_ref, tmp_work_dir, options):
+                continue
 
             # Preserve the old UI feel: 35% for the primary (first) downloader,
             # 60% for fallbacks.
@@ -939,7 +940,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 failure_reasons.append(f"{dl.manifest.name} failed: {err}")
 
         if not verified_file and not enabled_any:
-            failure_reasons.append("Both SpotiFLAC and yt-dlp engines are disabled in settings")
+            failure_reasons.append("No enabled download providers are available")
 
         if job_id in cancel_requested_jobs:
             _handle_cancellation(app, socketio, job_id, track_id, tmp_work_dir)
