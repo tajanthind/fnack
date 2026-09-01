@@ -864,9 +864,9 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         # §10 Phase 2 + INTEGRATION.md §6). Priority-sorted plugins replace the
         # old hardcoded spotiflac → yt-dlp sequence; each plugin is verified
         # right after its download (preserves the AcoustID rescue semantics and
-        # which failure surfaces first). Settings still gate each engine via
-        # the legacy enable_* toggles; a plugin disabled in Settings → Plugins
-        # is skipped by get_downloaders() itself.
+        # which failure surfaces first). A plugin disabled in Settings → Plugins
+        # is skipped by get_downloaders() itself (capability registry holds
+        # only enabled providers — no per-provider gate exists here).
         from plugins.base import TrackRef
         from plugins.manager import plugin_manager as _pm
 
