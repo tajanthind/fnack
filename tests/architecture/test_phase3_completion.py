@@ -62,12 +62,16 @@ def test_queue_orchestrates_through_application_services() -> None:
 
 def test_app_routes_use_application_services() -> None:
     """API routes call application services; remaining provider imports are
-    exactly the documented transitional ones (no capability in MASTER set)."""
+    exactly the documented transitional ones still awaiting extraction
+    (acoustid manual-identify, navidrome fix-splits — no capability in the
+    MASTER set; musicbrainz/itunes extracted in Phase 4 PR 3)."""
     src = (ROOT / "app.py").read_text(encoding="utf-8")
     assert "MetadataService" in src      # search-artist / sync routes
     assert "MediaServerService" in src   # navidrome test/scan routes
-    # The only remaining direct provider-service usage:
-    assert "from services.musicbrainz_service import enrich_albums" in src
+    # MusicBrainz + iTunes are extracted (Phase 4 PR 3): no service imports.
+    assert "services.musicbrainz_service" not in src
+    assert "services.itunes_service" not in src
+    # Remaining transitional (no capability yet):
     assert "from services.acoustid_service import is_enabled, identify" in src
     assert "from services.navidrome_service import run_auto_split_repair" in src
 

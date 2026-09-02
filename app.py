@@ -503,26 +503,21 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
 
         # MusicBrainz enrichment (additive only; regional artists are
         # negative-cached and never probed; fail-soft on any error). Routed
-        # through any chain provider that exposes `enrich` (the musicbrainz
-        # plugin carries the 1 req/s pacing + cache via its service module);
-        # else the direct call.
+        # through any chain provider that exposes `enrich` — the fnack.
+        # musicbrainz plugin owns the pacing + cache. No hidden fallback: if
+        # no enrich provider is enabled, enrichment is skipped (it is
+        # additive by design).
         try:
-            enriched = False
             from plugins.manager import plugin_manager as _pm2
             if _pm2 is not None:
                 for provider in _pm2.get_metadata_providers():
-                    enrich_fn = getattr(provider, "enrich", None)
-                    if not enrich_fn:
+                    if not getattr(provider, "enrich", None):
                         continue
                     # Phase 1.1 §3: provider invocation via the central executor.
                     _pm2.invoke_provider(provider, "enrich",
                                       disco.get("artist_name") or artist.name,
                                       disco.get("albums") or [])
-                    enriched = True
                     break
-            if not enriched:
-                from services.musicbrainz_service import enrich_albums
-                enrich_albums(disco.get("artist_name") or artist.name, disco.get("albums") or [])
         except Exception:
             logger.debug("[MB] enrichment skipped", exc_info=True)
 
