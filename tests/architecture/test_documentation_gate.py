@@ -1,16 +1,23 @@
-"""Architecture/parity test: documentation gate (Phase 4, PR 6).
+"""Architecture/parity test: documentation gate (Phase 4, PR 6 + final cleanup).
 
 Per the user directive (04-PHASE-4 + "final Phase 4 documentation gate"):
 after all six providers are extracted, audit the whole repo for stale
 provider-service references and run the documentation/reference grep as a
 regression test.
 
-Scope:
-- CURRENT-STATE docs (README, DEPLOY, docs/plugins/AUTHORING.md,
-  wayfinder/plugin-architecture-map.md) must describe the POST-EXTRACTION
-  architecture: providers are official plugins implementing capabilities;
-  core contains no provider implementations. They must NOT name the deleted
-  services/spotify_service.py etc. or describe a provider as a core service.
+Scope (post-final-cleanup):
+
+- README is the USER-facing document: architecture-light, no plugin
+  inventory, no per-plugin config enumeration, long guides moved to
+  `docs/guides/`. It must stay valid when plugins are added/removed — so it
+  hardcodes no official-plugin list and no plugin IDs.
+- `docs/architecture.md` is the DEEP architecture reference: the
+  core->service->capability->provider flow, the rules, the official-plugin
+  snapshot, and the essential-vs-optional packaging policy.
+- CURRENT-STATE docs describe the POST-EXTRACTION architecture: providers are
+  official plugins implementing capabilities; core contains no provider
+  implementations. They never name the deleted provider services as core
+  files.
 - Core source must not import the deleted provider services.
 - The obsolete core DB model (MusicBrainzCache) is gone — provider cache is
   plugin-owned.
@@ -41,16 +48,25 @@ DELETED_SERVICES = [
 CURRENT_DOCS = [
     ROOT / "README.md",
     ROOT / "DEPLOY.md",
+    ROOT / "docs" / "architecture.md",
     ROOT / "docs" / "plugins" / "AUTHORING.md",
     ROOT / "wayfinder" / "plugin-architecture-map.md",
 ]
+
+# Deep architecture reference (developer-facing; README is architecture-light).
+ARCHITECTURE_DOC = ROOT / "docs" / "architecture.md"
+README = ROOT / "README.md"
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def test_current_docs_do_not_name_deleted_services() -> None:
     """Current-state docs never reference the deleted provider services as
     core files."""
     for doc in CURRENT_DOCS:
-        text = doc.read_text(encoding="utf-8")
+        text = _read(doc)
         for svc in DELETED_SERVICES:
             assert f"services/{svc}.py" not in text, \
                 f"{doc.name} must not name services/{svc}.py (post-extraction)"
@@ -72,81 +88,108 @@ def test_core_source_has_no_deleted_service_imports() -> None:
                 f"{py.name} still references services.{svc}"
 
 
-def test_providers_are_plugins_with_capabilities() -> None:
-    """Current docs describe providers as official plugins implementing
-    capabilities."""
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+def test_architecture_doc_describes_provider_plugins() -> None:
+    """The deep architecture doc describes providers as official plugins
+    implementing capabilities."""
+    doc = _read(ARCHITECTURE_DOC)
     for plugin in ["fnack.spotiflac", "fnack.ytdlp", "fnack.deezer-batch",
                    "fnack.musicbrainz", "fnack.itunes", "fnack.spotify",
                    "fnack.acoustid", "fnack.navidrome"]:
-        assert plugin in readme, f"README must mention {plugin} as a provider plugin"
-    assert "download.track" in readme or "capabilities" in readme
-    assert "provider-free" in readme, "README must state core is provider-free"
+        assert plugin in doc, f"docs/architecture.md must mention {plugin} as a provider plugin"
+    assert "download.track" in doc and "capabilities" in doc
+    assert "Core is provider-free" in doc, \
+        "docs/architecture.md must state core is provider-free"
 
 
-def test_readme_explains_plugin_model() -> None:
-    """The README must explain the capability/plugin model structurally (not
-    just not-name deleted services): the core→service→capability→provider
-    flow, per-capability priority, disabling/zero-provider semantics, and
-    community replacement."""
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    # The architecture section must show the resolution flow and the key rules.
+def test_architecture_doc_explains_plugin_model() -> None:
+    """The deep doc explains the capability/plugin model structurally: the
+    core->service->capability->provider flow, per-capability priority,
+    disabling/zero-provider semantics, and community replacement."""
+    doc = _read(ARCHITECTURE_DOC)
     for needle in [
-        "## Architecture",
-        "Core is provider-free",
+        "Application service",
+        "Capability",
         "Provider registry",
+        "Provider plugin",
+        "Core is provider-free",
         "Multiple plugins can implement the same capability",
         "Priority is per capability",
         "Disabling a plugin removes its capabilities",
         "Zero providers is a valid state",
         "Community plugins can replace official providers",
-        "## Plugins",
+        "## Essential vs optional packaging",
     ]:
-        assert needle in readme, f"README must explain: {needle!r}"
-    # The provider flow diagram: core → service → capability → provider.
-    assert "Application service" in readme and "Capability" in readme
+        assert needle in doc, f"docs/architecture.md must explain: {needle!r}"
 
 
-def test_readme_config_split_does_not_leak_provider_settings_as_core() -> None:
-    """Provider settings (spotiflac_quality/ytdlp_format/...) must be presented
-    as PLUGIN configuration, not as flat core settings."""
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+def test_readme_is_user_focused_and_architecture_light() -> None:
+    """README is user-facing: no architecture section, no plugin inventory,
+    no plugin IDs — so it stays valid when plugins are added or removed."""
+    readme = _read(README)
+    assert "## What fnack is" in readme
+    for needle in ["## Quick Start", "## Configuration", "## Plugins",
+                   "## Guides", "## License"]:
+        assert needle in readme, f"README must have a {needle!r} section"
+    assert "## Architecture" not in readme, \
+        "README must be architecture-light (deep docs live in docs/architecture.md)"
+    # No hardcoded plugin inventory: not a single plugin ID in README.
+    assert "fnack." not in readme, \
+        "README must not hardcode plugin IDs (inventory lives in fnack-plugins / docs/architecture.md)"
+    # The capability explanation stays at a user level, not a spec.
+    assert "plugins provide them" in readme
+
+
+def test_readme_config_is_core_vs_plugin_without_enumeration() -> None:
+    """README config: core settings table + plugin-owned settings explained —
+    never a per-plugin enumeration of provider settings."""
+    readme = _read(README)
     assert "## Configuration" in readme
-    assert "### Core configuration" in readme
-    assert "### Plugin configuration" in readme
-    # Provider-owned keys must appear only under the plugin table / migration
-    # note, never as core settings.
-    core_section = readme.split("### Core configuration", 1)[1].split("### Plugin configuration", 1)[0]
+    config_section = readme.split("## Configuration", 1)[1].split("---", 1)[0]
+    assert "core" in config_section.lower() and "plugin" in config_section.lower()
     for key in ["spotiflac_quality", "spotiflac_delay", "ytdlp_format",
-                "youtube_cookies_path", "youtube_source", "spotdl_source"]:
-        assert key not in core_section, \
-            f"provider setting {key!r} must not appear in the core config table"
-    # The migration note explains the legacy keys move into the plugin.
+                "youtube_cookies_path", "youtube_source", "spotdl_source",
+                "navidrome_url", "acoustid_api_key"]:
+        assert key not in readme, \
+            f"provider setting {key!r} must not appear in README (no per-plugin enumeration)"
+    # The migration note explains legacy flat keys move into the plugin.
     assert "migration fallback" in readme
 
 
-def test_readme_distinguishes_media_scan_from_subsonic() -> None:
+def test_media_scan_vs_subsonic_distinction_in_architecture_doc() -> None:
     """Navidrome (media.scan provider) and Subsonic (server.extension plugin)
-    are different concepts and must be presented as such."""
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "fnack.navidrome" in readme and "media.scan" in readme
-    assert "fnack.subsonic" in readme and "server.extension" in readme
-    # The media-server section must separate the two (a single line that
-    # collapses them — e.g. "Subsonic API Integration ... Navidrome" — is
-    # stale).
-    media_section = readme.split("### Media-server integration", 1)[1].split("---", 1)[0]
-    assert "Media-server scan" in media_section and "Subsonic/OpenSubsonic server" in media_section
+    are different concepts; the deep doc presents them as such."""
+    doc = _read(ARCHITECTURE_DOC)
+    assert "fnack.navidrome" in doc and "media.scan" in doc
+    assert "fnack.subsonic" in doc and "server.extension" in doc
+    media_section = doc.split("### Essential vs optional packaging", 1)[0]
+    assert "media-server scan" in media_section and "Subsonic/OpenSubsonic server" in media_section
 
 
-def test_readme_no_provider_implementation_leak() -> None:
-    """README must not present provider-internal implementation details as
-    core functionality (e.g. 'cached Deezer lookups' in a core feature)."""
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    for phrase in [
-        "cached Deezer lookups",      # Deezer impl detail presented as core
-        "Subsonic API Integration",   # stale conflation of Subsonic/Navidrome
-    ]:
-        assert phrase not in readme, f"README must not present stale impl detail: {phrase!r}"
+def test_no_provider_implementation_leak() -> None:
+    """Docs must not present provider-internal implementation details as core
+    functionality (e.g. 'cached Deezer lookups' in a core feature)."""
+    for doc in (README, ARCHITECTURE_DOC):
+        text = _read(doc)
+        for phrase in [
+            "cached Deezer lookups",      # Deezer impl detail presented as core
+            "Subsonic API Integration",   # stale conflation of Subsonic/Navidrome
+        ]:
+            assert phrase not in text, f"{doc.name} must not present stale impl detail: {phrase!r}"
+
+
+def test_guides_moved_out_of_readme() -> None:
+    """The long setup guides live in docs/guides/ and README only links to
+    them (a regression check that they don't creep back into the README)."""
+    readme = _read(README)
+    for link in ["docs/guides/youtube-cookies.md", "docs/guides/vpn.md"]:
+        assert link in readme, f"README must link to {link}"
+    for guide in [ROOT / "docs" / "guides" / "youtube-cookies.md",
+                  ROOT / "docs" / "guides" / "vpn.md"]:
+        assert guide.exists(), f"guide file missing: {guide}"
+    # The old inline guide bodies must be gone from the README.
+    for body in ["Get cookies.txt LOCALLY", "Step-by-Step Instructions",
+                 "## VPN Setup", "Option A: Upload via the Web UI"]:
+        assert body not in readme, f"guide body {body!r} must not be inlined in README"
 
 
 def test_obsolete_core_db_model_removed() -> None:
@@ -157,9 +200,21 @@ def test_obsolete_core_db_model_removed() -> None:
     assert "musicbrainz_cache" not in models_src
 
 
+def test_essential_packaging_is_documented() -> None:
+    """The essential-vs-optional packaging policy is documented in the deep
+    architecture doc and named in the README (user-facing, no ID list)."""
+    doc = _read(ARCHITECTURE_DOC)
+    assert "ESSENTIAL_PLUGINS" in doc and "single source of truth" in doc
+    assert "fnack.spotiflac" in doc and "fnack.deezer-batch" in doc
+    readme = _read(README)
+    assert "default out-of-box experience" in readme
+    assert "Marketplace" in readme
+
+
 def test_wayfinder_map_marks_phase4_complete() -> None:
-    """The wayfinder map/tickets mark the extraction work complete."""
-    map_src = (ROOT / "wayfinder" / "plugin-architecture-map.md").read_text(encoding="utf-8")
+    """The wayfinder map/tickets mark the extraction work complete and record
+    the essential-packaging decision."""
+    map_src = _read(ROOT / "wayfinder" / "plugin-architecture-map.md")
     assert "Phase 4" in map_src
     ticket = (ROOT / "wayfinder" / "tickets" / "plugin-phase-4-hardening-deletion.md")
     assert ticket.exists()
@@ -170,11 +225,14 @@ def test_wayfinder_map_marks_phase4_complete() -> None:
 if __name__ == "__main__":
     test_current_docs_do_not_name_deleted_services()
     test_core_source_has_no_deleted_service_imports()
-    test_providers_are_plugins_with_capabilities()
-    test_readme_explains_plugin_model()
-    test_readme_config_split_does_not_leak_provider_settings_as_core()
-    test_readme_distinguishes_media_scan_from_subsonic()
-    test_readme_no_provider_implementation_leak()
+    test_architecture_doc_describes_provider_plugins()
+    test_architecture_doc_explains_plugin_model()
+    test_readme_is_user_focused_and_architecture_light()
+    test_readme_config_is_core_vs_plugin_without_enumeration()
+    test_media_scan_vs_subsonic_distinction_in_architecture_doc()
+    test_no_provider_implementation_leak()
+    test_guides_moved_out_of_readme()
     test_obsolete_core_db_model_removed()
+    test_essential_packaging_is_documented()
     test_wayfinder_map_marks_phase4_complete()
     print("test_documentation_gate: PASSED")

@@ -1,11 +1,12 @@
-"""Architecture test: plugin boundary (Phase 1, MASTER §Architecture tests).
+"""Architecture test: plugin boundary (MASTER §Architecture tests).
 
 Plugins must use the public SDK / `plugins.base` interfaces — never `models`,
 `app`, `plugins.manager`, `plugins.api`, `plugins.registry`, or
-`plugins.models` (core internals). The MASTER permits a *temporary*
-plugin -> legacy-service adapter during migration (rule 4), so `services.*`
-imports inside plugins are flagged as transitional, not forbidden — later
-phases delete them as each provider is extracted.
+`plugins.models` (core internals). All provider extractions are complete:
+no plugin wraps a legacy provider service anymore. The only `services.*`
+imports left in the official bundle are a small set of generic core helpers
+(verifier policy, VPN infrastructure) that plugins may call through — the test
+pins that set so a provider-service import can never reappear.
 
 Run from the repo root:
 
@@ -26,22 +27,17 @@ FORBIDDEN_IMPORTS = re.compile(
     re.MULTILINE,
 )
 
-# services.* imports are transitional adapters (MASTER rule 4). Track which
-# plugins still use them so Phase 2+ extraction is auditable; the test only
-# hard-fails on core-internal imports.
-# services.* imports are transitional adapters (MASTER rule 4). Track which
-# plugins still use them so Phase 2+ extraction is auditable; the test only
-# hard-fails on core-internal imports.
 SERVICES_IMPORT = re.compile(r"^\s*(?:from|import)\s+services\.", re.MULTILINE)
 
-# Generic CORE helpers plugins may legitimately call (not provider
-# implementations): the verifier (duration/tag verification policy) and the
-# AcoustID rescue helper are cross-cutting; provider plugins route them via
-# the PluginContext facade in the real runtime, and this allowlist covers the
-# standalone/legacy fallback inside provider modules (Phase 2 transitional).
+# The ONLY `services.*` modules a bundled plugin may import: generic CORE
+# helpers (not provider implementations) that are deliberately core —
+# verifier_service (duration/tag verification policy) and vpn_service
+# (in-container VPN infrastructure; the fnack.vpn plugin is a thin wrapper
+# around it). Every entry must name a module that exists today, so a stale
+# allowlist entry (like the deleted acoustid_service) fails fast.
 PLUGIN_ALLOWED_SERVICES = {
     "services.verifier_service",
-    "services.acoustid_service",
+    "services.vpn_service",
 }
 
 
@@ -51,6 +47,17 @@ def _plugin_dirs() -> list[Path]:
         if root.exists():
             dirs.extend(p for p in root.iterdir() if (p / "plugin.py").exists())
     return dirs
+
+
+def test_allowed_services_helpers_exist() -> None:
+    """Every entry in PLUGIN_ALLOWED_SERVICES must name a real core module —
+    a stale entry (e.g. a deleted provider service) is a regression."""
+    for module in PLUGIN_ALLOWED_SERVICES:
+        name = module.split(".", 1)[1]  # services.<name>
+        assert (ROOT / "services" / f"{name}.py").exists(), (
+            f"{module} is allowlisted in the boundary test but "
+            f"services/{name}.py no longer exists — remove the stale entry"
+        )
 
 
 def test_plugins_never_import_core_internals() -> None:
@@ -68,11 +75,12 @@ def test_plugins_never_import_core_internals() -> None:
     )
 
 
-def test_transitional_services_imports_are_documented() -> None:
-    """Not a hard failure — an inventory so each entry is visible for the
-    extraction phases (plugin -> legacy-service adapter, MASTER rule 4).
-    Generic core helpers (verifier/acoustid verify) are allowed; provider
-    implementations are not."""
+def test_plugins_import_only_generic_core_helpers() -> None:
+    """No bundled plugin may import a provider service from `services.*`.
+
+    The only sanctioned `services.*` imports are the generic core helpers in
+    PLUGIN_ALLOWED_SERVICES (verifier policy, VPN infra); anything else is a
+    provider implementation that must live behind the plugin boundary."""
     usage: dict[str, list[str]] = {}
     for pdir in _plugin_dirs():
         for py in pdir.glob("*.py"):
@@ -84,18 +92,11 @@ def test_transitional_services_imports_are_documented() -> None:
             )
             if SERVICES_IMPORT.search(filtered):
                 usage.setdefault(pdir.name, []).append(py.name)
-    # The expected transitional adapters (all official plugins still wrapping
-    # a legacy service). fnack.discord-webhook / ntfy-webhook / subsonic /
-    # lidarr / reverse-proxy-auth are already real plugins (no services import).
-    print("Transitional plugin->service adapters (to be extracted):")
-    for pid, files in sorted(usage.items()):
-        print(f"  {pid}: {', '.join(files)}")
-    assert set(usage) <= {
-        "fnack.spotify", "fnack.deezer-batch",
-        "fnack.musicbrainz", "fnack.itunes", "fnack.acoustid", "fnack.navidrome",
-        "fnack.vpn", "fnack.clean-navidrome-artists", "fnack.fix-navidrome-splits",
-        "fnack.normalize-album-tags", "fnack.reverify-library",
-    }, "unexpected services.* import in a plugin"
+    assert not usage, (
+        "Plugins must not import provider services from services.* — provider "
+        "implementations live inside the plugin. Found: "
+        + "; ".join(f"{pid}: {', '.join(files)}" for pid, files in sorted(usage.items()))
+    )
 
 
 def test_plugin_can_import_public_sdk() -> None:
@@ -124,9 +125,7 @@ def test_official_bundle_capability_registration() -> None:
     from plugins.manager import init_plugin_manager
 
     # The real bundled plugins import the runtime stack; if that stack is
-    # missing here, this test cannot run (skip, don't fail). The remaining
-    # transitional plugins import `services.*` (which need
-    # flask/flask_sqlalchemy/yt_dlp).
+    # missing here, this test cannot run (skip, don't fail).
     try:
         import flask  # noqa: F401
         import flask_sqlalchemy  # noqa: F401
@@ -172,8 +171,9 @@ def test_official_bundle_capability_registration() -> None:
 
 
 if __name__ == "__main__":
+    test_allowed_services_helpers_exist()
     test_plugins_never_import_core_internals()
-    test_transitional_services_imports_are_documented()
+    test_plugins_import_only_generic_core_helpers()
     test_plugin_can_import_public_sdk()
     test_official_bundle_capability_registration()
     print("test_plugin_boundary: PASSED")

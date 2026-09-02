@@ -7,10 +7,9 @@ Asserts the brief's §Completion criteria at the source level:
 2. The queue orchestrates through the four application services
    (DownloadService / MetadataService / VerificationService /
    MediaServerService).
-3. API routes (app.py) call application services; the only remaining
-   provider-service imports are the documented transitional ones (musicbrainz
-   enrich, acoustid manual-identify, navidrome fix-splits — none have a
-   capability in the MASTER set).
+3. API routes (app.py) call application services; after Phase 4 all six
+   provider services are deleted, so no provider-service import remains
+   (manual-identify + split repair resolve through the plugins).
 4. Zero providers produces structured unavailable results: every application
    service raises CapabilityUnavailable when its capability has no enabled
    provider (no hidden fallback).
@@ -61,10 +60,9 @@ def test_queue_orchestrates_through_application_services() -> None:
 
 
 def test_app_routes_use_application_services() -> None:
-    """API routes call application services; remaining provider imports are
-    exactly the documented transitional ones still awaiting extraction
-    (acoustid manual-identify, navidrome fix-splits — no capability in the
-    MASTER set; musicbrainz/itunes extracted in Phase 4 PR 3)."""
+    """API routes call application services; no provider-service import
+    remains (Phase 4 deleted all six; manual-identify + split repair
+    resolve through the plugins)."""
     src = (ROOT / "app.py").read_text(encoding="utf-8")
     assert "MetadataService" in src      # search-artist / sync routes
     assert "MediaServerService" in src   # navidrome test/scan routes

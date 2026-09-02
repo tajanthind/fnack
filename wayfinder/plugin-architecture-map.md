@@ -95,7 +95,7 @@ phase.
   image. Release process: edit + package in `fnack-plugins` (run
   `package_plugins.py` to regenerate `index.json` + `dist/`), then copy the
   same plugin sources into fnack's `bundled_plugins/` before tagging a core
-  release. Verified identical today (all 17 plugins byte-for-byte). The
+  release. Verified identical today (all 18 plugins byte-for-byte). The
   auto-seeded official repo URL points at the fnack-plugins `index.json`.
 
 - [Phase 5: Settings-surface gaps (VPN/yt-dlp), plugin descriptions, reconciliation verification](tickets/plugin-phase-5-settings-and-descriptions.md):
@@ -236,6 +236,24 @@ phase.
   (NOTE: PR #29 merged into its base branch — its MB+iTunes content is
   delivered to main by fix/mb-itunes-to-main, PR #33; merge #33 before the
   doc-gate PR #32.)
+- [Final cleanup: essential-plugin packaging + user-focused docs](tickets/plugin-phase-4-hardening-deletion.md):
+  one PR (`fix/final-docs-and-essential-plugin-packaging`). README rewritten
+  USER-focused (no architecture spec, no official-plugin inventory, no
+  per-plugin config table; cookies + VPN guides moved to `docs/guides/`);
+  deep architecture lives in the new `docs/architecture.md` (flow, rules,
+  capability list, official-plugin snapshot, essential-vs-optional policy);
+  `plugins/essential.py` `ESSENTIAL_PLUGINS` is the SINGLE source of truth
+  for what the Docker image bakes — spotiflac + ytdlp + spotify +
+  deezer-batch (the first-run download/sync workflow); the Dockerfile prunes
+  `bundled_plugins/` to that set (`scripts/select_essential_plugins.py`) so
+  the image auto-installs only essential plugins, while every other official
+  plugin stays installable from the Marketplace (no core dependency on any
+  optional plugin); arch tests cleaned of transitional language/allowlists
+  (e.g. deleted acoustid_service) and a new
+  `tests/architecture/test_essential_plugins.py` pins the policy;
+  fnack-plugins gains `tests/test_manifest_index_parity.py`
+  (manifest ↔ index parity, deterministic) and its README gains the missing
+  fnack.lidarr row. Smoke + 20 architecture tests green.
 
 ## Roadmap (execution carried into the map)
 
