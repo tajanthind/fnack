@@ -75,8 +75,11 @@ def main() -> int:
 
     repair = {"enabled": False}
     try:
-        from services.navidrome_service import run_auto_split_repair
-        repair = run_auto_split_repair(app)
+        from plugins.manager import plugin_manager as _pm
+        if _pm is not None and _pm.get_plugin("fnack.navidrome") is not None:
+            repair = _pm.invoke_provider(_pm.get_plugin("fnack.navidrome"), "run_split_repair") or {"enabled": False}
+        else:
+            print("[MAINTENANCE] Navidrome plugin not enabled — skipping split repair")
     except Exception as e:
         print(f"[MAINTENANCE] Navidrome split-repair error: {e}")
 

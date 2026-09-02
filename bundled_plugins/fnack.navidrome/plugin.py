@@ -1,79 +1,79 @@
-"""Bundled first-party plugin: Navidrome scan_trigger (+ settings via the
-standard schema modal — Brief 6 §2; no more custom settings_tab card).
+"""Bundled first-party plugin: Navidrome media-server integration.
 
-The navidrome_service reads its config from global AppSetting rows
-(navidrome_url/user/token/auto_scan/db_path). This plugin's namespaced
-settings (schema keys url/user/token/auto_scan/db_path) are kept in sync
-with those rows so existing behavior is unchanged — the schema modal is the
-single settings surface, and on_settings_changed writes back to the global
-rows the service still reads.
+AUTHORITATIVE implementation (Phase 4): the Navidrome-specific logic — ping
+connection test, debounced scan trigger, and split-album repair — lives in
+this plugin's `navidrome.py` (moved from the deleted
+`services/navidrome_service.py`). All config (url/user/token/auto_scan/
+db_path) is PLUGIN-OWNED via the standard settings schema; the plugin
+injects it into the module (no core AppSetting reads). Core never imports a
+Navidrome implementation.
+
+Serves the media.scan / media.health / media.connection_test capabilities
+(resolved by MediaServerService).
 """
 
-from plugins.base import ScanTriggerPlugin
-from services.navidrome_service import (
-    test_navidrome_connection,
-    trigger_navidrome_scan,
-)
+from typing import Optional
 
-# schema key -> global AppSetting key
-_SCHEMA_TO_GLOBAL = {
-    "url": "navidrome_url",
-    "user": "navidrome_user",
-    "token": "navidrome_token",
-    "auto_scan": "navidrome_auto_scan",
-    "db_path": "navidrome_db_path",
-}
-_GLOBAL_TO_SCHEMA = {v: k for k, v in _SCHEMA_TO_GLOBAL.items()}
+from plugins.base import ScanTriggerPlugin
+
+# Multi-file plugin (Phase 2): the manager puts this plugin's dir on sys.path,
+# so the sibling provider module imports by name.
+import navidrome  # noqa: E402
 
 
 class NavidromePlugin(ScanTriggerPlugin):
-    def _global_setting(self, key: str) -> str:
-        return (self.context.library.get_setting(key, "") or "").strip()
+    def _config(self) -> dict:
+        """Plugin-owned settings (schema keys url/user/token/auto_scan/db_path)."""
+        return {
+            "url": (self.context.settings.get("url") or "").strip(),
+            "user": (self.context.settings.get("user") or "").strip(),
+            "token": (self.context.settings.get("token") or "").strip(),
+            "auto_scan": str(self.context.settings.get("auto_scan", "true")),
+            "db_path": (self.context.settings.get("db_path") or "").strip(),
+        }
 
-    def _settings_from_global(self):
-        """One-time: pull legacy AppSetting values into the plugin store
-        (schema-keyed)."""
-        for schema_key, global_key in _SCHEMA_TO_GLOBAL.items():
+    def on_load(self) -> None:
+        # One-time migration: pull legacy AppSetting values into the plugin
+        # store (schema-keyed), then the plugin setting is authoritative.
+        legacy_map = {
+            "url": "navidrome_url",
+            "user": "navidrome_user",
+            "token": "navidrome_token",
+            "auto_scan": "navidrome_auto_scan",
+            "db_path": "navidrome_db_path",
+        }
+        for schema_key, global_key in legacy_map.items():
             if not self.context.settings.get(schema_key):
-                val = self._global_setting(global_key)
+                val = (self.context.library.get_setting(global_key, "") or "").strip()
                 if val:
                     self.context.settings.set(schema_key, val)
 
-    def _settings_to_global(self):
-        """Write plugin settings (schema-keyed) back to the global rows the
-        navidrome_service still reads."""
-        for schema_key, global_key in _SCHEMA_TO_GLOBAL.items():
-            val = (self.context.settings.get(schema_key) or "").strip()
-            self.context.library.set_setting(global_key, val)
-
-    def on_load(self):
-        self._settings_from_global()
-
-    def on_settings_changed(self, settings: dict):
-        self._settings_to_global()
-
     def trigger_scan(self) -> tuple[bool, str]:
-        try:
-            from flask import current_app
-            return trigger_navidrome_scan(current_app._get_current_object())
-        except Exception:
-            return False, "Navidrome scan failed (no app context)"
+        return navidrome.trigger_navidrome_scan(self._config())
 
     def test_connection(self, candidate_config: Optional[dict] = None) -> tuple[bool, str]:
         """Test the connection — STORED config, optionally overridden by the
         caller's UNSAVED candidate values (Phase 3 §Candidate configuration:
         the settings UI validates typed-but-not-saved values through the
         application service)."""
-        url = (candidate_config or {}).get("url") or self.context.settings.get("url") or self._global_setting("navidrome_url")
-        user = (candidate_config or {}).get("user") or self.context.settings.get("user") or self._global_setting("navidrome_user")
-        token = (candidate_config or {}).get("token") or self.context.settings.get("token") or self._global_setting("navidrome_token")
-        return test_navidrome_connection(url, user, token)
+        cfg = self._config()
+        if candidate_config:
+            cfg.update({k: v for k, v in candidate_config.items() if v is not None})
+        url = cfg.get("url") or ""
+        user = cfg.get("user") or ""
+        token = cfg.get("token") or ""
+        return navidrome.test_navidrome_connection(url, user, token)
 
     def health(self) -> dict:
-        """media.health: reachability + auth status of the configured server
-        (ping.view is the health probe — same check as the connection test)."""
-        url = self.context.settings.get("url") or self._global_setting("navidrome_url")
-        user = self.context.settings.get("user") or self._global_setting("navidrome_user")
-        token = self.context.settings.get("token") or self._global_setting("navidrome_token")
-        ok, msg = test_navidrome_connection(url, user, token)
-        return {"ok": ok, "message": msg, "configured": bool(url)}
+        """media.health: reachability + auth status of the configured server."""
+        ok, msg = navidrome.test_navidrome_connection(
+            self._config().get("url") or "",
+            self._config().get("user") or "",
+            self._config().get("token") or "",
+        )
+        return {"ok": ok, "message": msg, "configured": bool(self._config().get("url"))}
+
+    def run_split_repair(self) -> dict:
+        """Split-album repair (library task): consolidates split rows in the
+        configured Navidrome DB and rescans on merge."""
+        return navidrome.run_auto_split_repair(self._config())

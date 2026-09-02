@@ -650,8 +650,12 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
         or merge_stats["merged_albums"] > 0 or merge_stats["merged_tracks"] > 0
     ):
         try:
-            from services.navidrome_service import trigger_navidrome_scan
-            trigger_navidrome_scan(app)
+            # Phase 4: the Navidrome implementation lives in the fnack.
+            # navidrome plugin; resolve its module via the manager boundary
+            # (config is plugin-owned). No core navidrome import.
+            from plugins.manager import plugin_manager as _pm
+            if _pm is not None and _pm.get_plugin("fnack.navidrome") is not None:
+                _pm.invoke_provider(_pm.get_plugin("fnack.navidrome"), "trigger_scan")
         except Exception:
             logger.debug("[METADATA] Could not trigger Navidrome scan after normalize", exc_info=True)
 

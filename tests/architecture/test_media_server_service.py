@@ -184,9 +184,9 @@ def test_callers_migrated_to_application_service() -> None:
     assert "MediaServerService" in app_src
     assert "test_navidrome_connection" not in app_src
     assert "trigger_navidrome_scan" not in app_src
-    # run_auto_split_repair (the split-repair library task) has no capability
-    # yet — its function-level import stays transitional.
-    assert "from services.navidrome_service import run_auto_split_repair" in app_src
+    assert "services.navidrome_service" not in app_src
+    # Split repair resolves through the fnack.navidrome plugin.
+    assert "run_split_repair" in app_src
 
     queue_src = (ROOT / "services" / "queue_service.py").read_text(encoding="utf-8")
     assert "MediaServerService" in queue_src

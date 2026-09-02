@@ -40,9 +40,10 @@ def main() -> int:
 
     # Import the shared implementation (works without a Flask app context).
     sys.path.insert(0, __file__.rsplit("/", 2)[0])
-    from services.navidrome_service import consolidate_split_albums
+    sys.path.insert(0, __file__.rsplit("/", 2)[0] + "/bundled_plugins/fnack.navidrome")
+    import navidrome as _navidrome
 
-    stats = consolidate_split_albums(sys.argv[1])
+    stats = _navidrome.consolidate_split_albums(sys.argv[1])
     if stats["groups"] == 0:
         print("No split album rows found — nothing to do.")
         return 0
