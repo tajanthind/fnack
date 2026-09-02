@@ -115,8 +115,9 @@ capability the core queue resolves (disabling a plugin removes its
 capability; core has no provider implementation):
 
 1. **Discography sync** – the `fnack.deezer-batch` plugin (artist.search /
-   artist.discography / track.metadata) reads metadata from the public Deezer
-   API (artist search, albums, tracks, ISRC codes). No account needed.
+   artist.discography / artist.info / track.metadata) reads metadata from the
+   public Deezer API (artist search, albums, tracks, ISRC codes). No account
+   needed.
 2. **Spotify link resolution** – the `fnack.spotify` plugin (track.resolve)
    does ISRC / title search via DuckDuckGo + Yandex (`ddgs`), plus an
    optional official Spotify API path *only if* you set the plugin's

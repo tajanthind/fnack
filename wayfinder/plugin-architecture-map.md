@@ -219,6 +219,21 @@ phase.
   transitional); test_phase3_completion.py asserts all brief completion
   criteria. **PHASE 3 COMPLETE** — Smoke + 13 architecture tests green.
 
+
+- [Phase 4: Hardening, Tests, Isolation, and Final Deletion](tickets/plugin-phase-4-hardening-deletion.md):
+  the official plugins are now AUTHORITATIVE implementations — each of the
+  six legacy provider services (spotify, deezer, musicbrainz, itunes,
+  acoustid, navidrome) moved into its plugin (impl + settings + state +
+  cache), and `services/*_service.py` is deleted. No hidden provider
+  fallbacks; zero providers for a capability is a valid state. Each
+  extraction PR updated its docs to the post-extraction plugin model
+  (README/DEPLOY/AUTHORING/wayfinder — never "deprecated"). Final
+  documentation gate: obsolete core `MusicBrainzCache` model removed,
+  independence-test transitional allowlist now EMPTY, and
+  `tests/architecture/test_documentation_gate.py` greps current-state docs
+  for stale provider-service references as a regression test.
+  **PHASE 4 COMPLETE** — Smoke + 18 architecture tests green.
+
 ## Roadmap (execution carried into the map)
 
 1. **Phase 0** (`plugin-architecture/phase-0-scaffold`): drop `plugins/` + `examples/`
