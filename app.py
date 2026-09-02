@@ -458,7 +458,17 @@ def _start_bounded_artist_sync(artist_id: int, deezer_artist_id: int, options: d
 
 
 def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, options: dict):
-    """Background task to fetch artist discography from Deezer and index albums & tracks."""
+    """Background task to fetch artist discography from Deezer and index albums & tracks.
+
+    Runs as a SocketIO background greenlet (no inherited app context), so the
+    WHOLE function executes inside one app context — provider invocations
+    (MetadataService chain, enrich) read plugin settings through the DB.
+    """
+    with app.app_context():
+        _sync_artist_discography_background_impl(artist_id, deezer_artist_id, options)
+
+
+def _sync_artist_discography_background_impl(artist_id: int, deezer_artist_id: int, options: dict):
     with app.app_context():
         artist = db.session.get(Artist, artist_id)
         if not artist:

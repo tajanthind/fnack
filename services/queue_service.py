@@ -561,7 +561,20 @@ def _verify_or_rescue(app, downloaded_file, expected_duration, artist_name, trac
 
 
 def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
-    """Worker task for a single track download job."""
+    """Worker task for a single track download job.
+
+    The WHOLE job runs inside one app context. This function executes on a
+    ThreadPoolExecutor worker — its own thread/greenlet — and gevent makes
+    Flask's app context greenlet-local, so nothing is inherited from the
+    queue loop. Providers read plugin settings through the DB, so every
+    provider invocation in the job must run with a context active; keep all
+    provider calls inside the wrapper.
+    """
+    with app.app_context():
+        _process_track_job_impl(app, socketio, job_id)
+
+
+def _process_track_job_impl(app: Flask, socketio: SocketIO, job_id: int):
     with app.app_context():
         job = db.session.get(DownloadJob, job_id)
         if not job or job.status != "downloading":
@@ -1201,7 +1214,21 @@ def download_manual_match_track(
     """
     Manually download, tag, and organize a track using a user-supplied Spotify, YouTube, YouTube Music, or Deezer URL.
     Overwrites/replaces any existing audio file for this track and updates database metadata.
+
+    Runs as a SocketIO background greenlet (no inherited app context), so the
+    WHOLE function executes inside one app context — provider invocations
+    (plugin settings reads) need it.
     """
+    with app.app_context():
+        _download_manual_match_track_impl(app, socketio, track_id, custom_url)
+
+
+def _download_manual_match_track_impl(
+    app: Flask,
+    socketio: SocketIO,
+    track_id: int,
+    custom_url: str,
+) -> Tuple[bool, str]:
     with app.app_context():
         track = db.session.get(Track, track_id)
         if not track:
