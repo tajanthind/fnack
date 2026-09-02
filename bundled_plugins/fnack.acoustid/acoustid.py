@@ -1,8 +1,9 @@
 """Optional AcoustID fingerprinting for fnack.
 
-Zero-auth by design: fingerprinting is strictly optional. Without an
-`acoustid_api_key` setting everything else works unchanged (no fingerprint
-lookups, no "Identify this file" action). With a free acoustid.org client
+Zero-auth by design: fingerprinting is strictly optional. Without the
+plugin's `api_key` setting everything else works unchanged (no fingerprint
+lookups, no "Identify this file" action). The key is plugin-owned (Phase 4);
+the plugin injects it via set_api_key(). With a free acoustid.org client
 key configured, fnack can:
 
   * verify a downloaded file when the tag/duration verifier is unsure or
@@ -28,7 +29,6 @@ from typing import Optional
 
 import requests
 
-from models import AppSetting, db
 
 logger = logging.getLogger("fnack.acoustid")
 
@@ -42,9 +42,19 @@ _last_lookup_had_results = False
 _last_lookup_missing_metadata = False
 
 
+# Plugin-owned API key (Phase 4: provider settings live in the plugin). The
+# plugin injects its key via set_api_key(); the legacy AppSetting fallback is
+# migrated by the plugin's on_load and removed with the legacy settings.
+_api_key = ""
+
+
+def set_api_key(key: str) -> None:
+    global _api_key
+    _api_key = (key or "").strip()
+
+
 def _get_key() -> str:
-    s = db.session.get(AppSetting, "acoustid_api_key")
-    return (s.value or "").strip() if s else ""
+    return _api_key
 
 
 def is_enabled() -> bool:

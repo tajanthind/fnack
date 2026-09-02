@@ -1,56 +1,52 @@
 """Bundled first-party plugin: AcoustID fingerprinting.
 
+AUTHORITATIVE implementation (Phase 4): the AcoustID-specific logic —
+fingerprint via fpcalc, lookup with the 1.2s pacing, match/mismatch
+verification, and the manual identify flow — lives in this plugin's
+`acoustid.py` (moved from the deleted `services/acoustid_service.py`). The
+API key is PLUGIN-OWNED (api_key setting; injected via set_api_key()); the
+plugin serves the fingerprint.identify capability and exposes the
+verification + manual-identify helpers the core route uses through the
+plugin boundary. Core never imports an AcoustID implementation.
+
 SAFETY-RELEVANT behavior preserved exactly (wayfinder tickets
 acoustid-fingerprinting.md + regional-artist-fallback.md):
 - keyless (no api_key) => disabled, silent no-op
-- verify-when-unsure at the 0.8 gate stays in core's _verify_or_rescue
-  (queue_service), which consults this plugin via the chain
+- verify-when-unsure at the 0.8 gate stays core policy (VerificationService
+  consumes this plugin's normalized evidence via FingerprintService)
 - regional no-match changes nothing; confirmed mismatch => caution flag
-
-The key is stored in BOTH this plugin's namespaced setting and the legacy
-`acoustid_api_key` AppSetting row (the service still reads the global row;
-the plugin keeps them in sync so existing behavior is unchanged).
 """
 
 from pathlib import Path
 from typing import Optional
 
 from plugins.base import FingerprintPlugin, FingerprintResult
-from services.acoustid_service import identify, is_enabled
+
+# Multi-file plugin (Phase 2): the manager puts this plugin's dir on sys.path,
+# so the sibling provider module imports by name.
+import acoustid  # noqa: E402
 
 
 class AcoustIDFingerprinter(FingerprintPlugin):
-    def _sync_key_from_global(self):
-        """Read the legacy global AppSetting value into the plugin setting
-        (one-time migration for users who had a key set before Phase 1)."""
+    def on_load(self) -> None:
+        # Plugin-owned key (Phase 4): migrate the legacy global once.
         try:
             old_val = self.context.library.get_setting("acoustid_api_key")
             if old_val and not self.context.settings.get("api_key"):
                 self.context.settings.set("api_key", old_val)
         except Exception:
             pass
-
-    def _sync_key_to_global(self):
-        """Write the plugin setting back to the legacy AppSetting row so
-        services.acoustid_service.is_enabled()/identify() keep working."""
-        try:
-            key = (self.context.settings.get("api_key") or "").strip()
-            self.context.library.set_setting("acoustid_api_key", key)
-        except Exception:
-            pass
-
-    def on_load(self):
-        self._sync_key_from_global()
+        acoustid.set_api_key(self.context.settings.get("api_key") or "")
 
     def on_settings_changed(self, settings: dict):
-        self._sync_key_to_global()
+        acoustid.set_api_key((settings.get("api_key") or "").strip())
 
     def is_enabled(self) -> bool:
-        return is_enabled()
+        return acoustid.is_enabled()
 
     def identify(self, file_path: Path) -> FingerprintResult:
         """Manual 'Identify this file' flow — returns the top candidate."""
-        candidates = identify(str(file_path))
+        candidates = acoustid.identify(str(file_path))
         if not candidates:
             return FingerprintResult(confidence=0.0)
         top = candidates[0]
@@ -60,3 +56,20 @@ class AcoustIDFingerprinter(FingerprintPlugin):
             matched_artist=(top.get("artists") or [None])[0],
             raw=top,
         )
+
+    # -- helpers the core manual-identify route uses (via the plugin) --------
+
+    def identify_candidates(self, path: str) -> list:
+        return acoustid.identify(path)
+
+    def last_lookup_flags(self) -> dict:
+        return {
+            "had_results": acoustid._last_lookup_had_results,
+            "missing_metadata": acoustid._last_lookup_missing_metadata,
+        }
+
+    def verify_download(self, path: str, expected_artist: Optional[str],
+                        expected_title: Optional[str],
+                        expected_duration: Optional[float]) -> dict:
+        return acoustid.verify_download(path, expected_artist, expected_title,
+                                        expected_duration)

@@ -345,13 +345,21 @@ class LibraryContext:
         expected_duration: Optional[float] = None,
     ) -> dict:
         """Optional AcoustID rescue for wrong-tags-but-right-audio files
-        (Phase 2, PR 4): exposed generically so plugins don't import
-        services.acoustid_service. Returns a dict with status/match info;
-        fail-soft (empty dict) when AcoustID is disabled or unavailable."""
+        (Phase 4): resolved through the fnack.acoustid plugin's
+        fingerprint.identify capability via the manager boundary — plugins
+        never import a core AcoustID implementation. Returns a dict with
+        status/match info; fail-soft when AcoustID is disabled/unavailable."""
         try:
-            from services.acoustid_service import verify_download
-            return verify_download(file_path, expected_artist, expected_title,
-                                   expected_duration if expected_duration else None)
+            from plugins.manager import plugin_manager as _pm
+            from fnack.plugin_api.capabilities import FINGERPRINT_IDENTIFY
+            if _pm is None or not _pm.has_capability(FINGERPRINT_IDENTIFY):
+                return {"status": "unsupported"}
+            for h in _pm.capability_registry.providers_for(FINGERPRINT_IDENTIFY):
+                if hasattr(h.provider, "verify_download"):
+                    return h.provider.verify_download(
+                        file_path, expected_artist, expected_title,
+                        expected_duration if expected_duration else None)
+            return {"status": "unsupported"}
         except Exception:
             return {"status": "unsupported"}
 

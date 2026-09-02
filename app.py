@@ -1132,7 +1132,6 @@ def api_track_identify(track_id):
     With a 'candidate' body, applies that candidate (retags the file with the
     matched identity and clears any caution flag) — the auto-apply path."""
     import json as _json
-    from services.acoustid_service import is_enabled, identify
     from services.queue_service import _tag_audio_file
 
     data = request.get_json(silent=True) or {}
@@ -1180,17 +1179,28 @@ def api_track_identify(track_id):
             socketio.emit("artist_updated", {"artist_id": t.artist_id})
             return jsonify({"message": f"Applied: '{matched_title}' by {matched_artist or '?'} (re-tagged).", "applied": True})
 
-    if not is_enabled():
+    # Phase 4: the AcoustID provider is the fnack.acoustid plugin (owns the
+    # api_key + implementation); resolve it via the fingerprint.identify
+    # capability through the manager boundary — no core acoustid import.
+    from plugins.manager import plugin_manager as _pm_ac
+    from fnack.plugin_api.capabilities import FINGERPRINT_IDENTIFY
+    ac = None
+    if _pm_ac is not None and _pm_ac.has_capability(FINGERPRINT_IDENTIFY):
+        for h in _pm_ac.capability_registry.providers_for(FINGERPRINT_IDENTIFY):
+            if hasattr(h.provider, "identify_candidates"):
+                ac = h.provider
+                break
+    if ac is None or not ac.is_enabled():
         return jsonify({"error": "AcoustID is not configured (no api key). Add one in Settings to enable fingerprinting."}), 400
 
     try:
-        candidates = identify(t.local_path)
+        candidates = ac.identify_candidates(t.local_path)
     except Exception as e:
         logger.exception("[ACOUSTID] Identify failed")
         return jsonify({"error": f"Fingerprint lookup failed: {e}"}), 500
     if not candidates:
-        from services.acoustid_service import _last_lookup_had_results, _last_lookup_missing_metadata
-        if _last_lookup_missing_metadata:
+        flags = ac.last_lookup_flags()
+        if flags.get("missing_metadata"):
             return jsonify({
                 "candidates": [],
                 "message": "AcoustID matched the song (fingerprint found) but that cluster has no "

@@ -7,7 +7,7 @@
   "min_core_version": "0.2.0",
   "entry_point": "plugin:AcoustIDFingerprinter",
   "author": "fnack",
-  "description": "Optional acoustic verification: confirms a download is the right song, identifies unknown/regional tracks, flags mismatches. Keyless = disabled (silent no-op).",
+  "description": "Authoritative AcoustID fingerprinting (fingerprint.identify): verifies a download, identifies unknown/regional tracks, flags mismatches. API key is plugin-owned; keyless = disabled (silent no-op). Implementation lives in this plugin (acoustid.py).",
   "homepage": "",
   "permissions": ["network", "filesystem:music"],
   "settings_schema": [
