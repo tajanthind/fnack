@@ -130,6 +130,33 @@ fnack-plugins synced + repackaged; wayfinder + map updated.
   (media.scan) distinction is explicit; stale implementation language
   ("cached Deezer lookups", "Subsonic API Integration") removed. The doc
   gate test gained structural assertions for these classes of issues.
+- **Final cleanup (essential-plugin packaging + user-focused docs) DONE —
+  PR open** (branch `fix/final-docs-and-essential-plugin-packaging`, one PR
+  per the user directive): README rewritten USER-focused and
+  architecture-light (no architecture section, no official-plugin inventory,
+  no per-plugin config enumeration; quick start + config + plugins +
+  guides); the long YouTube-cookies and VPN guides moved to
+  `docs/guides/youtube-cookies.md` + `docs/guides/vpn.md`; deep architecture
+  moved to the new `docs/architecture.md` (flow, rules, capability list,
+  official-plugin snapshot, essential-vs-optional packaging policy);
+  `plugins/essential.py` `ESSENTIAL_PLUGINS` is the SINGLE source of truth
+  for what the Docker image bakes — fnack.spotiflac + fnack.ytdlp +
+  fnack.spotify + fnack.deezer-batch (the first-run download/sync
+  workflow: artist.search/discography, track.resolve, download.track with
+  primary + fallback); the Dockerfile prunes `bundled_plugins/` to that set
+  via `scripts/select_essential_plugins.py` so the image auto-installs only
+  essential plugins, while every other official plugin stays installable
+  from the Marketplace and core has no dependency on any optional plugin;
+  arch tests cleaned of transitional language/allowlists (boundary test now
+  pins the ONLY remaining services.* helpers — verifier_service +
+  vpn_service — and fails fast on stale entries like the deleted
+  acoustid_service; fingerprint_service comments no longer promise a pending
+  AcoustID extraction); new `tests/architecture/test_essential_plugins.py`
+  pins the packaging policy (vendored essential dirs, optional-not-essential,
+  Dockerfile prunes, selection script functional check, first-run coverage);
+  fnack-plugins gains `tests/test_manifest_index_parity.py` (deterministic
+  manifest ↔ index parity, plain python) and its README gains the missing
+  fnack.lidarr row + essential/optional note. Smoke + 20 arch tests green.
 
 ## Final state (Phase 4 complete)
 

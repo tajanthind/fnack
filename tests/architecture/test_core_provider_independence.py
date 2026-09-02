@@ -1,36 +1,19 @@
-"""Architecture test: core provider independence (Phase 1, MASTER §Architecture tests).
+"""Architecture test: core provider independence (MASTER §Architecture tests).
 
-Phase 1 establishes the boundary; it does NOT move provider implementations
-yet (that is Phases 2-10, per the handoff PR plan). So this test enforces
-what Phase 1 can honestly guarantee:
+The provider extractions are COMPLETE (all six providers moved into their
+plugins in Phase 4). This test enforces the final state:
 
   1. The public SDK (`fnack/plugin_api/`) never imports provider services,
      the DB models, or the Flask app — the SDK is the clean boundary.
-  2. Core business logic no longer reaches into PluginManager's private
+  2. Core business logic never reaches into PluginManager's private
      `_plugins` dict — it uses the public API / capability registry.
-  3. Provider-implementation imports in core are frozen to a documented
-     TRANSITIONAL allowlist (plugin -> legacy-service adapters, which the
-     MASTER permits "only during migration"). Adding a NEW import fails.
-  4. Provider-ID equality branches in core are frozen to the documented
-     transitional deezer-batch keying (to be replaced when the metadata
-     capability boundary lands). Adding a NEW branch fails.
+  3. Core imports NO provider services (the Phase 1/2 transitional allowlist
+     shrank entry by entry and is now EMPTY — all six provider services are
+     deleted). Adding a NEW provider import fails.
+  4. Provider-ID equality branches in core are gone (the transitional
+     deezer-batch keying was replaced by the capability boundary). Adding a
+     NEW branch fails.
   5. Missing capability is a valid state: CapabilityUnavailable, no fallback.
-
-IMPORTANT — what this test is and is not (Phase 1.1 review):
-
-- It is a REGRESSION FENCE, not a final architectural guarantee. Passing it
-  does NOT mean core is provider-independent today: the TRANSITIONAL
-  allowlist below still permits core -> provider-service imports (queue,
-  app, import_service) and one provider-ID branch. Those exist because
-  Phase 1/1.1 deliberately did not move provider implementations.
-- Phase 2's job is to SHRINK this allowlist entry by entry as each provider
-  is extracted (each entry names its removal phase). The fence's real value
-  is that any NEW import/branch added without extending the allowlist fails
-  CI immediately.
-- The final state (Definition of Done in the MASTER) is: allowlist empty,
-  core provider imports = 0, provider-ID branches = 0.
-
-As later phases remove each transitional entry, this allowlist shrinks.
 
 Run from the repo root:
 
@@ -121,7 +104,7 @@ def test_runtime_provider_calls_use_guarded_boundary() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Provider imports frozen to the transitional allowlist
+# 3. Provider imports forbidden (transitional allowlist is EMPTY post-Phase-4)
 # ---------------------------------------------------------------------------
 
 FORBIDDEN_PROVIDER_MODULES = {
@@ -133,16 +116,16 @@ FORBIDDEN_PROVIDER_MODULES = {
     "services.itunes_service",
 }
 
-# Transitional: REMOVED in Phase 4 — all six providers are extracted into
-# their plugins (spotify, deezer, musicbrainz, itunes, acoustid, navidrome).
-# Core imports no provider services; a new provider import anywhere in core
-# is forbidden.
+# Phase 4: all six providers are extracted into their plugins (spotify,
+# deezer, musicbrainz, itunes, acoustid, navidrome) and the legacy services
+# are deleted. Core imports no provider services; a provider import anywhere
+# in core is forbidden.
 TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {}
 
 IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+(services\.\w+)", re.MULTILINE)
 
 
-def test_provider_imports_frozen_to_transitional_allowlist() -> None:
+def test_core_has_no_provider_imports() -> None:
     scan = [ROOT / "app.py", *(ROOT / "services").glob("*.py")]
     violations = []
     for path in scan:
@@ -155,12 +138,12 @@ def test_provider_imports_frozen_to_transitional_allowlist() -> None:
             if mod not in FORBIDDEN_PROVIDER_MODULES:
                 continue
             if allowlist.get(mod):
-                continue  # documented transitional adapter
-            violations.append(f"{path.name}: imports {mod} (not in transitional allowlist)")
+                continue  # documented allowlist entry (none remain post-Phase-4)
+            violations.append(f"{path.name}: imports {mod}")
     assert not violations, (
-        "New provider imports in core are forbidden. If you are genuinely "
-        "migrating, extend the TRANSITIONAL_PROVIDER_IMPORTS allowlist with a "
-        "reason and a phase that removes it:\n" + "\n".join(violations)
+        "Provider imports in core are forbidden — all six providers were "
+        "extracted into their plugins in Phase 4 and the legacy services are "
+        "deleted:\n" + "\n".join(violations)
     )
 
 
@@ -181,7 +164,7 @@ ID_BRANCH_RE = re.compile(r"""(?:==|!=|is not|is)\s*["']fnack\.[a-z0-9\-]+["']""
 TRANSITIONAL_ID_BRANCHES: dict[str, set[str]] = {}
 
 
-def test_provider_id_branches_frozen_to_transitional_allowlist() -> None:
+def test_core_has_no_provider_id_branches() -> None:
     scan = [ROOT / "app.py", *(ROOT / "services").glob("*.py")]
     violations = []
     for path in scan:
@@ -235,7 +218,7 @@ if __name__ == "__main__":
     test_sdk_never_imports_core_internals()
     test_core_uses_public_manager_api()
     test_runtime_provider_calls_use_guarded_boundary()
-    test_provider_imports_frozen_to_transitional_allowlist()
-    test_provider_id_branches_frozen_to_transitional_allowlist()
+    test_core_has_no_provider_imports()
+    test_core_has_no_provider_id_branches()
     test_missing_capability_is_a_valid_state()
     print("test_core_provider_independence: PASSED")

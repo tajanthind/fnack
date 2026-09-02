@@ -58,9 +58,9 @@ class FingerprintService:
         """Normalize whatever the provider returned into FingerprintEvidence.
 
         Providers implementing the SDK contract return FingerprintEvidence
-        directly. Legacy providers (e.g. fnack.acoustid until its own
-        extraction PR) return plugins.base.FingerprintResult (confidence /
-        matched_title / matched_artist / raw). Both are normalized here.
+        directly. Older/community providers return plugins.base.FingerprintResult
+        (confidence / matched_title / matched_artist / raw). Both are normalized
+        here.
         """
         if raw is None:
             return None
@@ -112,9 +112,9 @@ class FingerprintService:
 
         for provider in providers:
             try:
-                # SDK-contract providers take the FingerprintRequest; legacy
-                # providers (fnack.acoustid until its extraction PR) take the
-                # file path — the service adapts per provider.
+                # SDK-contract providers take the FingerprintRequest; older/
+                # community providers take the file path — the service adapts
+                # per provider.
                 if _is_sdk_fingerprinter(provider):
                     raw = pm.invoke_provider(
                         provider, "identify", request, timeout=_provider_timeout(provider, pm))
@@ -157,10 +157,9 @@ def _provider_timeout(provider, pm) -> float:
 
 def _is_sdk_fingerprinter(provider) -> bool:
     """True when the provider implements the FINAL SDK FingerprintProvider
-    contract (request-object based: identify(request)). Legacy providers
-    (fnack.acoustid until its own extraction PR) take the file path —
-    detected by signature, since runtime_checkable only checks member
-    presence, not the call shape."""
+    contract (request-object based: identify(request)). Older/community
+    providers take the file path — detected by signature, since
+    runtime_checkable only checks member presence, not the call shape."""
     import inspect
     method = getattr(provider, "identify", None)
     if method is None:

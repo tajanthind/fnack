@@ -103,13 +103,15 @@ def test_enrichment_has_no_hidden_fallback() -> None:
 
 def test_docs_describe_post_extraction_architecture() -> None:
     """Docs attribute MusicBrainz/iTunes to the plugins — never to the
-    deleted services."""
+    deleted services. The deep architecture doc names the plugins; the
+    README (user-facing, plugin-ID-free) must not present them as core."""
     for doc in [ROOT / "README.md", ROOT / "DEPLOY.md", ROOT / "docs" / "plugins" / "AUTHORING.md"]:
         text = doc.read_text(encoding="utf-8")
         assert "services/musicbrainz_service.py" not in text
         assert "services/itunes_service.py" not in text
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "fnack.itunes" in readme and "fnack.musicbrainz" in readme
+    arch = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    assert "fnack.itunes" in arch and "fnack.musicbrainz" in arch
+    assert "fnack.itunes" not in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":
