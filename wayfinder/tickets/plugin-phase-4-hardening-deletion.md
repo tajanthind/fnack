@@ -112,8 +112,11 @@ fnack-plugins synced + repackaged; wayfinder + map updated.
   core); wayfinder map + ticket mark Phase 4 complete; new
   tests/architecture/test_documentation_gate.py asserts current-state docs
   never name deleted services, core imports none, README lists all provider
-  plugins, obsolete model gone, wayfinder marks completion. Smoke + 18 arch
-  tests green.
+  plugins, obsolete model gone, wayfinder marks completion. Smoke + 19 arch
+  tests green. (Delivery note: PR #29 merged into its base branch
+  `phase-4/extract-deezer`, so main only got the merge commit — the
+  MB+iTunes extraction files are delivered to main by `fix/mb-itunes-to-main`
+  (PR #33). Merge #33 before the doc-gate PR #32.)
 
 ## Final state (Phase 4 complete)
 
