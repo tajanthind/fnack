@@ -110,8 +110,10 @@ The database, settings, and downloaded music are all persistent across restarts.
 
 ## 3. How Downloads Work (Zero Auth)
 
-1. **Discography sync** – fnack reads metadata from the public Deezer API
-   (artist search, albums, tracks, ISRC codes). No account needed.
+1. **Discography sync** – the `fnack.deezer-batch` plugin (artist.search /
+   artist.discography / artist.info / track.metadata) reads metadata from the
+   public Deezer API (artist search, albums, tracks, ISRC codes). No account
+   needed.
 2. **Spotify link resolution** – ISRC / title search via DuckDuckGo + Yandex
    (`ddgs`), plus an optional official Spotify API path *only if* you add
    `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` (free API credentials, not

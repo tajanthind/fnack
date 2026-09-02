@@ -14,6 +14,10 @@ Methods (each resolves a capability):
 - get_artist_discography(...)       -> artist.discography
 - get_track_metadata(...)           -> track.metadata
 - get_album_metadata(...)           -> album.metadata
+- get_artist_info(...)              -> artist.info
+- search_album(...)                 -> album.search
+- search_track(...)                 -> track.search
+- get_album_tracks(...)             -> album.tracks
 
 Policy (provider resolution per MASTER §Provider resolution):
 
@@ -29,7 +33,11 @@ from typing import Optional
 
 from fnack.plugin_api.capabilities import (
     ALBUM_METADATA,
+    ALBUM_SEARCH,
+    ALBUM_TRACKS,
     ARTIST_DISCOGRAPHY,
+    ARTIST_INFO,
+    TRACK_SEARCH,
     ARTIST_SEARCH,
     TRACK_METADATA,
     TRACK_RESOLVE,
@@ -151,6 +159,63 @@ class MetadataService:
             if d and d.get("albums"):
                 return d
         return {"artist_name": artist_name or "", "albums": []}
+
+    # -- artist.info --------------------------------------------------------
+
+    def get_artist_info(self, provider_artist_id: str) -> Optional[dict]:
+        """Basic artist details (name/image/etc.) by provider artist id.
+        First provider returning a non-empty dict wins. CapabilityUnavailable
+        when no artist.info provider is enabled."""
+        providers = self._providers_for(ARTIST_INFO, "get_artist_info")
+        for provider in providers:
+            try:
+                info = self._invoke(provider, "get_artist_info", provider_artist_id)
+            except Exception:
+                continue
+            if info:
+                return info
+        return None
+
+    # -- album.search / track.search / album.tracks (Lidarr-facing) ---------
+
+    def search_album(self, query: str, limit: int = 20) -> list[dict]:
+        """Live album search. First provider returning results wins.
+        CapabilityUnavailable when no album.search provider is enabled."""
+        providers = self._providers_for(ALBUM_SEARCH, "search_album")
+        for provider in providers:
+            try:
+                found = self._invoke(provider, "search_album", query, limit=limit) or []
+            except Exception:
+                continue
+            if found:
+                return found
+        return []
+
+    def search_track(self, query: str, limit: int = 20) -> list[dict]:
+        """Live track search. First provider returning results wins.
+        CapabilityUnavailable when no track.search provider is enabled."""
+        providers = self._providers_for(TRACK_SEARCH, "search_track")
+        for provider in providers:
+            try:
+                found = self._invoke(provider, "search_track", query, limit=limit) or []
+            except Exception:
+                continue
+            if found:
+                return found
+        return []
+
+    def get_album_tracks(self, provider_album_id: str) -> list[dict]:
+        """Tracks for an album. First provider returning results wins.
+        CapabilityUnavailable when no album.tracks provider is enabled."""
+        providers = self._providers_for(ALBUM_TRACKS, "get_album_tracks")
+        for provider in providers:
+            try:
+                tracks = self._invoke(provider, "get_album_tracks", provider_album_id) or []
+            except Exception:
+                continue
+            if tracks:
+                return tracks
+        return []
 
     # -- track.metadata -----------------------------------------------------
 

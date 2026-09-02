@@ -40,8 +40,8 @@ def _cached_search_artist(query: str, limit: int = 6) -> list:
     if hit and now - hit["ts"] < _SEARCH_TTL_SECONDS:
         return hit["results"]
     try:
-        # Phase 3: MetadataService (artist.search capability) — no direct
-        # services.deezer_service call.
+        # MetadataService (artist.search capability) — served by the
+        # fnack.deezer-batch plugin; core has no Deezer implementation.
         from services.metadata_service import MetadataService
         results = MetadataService().search_artist(query, limit=limit)
     except Exception as e:

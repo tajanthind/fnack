@@ -272,8 +272,8 @@ def api_search_artist():
     if not q or len(q) < 2:
         return jsonify([])
     try:
-        # Phase 3: application service (artist.search capability) — not a
-        # direct services.deezer_service call.
+        # Application service (artist.search capability) — served by the
+        # fnack.deezer-batch plugin; core has no Deezer implementation.
         from services.metadata_service import MetadataService
         results = MetadataService().search_artist(q, limit=8)
         return jsonify(results)
@@ -475,9 +475,9 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
         # Phase 3: MetadataService (artist.discography capability) owns the
         # provider chain — Deezer batch (p10) authoritative, then MusicBrainz
         # (p20, enrichment-only), Spotify (p30), iTunes (p40), first usable
-        # discography wins. No direct services.deezer_service call and no
-        # hidden fallback: if no artist.discography provider is enabled the
-        # service returns the empty shape (MASTER rule 3).
+        # discography wins. No hidden fallback: if no artist.discography
+        # provider is enabled the service returns the empty shape (MASTER
+        # rule 3).
         disco = None
         served_by = None
         try:
@@ -650,7 +650,10 @@ def api_add_artist():
         return jsonify({"message": f"Artist '{existing.name}' is already in your library.", "artist_id": existing.id}), 200
 
     try:
-        artist_info = get_artist_info(int(deezer_id))
+        # Phase 4: artist.info capability via MetadataService (the
+        # fnack.deezer-batch plugin serves it) — core has no Deezer import.
+        from services.metadata_service import MetadataService
+        artist_info = MetadataService().get_artist_info(str(deezer_id)) or {}
     except Exception as e:
         return jsonify({"error": f"Failed to reach Deezer: {e}"}), 500
 

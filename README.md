@@ -184,7 +184,7 @@ Access the web interface at `http://<server-ip>:4688`.
 
 - **Backend**: Python 3.11+, Flask, Flask-SocketIO, Gevent WSGI, SQLAlchemy (SQLite in WAL mode)
 - **Engines**: SpotiFLAC, yt-dlp, Mutagen, Watchdog, Chromium / Xvfb
-- **Metadata Sources**: Deezer API, iTunes Search API, Spotify Metadata, MusicBrainz
+- **Metadata Sources**: Deezer (fnack.deezer-batch), iTunes Search (fnack.itunes), Spotify URL resolution (fnack.spotify), MusicBrainz (fnack.musicbrainz) — all official plugins
 - **Frontend**: ES6 JavaScript, Bootstrap 5.3, FontAwesome 6, CSS Custom Properties
 
 ---
