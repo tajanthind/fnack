@@ -232,7 +232,10 @@ phase.
   independence-test transitional allowlist now EMPTY, and
   `tests/architecture/test_documentation_gate.py` greps current-state docs
   for stale provider-service references as a regression test.
-  **PHASE 4 COMPLETE** — Smoke + 18 architecture tests green.
+  **PHASE 4 COMPLETE** — Smoke + 19 architecture tests green.
+  (NOTE: PR #29 merged into its base branch — its MB+iTunes content is
+  delivered to main by fix/mb-itunes-to-main, PR #33; merge #33 before the
+  doc-gate PR #32.)
 
 ## Roadmap (execution carried into the map)
 
