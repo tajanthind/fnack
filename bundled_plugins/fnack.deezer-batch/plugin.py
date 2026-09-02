@@ -30,19 +30,44 @@ class DeezerBatchProvider(MetadataProviderPlugin):
         return deezer.search_artist(name, limit=10)
 
     def get_artist_info(self, provider_artist_id: str) -> dict:
-        return deezer.get_artist_info(int(provider_artist_id))
+        return self._deezer_id_lookup(provider_artist_id, deezer.get_artist_info)
 
     def get_artist_discography(self, provider_artist_id: str, **filters) -> dict:
         """Discography with the caller's filters (filter_remixes/...).
         Accepts **filters so MetadataService can pass them through (the
-        service inspects signatures and only forwards accepted kwargs)."""
-        return deezer.get_artist_discography(int(provider_artist_id), **filters)
+        service inspects signatures and only forwards accepted kwargs) —
+        but only the Deezer-specific filters are forwarded to the engine:
+        provider-neutral extras like `artist_name` (used by name-keyed
+        providers) are dropped here, never passed to the Deezer API."""
+        deezer_keys = ("filter_remixes", "filter_lofi", "filter_live",
+                       "filter_compilations", "include_albums",
+                       "include_singles", "include_compilations", "sleep_delay")
+        deezer_filters = {k: v for k, v in (filters or {}).items() if k in deezer_keys}
+        return self._deezer_id_lookup(
+            provider_artist_id,
+            lambda i: deezer.get_artist_discography(i, **deezer_filters))
 
     def get_album_info(self, provider_album_id: str) -> Optional[dict]:
-        return deezer.get_album_info(int(provider_album_id))
+        return self._deezer_id_lookup(provider_album_id, deezer.get_album_info)
 
     def get_track_info(self, provider_track_id: str) -> Optional[dict]:
-        return deezer.get_track_info(int(provider_track_id))
+        return self._deezer_id_lookup(provider_track_id, deezer.get_track_info)
+
+    @staticmethod
+    def _deezer_id_lookup(provider_id: str, lookup) -> Optional[dict]:
+        """Deezer ids are plain integers. A track/album whose metadata came
+        from another provider carries a prefixed id (e.g. 'itunes_12345'),
+        which Deezer cannot resolve — return None so the metadata chain moves
+        to the next provider.
+
+        Only the id CONVERSION is guarded: an API failure (e.g. Deezer quota
+        error code 4, which _get raises as ValueError) must propagate so the
+        caller sees a real provider error instead of a fake "not found"."""
+        try:
+            deezer_id = int(provider_id)
+        except (TypeError, ValueError):
+            return None
+        return lookup(deezer_id)
 
     def search_album(self, query: str, limit: int = 20) -> list[dict]:
         return deezer.search_album(query, limit=limit)
@@ -51,4 +76,7 @@ class DeezerBatchProvider(MetadataProviderPlugin):
         return deezer.search_track(query, limit=limit)
 
     def get_album_tracks(self, provider_album_id: str) -> list[dict]:
-        return deezer.get_album_tracks(int(provider_album_id))
+        try:
+            return deezer.get_album_tracks(int(provider_album_id))
+        except (TypeError, ValueError):
+            return []

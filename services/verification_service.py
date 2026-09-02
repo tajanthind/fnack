@@ -228,6 +228,22 @@ class VerificationService:
                 status="mismatch", score=0.0, reasons=reasons,
                 metadata_evidence=metadata, fingerprint_evidence=fingerprint)
 
+        # Metadata-only confirmation (legacy chain semantics — the pre-service
+        # verifier accepted on duration + embedded tags alone; the docstring
+        # promises "metadata and/or strong fingerprint evidence matches").
+        # Matching embedded tags PLUS a matching duration confirm the track
+        # without a fingerprint. A duration match ALONE is not enough (the
+        # audio could be a different song of the same length) — that stays
+        # "no confirming evidence" below.
+        tag_matches = [e for e in metadata
+                       if e.status == "match" and e.kind in ("tag_title", "tag_artist")]
+        duration_match = any(e.status == "match" and e.kind == "duration" for e in metadata)
+        if tag_matches and (duration_match or expected.duration is None):
+            reasons.append("metadata match (duration + tags) confirms the track")
+            return VerificationResult(
+                status="verified", score=1.0, reasons=reasons,
+                metadata_evidence=metadata, fingerprint_evidence=fingerprint)
+
         # Provider error with no other deciding evidence -> provider_error
         # (caller may retry or treat as uncertain; NEVER a mismatch).
         if errored and not metadata_match:

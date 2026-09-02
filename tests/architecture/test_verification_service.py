@@ -189,14 +189,51 @@ def test_fingerprint_normalizes_legacy_and_sdk_shapes() -> None:
 
 
 def test_verify_metadata_match_is_verified() -> None:
-    """Duration + tag evidence match -> verified."""
-    # (a real audio file would be needed for tag evidence; the service path is
-    # covered by fingerprint evidence below — here we assert the API shape and
-    # the no-fingerprint path.)
+    """Duration + tag evidence match -> verified WITHOUT a fingerprint (the
+    legacy chain semantics: matching embedded tags + matching duration
+    confirm the track; the queue must accept a well-tagged download)."""
     from services.verification_service import VerificationService
-    result = _verify(_track_ref())
-    assert isinstance(result.status, str)
-    assert result.status in ("verified", "mismatch", "uncertain", "provider_error")
+    from fnack.plugin_api.models import MetadataEvidence
+    svc = VerificationService(fingerprint_service=_FakeFingerprintService([]))
+    expected = _track_ref(duration=231.0)
+    result = svc._decide(expected, metadata=[
+        MetadataEvidence(kind="file", status="match"),
+        MetadataEvidence(kind="duration", status="match", expected=231.0, actual=231.2),
+        MetadataEvidence(kind="tag_title", status="match", expected="Pushkar", actual="Pushkar"),
+        MetadataEvidence(kind="tag_artist", status="match", expected="Dulla", actual="Dulla"),
+    ], fingerprint=[])
+    assert result.status == "verified", result.reasons
+    assert "no confirming evidence" not in result.reasons
+    assert result.score >= 1.0
+
+
+def test_verify_metadata_match_without_duration_check_is_verified() -> None:
+    """Tag match with duration checking disabled (expected duration None) ->
+    verified; the disabled-duration path must not reject a tagged file."""
+    from services.verification_service import VerificationService
+    from fnack.plugin_api.models import MetadataEvidence
+    svc = VerificationService(fingerprint_service=_FakeFingerprintService([]))
+    result = svc._decide(_track_ref(duration=None), metadata=[
+        MetadataEvidence(kind="duration", status="unverifiable", actual=231.2,
+                         detail="no expected duration"),
+        MetadataEvidence(kind="tag_title", status="match", expected="Pushkar", actual="Pushkar"),
+        MetadataEvidence(kind="tag_artist", status="match", expected="Dulla", actual="Dulla"),
+    ], fingerprint=[])
+    assert result.status == "verified", result.reasons
+
+
+def test_duration_match_alone_is_uncertain_not_verified() -> None:
+    """Duration match with NO tags is NOT enough to confirm identity — stays
+    uncertain (the yt-dlp fallback case: tagless YouTube audio)."""
+    from services.verification_service import VerificationService
+    from fnack.plugin_api.models import MetadataEvidence
+    svc = VerificationService(fingerprint_service=_FakeFingerprintService([]))
+    result = svc._decide(_track_ref(duration=231.0), metadata=[
+        MetadataEvidence(kind="file", status="match"),
+        MetadataEvidence(kind="duration", status="match", expected=231.0, actual=231.2),
+    ], fingerprint=[])
+    assert result.status == "uncertain", result.reasons
+    assert "no confirming evidence" in result.reasons
 
 
 def test_fingerprint_agreeing_is_verified_and_rescues_wrong_tags() -> None:
