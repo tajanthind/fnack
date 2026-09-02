@@ -29,7 +29,11 @@ TRACK_METADATA = "track.metadata"
 
 ARTIST_SEARCH = "artist.search"
 ARTIST_DISCOGRAPHY = "artist.discography"
+ARTIST_INFO = "artist.info"
 ALBUM_METADATA = "album.metadata"
+ALBUM_SEARCH = "album.search"
+TRACK_SEARCH = "track.search"
+ALBUM_TRACKS = "album.tracks"
 
 FINGERPRINT_IDENTIFY = "fingerprint.identify"
 
@@ -50,7 +54,11 @@ ALL_CAPABILITIES: FrozenSet[str] = frozenset({
     TRACK_METADATA,
     ARTIST_SEARCH,
     ARTIST_DISCOGRAPHY,
+    ARTIST_INFO,
     ALBUM_METADATA,
+    ALBUM_SEARCH,
+    TRACK_SEARCH,
+    ALBUM_TRACKS,
     FINGERPRINT_IDENTIFY,
     MEDIA_SCAN,
     MEDIA_HEALTH,
