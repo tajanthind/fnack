@@ -118,6 +118,19 @@ fnack-plugins synced + repackaged; wayfinder + map updated.
   MB+iTunes extraction files are delivered to main by `fix/mb-itunes-to-main`
   (PR #33). Merge #33 before the doc-gate PR #32.)
 
+- **Documentation pass (README) DONE** — user review: the doc gate proved
+  the README wasn't *architecturally wrong* but it wasn't *good* docs. The
+  README was rewritten to lead with the architecture (core → application
+  service → capability → provider registry → plugin, with the defining
+  rules: multi-capability plugins, multi-provider capabilities, per-
+  capability priority, disable-removes-capabilities, zero-providers valid,
+  official bundled, community replacement, provider-neutral verification).
+  Configuration split into Core vs Plugin tables (provider settings no
+  longer presented as core); the Subsonic (server.extension) vs Navidrome
+  (media.scan) distinction is explicit; stale implementation language
+  ("cached Deezer lookups", "Subsonic API Integration") removed. The doc
+  gate test gained structural assertions for these classes of issues.
+
 ## Final state (Phase 4 complete)
 
 - All six legacy provider services deleted: spotify, deezer, musicbrainz,

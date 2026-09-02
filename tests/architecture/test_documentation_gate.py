@@ -84,6 +84,71 @@ def test_providers_are_plugins_with_capabilities() -> None:
     assert "provider-free" in readme, "README must state core is provider-free"
 
 
+def test_readme_explains_plugin_model() -> None:
+    """The README must explain the capability/plugin model structurally (not
+    just not-name deleted services): the core→service→capability→provider
+    flow, per-capability priority, disabling/zero-provider semantics, and
+    community replacement."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    # The architecture section must show the resolution flow and the key rules.
+    for needle in [
+        "## Architecture",
+        "Core is provider-free",
+        "Provider registry",
+        "Multiple plugins can implement the same capability",
+        "Priority is per capability",
+        "Disabling a plugin removes its capabilities",
+        "Zero providers is a valid state",
+        "Community plugins can replace official providers",
+        "## Plugins",
+    ]:
+        assert needle in readme, f"README must explain: {needle!r}"
+    # The provider flow diagram: core → service → capability → provider.
+    assert "Application service" in readme and "Capability" in readme
+
+
+def test_readme_config_split_does_not_leak_provider_settings_as_core() -> None:
+    """Provider settings (spotiflac_quality/ytdlp_format/...) must be presented
+    as PLUGIN configuration, not as flat core settings."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "## Configuration" in readme
+    assert "### Core configuration" in readme
+    assert "### Plugin configuration" in readme
+    # Provider-owned keys must appear only under the plugin table / migration
+    # note, never as core settings.
+    core_section = readme.split("### Core configuration", 1)[1].split("### Plugin configuration", 1)[0]
+    for key in ["spotiflac_quality", "spotiflac_delay", "ytdlp_format",
+                "youtube_cookies_path", "youtube_source", "spotdl_source"]:
+        assert key not in core_section, \
+            f"provider setting {key!r} must not appear in the core config table"
+    # The migration note explains the legacy keys move into the plugin.
+    assert "migration fallback" in readme
+
+
+def test_readme_distinguishes_media_scan_from_subsonic() -> None:
+    """Navidrome (media.scan provider) and Subsonic (server.extension plugin)
+    are different concepts and must be presented as such."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "fnack.navidrome" in readme and "media.scan" in readme
+    assert "fnack.subsonic" in readme and "server.extension" in readme
+    # The media-server section must separate the two (a single line that
+    # collapses them — e.g. "Subsonic API Integration ... Navidrome" — is
+    # stale).
+    media_section = readme.split("### Media-server integration", 1)[1].split("---", 1)[0]
+    assert "Media-server scan" in media_section and "Subsonic/OpenSubsonic server" in media_section
+
+
+def test_readme_no_provider_implementation_leak() -> None:
+    """README must not present provider-internal implementation details as
+    core functionality (e.g. 'cached Deezer lookups' in a core feature)."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for phrase in [
+        "cached Deezer lookups",      # Deezer impl detail presented as core
+        "Subsonic API Integration",   # stale conflation of Subsonic/Navidrome
+    ]:
+        assert phrase not in readme, f"README must not present stale impl detail: {phrase!r}"
+
+
 def test_obsolete_core_db_model_removed() -> None:
     """The MusicBrainz provider cache is plugin-owned; the core DB model is
     gone."""
@@ -106,6 +171,10 @@ if __name__ == "__main__":
     test_current_docs_do_not_name_deleted_services()
     test_core_source_has_no_deleted_service_imports()
     test_providers_are_plugins_with_capabilities()
+    test_readme_explains_plugin_model()
+    test_readme_config_split_does_not_leak_provider_settings_as_core()
+    test_readme_distinguishes_media_scan_from_subsonic()
+    test_readme_no_provider_implementation_leak()
     test_obsolete_core_db_model_removed()
     test_wayfinder_map_marks_phase4_complete()
     print("test_documentation_gate: PASSED")
