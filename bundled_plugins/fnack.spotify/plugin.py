@@ -1,22 +1,33 @@
-"""Bundled first-party plugin: Spotify metadata/URL-resolution provider (priority 30).
+"""Bundled first-party plugin: Spotify track-URL resolution provider (priority 30).
 
-Wraps services/spotify_service.py resolve_spotify_url (ISRC-first, zero-auth)
-used by the download pipeline. It is NOT user-facing search (that's Deezer,
-core) — it's a pipeline resolver, so it's a plain metadata_provider plugin.
+AUTHORITATIVE implementation (Phase 4): the Spotify-specific logic — zero-auth
+ISRC-first URL resolution, title verification, album parsing, rate limiting,
+and the optional client-id/secret API path — lives in this plugin's
+`spotify.py` (moved from the deleted `services/spotify_service.py`). This
+module implements the `track.resolve` capability through the plugin boundary;
+core never imports a Spotify implementation.
+
+It is NOT user-facing search (that's the Deezer provider) — it is a pipeline
+resolver: MetadataService.resolve_track_url() resolves `track.resolve`
+providers in priority order and this plugin serves the Spotify URL.
 """
 
 from typing import Optional
 
 from plugins.base import MetadataProviderPlugin
-from services.spotify_service import resolve_spotify_url
+
+# Multi-file plugin (Phase 2): the manager puts this plugin's dir on sys.path,
+# so the sibling provider module imports by name.
+import spotify  # noqa: E402
 
 
 class SpotifyProvider(MetadataProviderPlugin):
     priority = 30
 
     def on_load(self) -> None:
-        # Phase 3 settings migration: plugin setting is authoritative; legacy
-        # globals are a one-time fallback migrated into the plugin store.
+        # Settings migration (Phase 3): plugin settings are authoritative;
+        # legacy globals are a one-time fallback migrated into the plugin
+        # store (removed with the legacy settings in the Phase 4 deletion).
         legacy_map = {
             "client_id": ("spotify_client_id", ""),
             "client_secret": ("spotify_client_secret", ""),
@@ -45,7 +56,7 @@ class SpotifyProvider(MetadataProviderPlugin):
     ) -> Optional[str]:
         client_id = self.context.settings.get("client_id") or None
         client_secret = self.context.settings.get("client_secret") or None
-        return resolve_spotify_url(
+        return spotify.resolve_spotify_url(
             song_name,
             artist_name,
             album_name=album_name,
