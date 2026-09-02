@@ -11,8 +11,9 @@ Enrichment-only by design:
   * Every failure is fail-soft: discography sync never blocks on MusicBrainz.
 
 Rate limiting: 1 request/second etiquette with a User-Agent containing
-contact info; caches found (7d) / not-found (30d) / error (1h) results in the
-`musicbrainz_cache` table.
+contact info; caches found (7d) / not-found (30d) / error (1h) results in
+plugin-owned in-memory module state (Phase 4: provider cache lives in the
+plugin, not in core DB models).
 """
 
 import json
@@ -24,7 +25,6 @@ from typing import Optional
 
 import requests
 
-from models import AppSetting, MusicBrainzCache, db
 
 logger = logging.getLogger("fnack.musicbrainz")
 
@@ -33,6 +33,11 @@ USER_AGENT = "fnack/0.2 (https://github.com/tajanthind/fnack)"
 MIN_INTERVAL = 1.0
 _last_request = 0.0
 _TTL = {"found": 7 * 24 * 3600, "notfound": 30 * 24 * 3600, "error": 3600}
+
+# Plugin-owned provider cache (Phase 4: provider state/cache lives in the
+# plugin, not in core DB models). In-memory with the same TTLs (7d found /
+# 30d negative / 1h error) + the 1 req/s pacing.
+_cache: dict[str, tuple[float, bool, object]] = {}  # key -> (ts, found, payload)
 
 
 def _norm(s) -> str:
@@ -80,37 +85,22 @@ def _mb_get(path: str, params: dict, _retry: bool = True) -> Optional[dict]:
 
 
 def _cache_get(query: str, kind: str, ttl_seconds: float):
-    import datetime
-    row = db.session.get(MusicBrainzCache, query)
-    if not row or row.kind != kind:
+    import time as _time
+    entry = _cache.get(query)
+    if not entry:
         return None
-    created = row.created_at
-    if created and created.tzinfo is None:
-        created = created.replace(tzinfo=datetime.timezone.utc)
-    age = (datetime.datetime.now(datetime.timezone.utc) - created).total_seconds()
-    if age > ttl_seconds:
+    ts, found, payload = entry
+    if _time.time() - ts > ttl_seconds:
+        _cache.pop(query, None)
         return None
-    if not row.found:
+    if not found:
         return False
-    try:
-        return json.loads(row.payload or "null")
-    except Exception:
-        return None
+    return payload
 
 
 def _cache_set(query: str, kind: str, found: bool, payload) -> None:
-    row = db.session.get(MusicBrainzCache, query)
-    if not row:
-        row = MusicBrainzCache(query=query, kind=kind, found=found, payload=json.dumps(payload) if payload is not None else None)
-        db.session.add(row)
-    else:
-        row.kind = kind
-        row.found = found
-        row.payload = json.dumps(payload) if payload is not None else None
-    try:
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
+    import time as _time
+    _cache[query] = (_time.time(), found, payload)
 
 
 def search_artist_cached(artist_name: str) -> Optional[dict]:

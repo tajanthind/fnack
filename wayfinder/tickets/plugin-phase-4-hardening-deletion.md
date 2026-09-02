@@ -1,6 +1,23 @@
 # Phase 4: Hardening, Tests, Isolation, and Final Deletion
 
+<<<<<<< HEAD
 wayfinder:phase-4
+=======
+- **Extraction 3 (MusicBrainz + iTunes) DONE — PR open**: 
+  `services/musicbrainz_service.py` (251 lines) -> bundled_plugins/fnack.musicbrainz/musicbrainz.py
+  (provider cache refactored to plugin-owned in-memory state — the legacy core
+  DB cache model is gone; plugin imports no core models); `services/itunes_service.py`
+  (311 lines) -> bundled_plugins/fnack.itunes/itunes.py; both plugins
+  authoritative (import own modules, serve artist.search/discography/
+  album.tracks + enrich). Sync/import enrichment routes through the plugin
+  chain with NO hidden fallback to services.musicbrainz_service. itunes
+  manifest declares album.tracks. independence allowlist shrank (app +
+  import musicbrainz entries removed). new
+  tests/architecture/test_musicbrainz_itunes_extraction.py. Smoke + 16 arch
+  tests green. NOTE: branch based on origin/phase-4/extract-deezer (PR #28
+  not yet merged); merge #28 then #29.
+## Progress
+>>>>>>> 18aaedc (refactor(plugin): extract MusicBrainz + iTunes into their providers (Phase 4, PR 3))
 
 ## What this covers (04-PHASE-4-HARDENING-TESTS-AND-DELETION.md)
 
