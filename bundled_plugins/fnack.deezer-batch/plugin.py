@@ -35,8 +35,17 @@ class DeezerBatchProvider(MetadataProviderPlugin):
     def get_artist_discography(self, provider_artist_id: str, **filters) -> dict:
         """Discography with the caller's filters (filter_remixes/...).
         Accepts **filters so MetadataService can pass them through (the
-        service inspects signatures and only forwards accepted kwargs)."""
-        return self._deezer_id_lookup(provider_artist_id, lambda i: deezer.get_artist_discography(i, **filters))
+        service inspects signatures and only forwards accepted kwargs) —
+        but only the Deezer-specific filters are forwarded to the engine:
+        provider-neutral extras like `artist_name` (used by name-keyed
+        providers) are dropped here, never passed to the Deezer API."""
+        deezer_keys = ("filter_remixes", "filter_lofi", "filter_live",
+                       "filter_compilations", "include_albums",
+                       "include_singles", "include_compilations", "sleep_delay")
+        deezer_filters = {k: v for k, v in (filters or {}).items() if k in deezer_keys}
+        return self._deezer_id_lookup(
+            provider_artist_id,
+            lambda i: deezer.get_artist_discography(i, **deezer_filters))
 
     def get_album_info(self, provider_album_id: str) -> Optional[dict]:
         return self._deezer_id_lookup(provider_album_id, deezer.get_album_info)
