@@ -26,6 +26,20 @@ _search_cache: dict[str, tuple[float, list[dict]]] = {}
 CACHE_TTL = 600  # 10 minutes
 
 
+def _normalize(s: str) -> str:
+    """Normalize a title/name for fuzzy comparison (identical helper to the
+    one shared with the iTunes provider pre-extraction; plugins are
+    standalone, so it lives here)."""
+    if not s:
+        return ""
+    # Strip (feat. ...), [feat. ...], (with ...), [with ...], (Deluxe...), etc.
+    s = re.sub(r"[\(\[\{]\s*(?:feat\.?|featuring|with|deluxe|remastered|explicit|clean)\b[^\)\]\}]*[\)\]\}]", "", s, flags=re.IGNORECASE)
+    # Strip trailing - Single, - EP, (Single), (EP), etc.
+    s = re.sub(r"\s*-\s*(Single|EP|Album|Compilation|Soundtrack)$", "", s, flags=re.IGNORECASE)
+    s = unicodedata.normalize("NFKD", s)
+    return re.sub(r"[^a-zA-Z0-9]+", "", s).lower()
+
+
 def _get(url: str, params: dict[str, Any] | None = None) -> dict:
     max_retries = 4
     for attempt in range(max_retries):
