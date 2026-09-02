@@ -183,8 +183,23 @@ Access the web interface at `http://<server-ip>:4688`.
 ## Architecture
 
 - **Backend**: Python 3.11+, Flask, Flask-SocketIO, Gevent WSGI, SQLAlchemy (SQLite in WAL mode)
-- **Engines**: SpotiFLAC, yt-dlp, Mutagen, Watchdog, Chromium / Xvfb
-- **Metadata Sources**: Deezer API, iTunes Search API, Spotify Metadata, MusicBrainz
+- **Core is provider-free**: fnack's queue orchestrates *application services*
+  (DownloadService, MetadataService, FingerprintService, VerificationService,
+  MediaServerService) that resolve capabilities through the plugin registry.
+  Core contains no provider implementations and no provider-ID branches.
+- **Providers are plugins**: downloads (SpotiFLAC via `fnack.spotiflac`,
+  yt-dlp via `fnack.ytdlp`), metadata (Deezer via `fnack.deezer-batch`,
+  MusicBrainz via `fnack.musicbrainz`, iTunes via `fnack.itunes`, Spotify URL
+  resolution via `fnack.spotify`), fingerprinting (`fnack.acoustid`), and
+  media-server integration (`fnack.navidrome`) all ship as official plugins
+  implementing capabilities (`download.track`, `artist.search`,
+  `track.resolve`, `fingerprint.identify`, `media.scan`, ...). Disabling a
+  plugin removes its capability; zero providers for a capability is a valid
+  state (`CapabilityUnavailable`).
+- **Verification is provider-neutral**: embedded tags, duration, and
+  fingerprint evidence (AcoustID today, future providers) are combined by
+  VerificationService into a normalized result — no provider-specific rules
+  in core.
 - **Frontend**: ES6 JavaScript, Bootstrap 5.3, FontAwesome 6, CSS Custom Properties
 
 ---
