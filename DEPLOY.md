@@ -110,18 +110,26 @@ The database, settings, and downloaded music are all persistent across restarts.
 
 ## 3. How Downloads Work (Zero Auth)
 
-1. **Discography sync** – fnack reads metadata from the public Deezer API
-   (artist search, albums, tracks, ISRC codes). No account needed.
-2. **Spotify link resolution** – ISRC / title search via DuckDuckGo + Yandex
-   (`ddgs`), plus an optional official Spotify API path *only if* you add
-   `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` (free API credentials, not
-   user accounts). Without them, zero-auth search is used.
-3. **SpotiFLAC (primary)** – downloads true lossless FLAC from Tidal / Qobuz /
-   Deezer / SoundCloud. No login. Rate-limited + retried automatically. Each
-   track is downloaded individually, with per-song yt-dlp fallback.
-4. **yt-dlp (fallback)** – extracts audio from YouTube / YouTube Music /
-   SoundCloud. No login. If YouTube enforces a bot-check, fnack automatically
-   retries with the Android player client before giving up.
+These steps are provided by fnack's official plugins, each implementing a
+capability the core queue resolves (disabling a plugin removes its
+capability; core has no provider implementation):
+
+1. **Discography sync** – the `fnack.deezer-batch` plugin (artist.search /
+   artist.discography / track.metadata) reads metadata from the public Deezer
+   API (artist search, albums, tracks, ISRC codes). No account needed.
+2. **Spotify link resolution** – the `fnack.spotify` plugin (track.resolve)
+   does ISRC / title search via DuckDuckGo + Yandex (`ddgs`), plus an
+   optional official Spotify API path *only if* you set the plugin's
+   `client_id` / `client_secret` (free API credentials, not user accounts).
+   Without them, zero-auth search is used.
+3. **SpotiFLAC (primary)** – the `fnack.spotiflac` plugin (download.track)
+   downloads true lossless FLAC from Tidal / Qobuz / Deezer / SoundCloud. No
+   login. Rate-limited + retried automatically. Each track is downloaded
+   individually, with per-song yt-dlp fallback via `fnack.ytdlp`.
+4. **yt-dlp (fallback)** – the `fnack.ytdlp` plugin (download.track) extracts
+   audio from YouTube / YouTube Music / SoundCloud. No login. If YouTube
+   enforces a bot-check, fnack automatically retries with the Android player
+   client before giving up.
 
 Every downloaded file is **verified before it is accepted into the library**:
   1. **Artist-aware source resolution** — every resolved Spotify URL is checked

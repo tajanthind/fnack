@@ -131,7 +131,10 @@ def test_official_bundle_capability_registration() -> None:
         import flask  # noqa: F401
         import flask_sqlalchemy  # noqa: F401
         import yt_dlp  # noqa: F401
-        import services.spotify_service  # noqa: F401
+        # The spotify provider implementation now lives in the plugin (it
+        # needs requests + its search deps); probe it directly.
+        sys.path.insert(0, str(ROOT / "bundled_plugins" / "fnack.spotify"))
+        import spotify as _spotify_plugin_mod  # noqa: F401
     except ImportError as exc:
         print(f"SKIPPED test_official_bundle_capability_registration "
               f"(runtime deps unavailable here: {exc})")

@@ -750,11 +750,11 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         # Step 1: Resolve Spotify link (ISRC-first) if any download provider is
         # enabled (Phase 2/3: no per-provider gate — a disabled plugin simply
         # isn't a download.track provider). Routed through MetadataService
-        # (track.resolve capability, e.g. the fnack.spotify plugin) so the
-        # resolution logic lives behind the plugin boundary; no direct
-        # services.spotify_service call and no hidden fallback — if no
-        # track.resolve provider is enabled the URL stays None and the chain
-        # proceeds without a Spotify link (spotiflac can_handle gates on it).
+        # (track.resolve capability — the fnack.spotify plugin serves it) so
+        # the resolution logic lives behind the plugin boundary; no direct
+        # provider-service call and no hidden fallback — if no track.resolve
+        # provider is enabled the URL stays None and the chain proceeds
+        # without a Spotify link (spotiflac can_handle gates on it).
         spotify_url = None
         if not verified_file and job_id not in cancel_requested_jobs:
             from plugins.manager import plugin_manager as _pm0

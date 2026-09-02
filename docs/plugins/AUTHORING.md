@@ -319,9 +319,11 @@ per capability (no hidden fallback). `get_artist_discography` forwards
 filter kwargs only to providers that accept them (signature inspection), so
 Deezer's filter_remixes/... still apply through the chain. app.py /
 import_service / queue_service call the service instead of importing
-deezer/spotify services; the fnack.spotify plugin migrates legacy
-spotify_client_id/secret in `on_load`, and the fnack.deezer-batch plugin now
-exposes `get_album_info` (declares album.metadata) and accepts **filters.
+deezer/spotify services. The fnack.spotify plugin (AUTHORITATIVE since
+Phase 4) owns Spotify URL resolution — its implementation lives in the plugin
+(`spotify.py`); core has no Spotify implementation. The fnack.deezer-batch
+plugin now exposes `get_album_info` (declares album.metadata) and accepts
+**filters.
 **Phase 3, Step 3: FingerprintService + VerificationService.** The brief's
 verification layer is capability-based and provider-neutral.
 `services/fingerprint_service.py` resolves `fingerprint.identify` providers
