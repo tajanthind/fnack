@@ -214,6 +214,20 @@ class PluginRegistry:
         return out
 
     def _download(self, url: str) -> bytes:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
+        """Fetch a plugin archive, converting HTTP/network failures into a
+        clear RegistryError (surfaced to the user as a 400 message, not a
+        generic 500). A 404 here usually means the repository's release
+        assets have not been published yet."""
+        try:
+            resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else "?"
+            raise RegistryError(
+                f"download failed (HTTP {status}) for {url} — the plugin's "
+                f"release may not be published yet; refresh the repository and "
+                f"try again"
+            ) from exc
+        except requests.RequestException as exc:
+            raise RegistryError(f"network error downloading {url}: {exc}") from exc
         return resp.content
