@@ -4,42 +4,34 @@ wayfinder:phase-4
 
 ## What this covers (04-PHASE-4-HARDENING-TESTS-AND-DELETION.md)
 
-The six remaining provider extractions (the official plugins are still
-wrappers over legacy core services) + hardening/deletion + a final
-documentation gate. Per the user directive, Phase 4 = **six extraction PRs +
-one final documentation/architecture cleanup PR** (docs belong in each
-extraction PR where natural).
+The six provider extractions (official plugins were wrappers over legacy core
+services) + hardening/deletion + a final documentation gate. Per the user
+directive, Phase 4 = **six extraction PRs + one final documentation/
+architecture cleanup PR** (docs belong in each extraction PR where natural).
 
 ## Extraction order (each = one branch+PR, never merged by me)
 
-1. **fnack.spotify** — move `services/spotify_service.py` impl into
-   `bundled_plugins/fnack.spotify/spotify.py`; plugin authoritative;
-   delete `services/spotify_service.py`; remove legacy
-   spotify_client_id/secret settings surface (app.py) — plugin owns them.
+1. **fnack.spotify** — move `services/spotify_service.py` impl into the
+   plugin; delete the legacy service; remove legacy spotify settings surface.
 2. **fnack.deezer-batch** — move `services/deezer_service.py` impl into the
-   plugin; delete the legacy service; migrate app.py get_artist_info
-   (onboarding) + plugins/context.py facade + queue manual-path Deezer URL
-   handling to the capability/metadata service.
-3. **fnack.musicbrainz + fnack.itunes** — move `services/musicbrainz_service.py`
-   + `services/itunes_service.py` impls into the plugins; delete both legacy
-   services; migrate enrich_albums callers (app.py sync, import_service).
+   plugin; delete the legacy service; add artist.info/album.search/
+   track.search/album.tracks capabilities; migrate app/context/script callers.
+3. **fnack.musicbrainz + fnack.itunes** — move both impls into the plugins;
+   delete both legacy services; provider cache plugin-owned (no core models);
+   no hidden enrichment fallback.
 4. **fnack.acoustid** — move `services/acoustid_service.py` impl into the
-   plugin; plugin exposes SDK `FingerprintProvider.identify(request) ->
-   FingerprintEvidence`; delete legacy service; migrate app.py manual
-   identify route + plugins/context.py facade to FingerprintService.
+   plugin; api_key plugin-owned; delete the legacy service; migrate app
+   manual-identify + context facade.
 5. **fnack.navidrome** — move `services/navidrome_service.py` impl into the
-   plugin; delete legacy service; migrate run_auto_split_repair
-   (library task) + tag_normalization_service.py split-repair scan to the
-   capability.
+   plugin; config plugin-owned; delete the legacy service; migrate
+   run_auto_split_repair + scripts.
 6. **Legacy settings deletion** — after each provider is proven migrated:
-   remove legacy AppSetting reads/UI (spotiflac_quality/ytdlp_format/
-   youtube_cookies_path/acoustid_api_key/navidrome_*/...); make plugin
-   settings authoritative.
+   remove legacy AppSetting reads/UI; plugin settings authoritative.
 7. **Final documentation gate** — audit the whole repo for stale
    provider-service references; verify README/DEPLOY/plugin docs/capability
    docs/wayfinder/architecture docs describe the post-extraction plugin model
-   (never "deprecated"); add a doc-reference grep as a regression test where
-   practical.
+   (never "deprecated"); add a doc-reference grep as a regression test;
+   remove obsolete migration artifacts (e.g. the core MusicBrainzCache model).
 
 ## Documentation rule (user directive)
 
@@ -64,3 +56,76 @@ the extracted plugin.
 one branch+PR per step; PR only (never merge/tag/bump version.py); smoke +
 architecture tests green; live-boot verify; docs updated per the rule above;
 fnack-plugins synced + repackaged; wayfinder + map updated.
+
+## Progress
+
+- **Extraction 1 (Spotify) DONE — PR #27**: `services/spotify_service.py`
+  (573 lines) moved verbatim to `bundled_plugins/fnack.spotify/spotify.py`;
+  plugin authoritative, serves track.resolve, owns client_id/secret settings
+  (legacy AppSetting surface removed from app.py); docs updated to
+  post-extraction architecture; test_plugin_boundary probe now imports the
+  plugin module; new tests/architecture/test_spotify_extraction.py.
+  fnack-plugins synced (883b981). Smoke + 14 arch tests green.
+- **Extraction 2 (Deezer) DONE — PR #28**: `services/deezer_service.py`
+  (455 lines) moved verbatim to `bundled_plugins/fnack.deezer-batch/deezer.py`;
+  plugin authoritative, serves artist.search/artist.discography/artist.info/
+  track.metadata/album.metadata/album.search/track.search/album.tracks (new
+  SDK capabilities ARTIST_INFO/ALBUM_SEARCH/TRACK_SEARCH/ALBUM_TRACKS);
+  MetadataService gained get_artist_info/search_album/search_track/
+  get_album_tracks; app.py api_add_artist routes via MetadataService (fixes a
+  latent NameError from Phase 3); plugins/context.py facade +
+  scripts/reverify_library.py migrated; itunes fallback inside deezer.py lazy
+  + guarded. new tests/architecture/test_deezer_extraction.py. Smoke + 15
+  arch tests green.
+- **Extraction 3 (MusicBrainz + iTunes) DONE — PR #29**:
+  `services/musicbrainz_service.py` (251 lines) -> bundled_plugins/fnack.musicbrainz/musicbrainz.py
+  (provider cache refactored to plugin-owned in-memory state — plugin imports
+  no core models); `services/itunes_service.py` (311 lines) ->
+  bundled_plugins/fnack.itunes/itunes.py; both plugins authoritative; sync/
+  import enrichment routes through the plugin chain with NO hidden fallback;
+  itunes manifest declares album.tracks; new
+  tests/architecture/test_musicbrainz_itunes_extraction.py. Smoke + 16 arch
+  tests green.
+- **Extraction 4 (AcoustID) DONE — PR #30**: `services/acoustid_service.py`
+  (261 lines) -> bundled_plugins/fnack.acoustid/acoustid.py; api_key
+  refactored to PLUGIN-OWNED (injected via set_api_key(), no core models/DB);
+  plugin authoritative, serves fingerprint.identify, exposes
+  identify_candidates/verify_download/last_lookup_flags; app.py manual-
+  identify route resolves the plugin via the fingerprint.identify capability;
+  plugins/context.py verify_download_acoustid resolves through the plugin;
+  fnack.ytdlp fallback no longer references acoustid_service. new
+  tests/architecture/test_acoustid_extraction.py. Smoke + 16 arch tests green.
+- **Extraction 5 (Navidrome) DONE — PR #31**: `services/navidrome_service.py`
+  (280 lines) -> bundled_plugins/fnack.navidrome/navidrome.py (config
+  refactored to PLUGIN-OWNED injection — trigger_navidrome_scan(config) /
+  run_auto_split_repair(config); no core AppSetting reads); plugin
+  authoritative, serves media.scan/health/connection_test, exposes
+  run_split_repair; app.py fix-splits route + run_maintenance resolve through
+  the plugin; fix_navidrome_splits imports the plugin module; tag_normalization
+  triggers scan via the plugin. new tests/architecture/test_navidrome_extraction.py.
+  Smoke + 17 arch tests green.
+- **Extraction 6 (Documentation gate) DONE — PR open**: the obsolete core
+  `MusicBrainzCache` DB model removed (provider cache is plugin-owned);
+  README Architecture section restored to post-extraction form (core
+  provider-free, providers = plugins + capabilities); independence-test
+  transitional allowlist now EMPTY (no provider-service imports remain in
+  core); wayfinder map + ticket mark Phase 4 complete; new
+  tests/architecture/test_documentation_gate.py asserts current-state docs
+  never name deleted services, core imports none, README lists all provider
+  plugins, obsolete model gone, wayfinder marks completion. Smoke + 19 arch
+  tests green. (Delivery note: PR #29 merged into its base branch
+  `phase-4/extract-deezer`, so main only got the merge commit — the
+  MB+iTunes extraction files are delivered to main by `fix/mb-itunes-to-main`
+  (PR #33). Merge #33 before the doc-gate PR #32.)
+
+## Final state (Phase 4 complete)
+
+- All six legacy provider services deleted: spotify, deezer, musicbrainz,
+  itunes, acoustid, navidrome.
+- Official plugins are AUTHORITATIVE implementations (impl + settings + state
+  + cache in the plugin); core has zero provider imports and zero
+  provider-ID branches (verified by architecture tests).
+- No hidden provider fallbacks; zero providers for a capability is a valid
+  state (CapabilityUnavailable).
+- Documentation (README, DEPLOY, AUTHORING, wayfinder) describes the
+  post-extraction plugin model.

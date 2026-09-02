@@ -133,26 +133,11 @@ FORBIDDEN_PROVIDER_MODULES = {
     "services.itunes_service",
 }
 
-# Transitional: plugin -> legacy-service adapters (MASTER rule 4) and the
-# confirmed interactive-search split (HARNESS §2 keeps /api/search-artist
-# core, calling the bundled Deezer provider directly). Each entry maps
-# file -> {module: reason}. Later phases delete these entries.
-TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {
-    "app.py": {
-        "services.navidrome_service": "split-repair library task run_auto_split_repair (no capability yet; Phase 10 removes)",
-        "services.musicbrainz_service": "discography enrichment helper called from sync (Phase 7 removes)",
-        "services.acoustid_service": "identify/last-lookup helpers on verify route (Phase 9 removes)",
-    },
-    "import_service.py": {
-        "services.musicbrainz_service": "batch enrichment via metadata chain (Phase 7 removes)",
-    },
-    "queue_service.py": {
-        "services.acoustid_service": "fingerprint fallback (Phase 9 removes)",
-    },
-    "tag_normalization_service.py": {
-        "services.navidrome_service": "split-repair scan helper (Phase 10 removes)",
-    },
-}
+# Transitional: REMOVED in Phase 4 — all six providers are extracted into
+# their plugins (spotify, deezer, musicbrainz, itunes, acoustid, navidrome).
+# Core imports no provider services; a new provider import anywhere in core
+# is forbidden.
+TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {}
 
 IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+(services\.\w+)", re.MULTILINE)
 

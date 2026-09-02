@@ -159,13 +159,3 @@ class AppSetting(db.Model):
     value = db.Column(db.String(256), nullable=False)
 
 
-class MusicBrainzCache(db.Model):
-    """Throttled cache of MusicBrainz lookups (respects the 1 req/s etiquette)."""
-
-    __tablename__ = "musicbrainz_cache"
-
-    query = db.Column(db.String(256), primary_key=True)   # normalized lookup key
-    kind = db.Column(db.String(16), nullable=False)        # artist | album
-    found = db.Column(db.Boolean, nullable=False)          # found vs not-found
-    payload = db.Column(db.Text, nullable=True)            # JSON result
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))

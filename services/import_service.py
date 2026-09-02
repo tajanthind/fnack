@@ -293,22 +293,18 @@ def import_artist_folder(
 
     # MusicBrainz enrichment (additive only, fail-soft, regional negative cache)
     try:
-        enriched = False
+        # Phase 4: enrichment via the fnack.musicbrainz plugin (owns pacing +
+        # cache). No hidden fallback: skip when no enrich provider is enabled.
         from plugins.manager import plugin_manager as _pm2
         if _pm2 is not None:
             for provider in _pm2.get_metadata_providers():
-                enrich_fn = getattr(provider, "enrich", None)
-                if not enrich_fn:
+                if not getattr(provider, "enrich", None):
                     continue
                 # Phase 1.1 §3: provider invocation via the central executor.
                 _pm2.invoke_provider(provider, "enrich",
                                   disco.get("artist_name") or folder_name,
                                   disco.get("albums") or [])
-                enriched = True
                 break
-        if not enriched:
-            from services.musicbrainz_service import enrich_albums
-            enrich_albums(disco.get("artist_name") or folder_name, disco.get("albums") or [])
     except Exception:
         logger.debug("[MB] enrichment skipped", exc_info=True)
 
