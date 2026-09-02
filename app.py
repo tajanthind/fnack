@@ -272,8 +272,8 @@ def api_search_artist():
     if not q or len(q) < 2:
         return jsonify([])
     try:
-        # Phase 3: application service (artist.search capability) — not a
-        # direct services.deezer_service call.
+        # Application service (artist.search capability) — served by the
+        # fnack.deezer-batch plugin; core has no Deezer implementation.
         from services.metadata_service import MetadataService
         results = MetadataService().search_artist(q, limit=8)
         return jsonify(results)
@@ -475,9 +475,9 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
         # Phase 3: MetadataService (artist.discography capability) owns the
         # provider chain — Deezer batch (p10) authoritative, then MusicBrainz
         # (p20, enrichment-only), Spotify (p30), iTunes (p40), first usable
-        # discography wins. No direct services.deezer_service call and no
-        # hidden fallback: if no artist.discography provider is enabled the
-        # service returns the empty shape (MASTER rule 3).
+        # discography wins. No hidden fallback: if no artist.discography
+        # provider is enabled the service returns the empty shape (MASTER
+        # rule 3).
         disco = None
         served_by = None
         try:
@@ -650,7 +650,10 @@ def api_add_artist():
         return jsonify({"message": f"Artist '{existing.name}' is already in your library.", "artist_id": existing.id}), 200
 
     try:
-        artist_info = get_artist_info(int(deezer_id))
+        # Phase 4: artist.info capability via MetadataService (the
+        # fnack.deezer-batch plugin serves it) — core has no Deezer import.
+        from services.metadata_service import MetadataService
+        artist_info = MetadataService().get_artist_info(str(deezer_id)) or {}
     except Exception as e:
         return jsonify({"error": f"Failed to reach Deezer: {e}"}), 500
 
@@ -1129,7 +1132,6 @@ def api_track_identify(track_id):
     With a 'candidate' body, applies that candidate (retags the file with the
     matched identity and clears any caution flag) — the auto-apply path."""
     import json as _json
-    from services.acoustid_service import is_enabled, identify
     from services.queue_service import _tag_audio_file
 
     data = request.get_json(silent=True) or {}
@@ -1177,17 +1179,28 @@ def api_track_identify(track_id):
             socketio.emit("artist_updated", {"artist_id": t.artist_id})
             return jsonify({"message": f"Applied: '{matched_title}' by {matched_artist or '?'} (re-tagged).", "applied": True})
 
-    if not is_enabled():
+    # Phase 4: the AcoustID provider is the fnack.acoustid plugin (owns the
+    # api_key + implementation); resolve it via the fingerprint.identify
+    # capability through the manager boundary — no core acoustid import.
+    from plugins.manager import plugin_manager as _pm_ac
+    from fnack.plugin_api.capabilities import FINGERPRINT_IDENTIFY
+    ac = None
+    if _pm_ac is not None and _pm_ac.has_capability(FINGERPRINT_IDENTIFY):
+        for h in _pm_ac.capability_registry.providers_for(FINGERPRINT_IDENTIFY):
+            if hasattr(h.provider, "identify_candidates"):
+                ac = h.provider
+                break
+    if ac is None or not ac.is_enabled():
         return jsonify({"error": "AcoustID is not configured (no api key). Add one in Settings to enable fingerprinting."}), 400
 
     try:
-        candidates = identify(t.local_path)
+        candidates = ac.identify_candidates(t.local_path)
     except Exception as e:
         logger.exception("[ACOUSTID] Identify failed")
         return jsonify({"error": f"Fingerprint lookup failed: {e}"}), 500
     if not candidates:
-        from services.acoustid_service import _last_lookup_had_results, _last_lookup_missing_metadata
-        if _last_lookup_missing_metadata:
+        flags = ac.last_lookup_flags()
+        if flags.get("missing_metadata"):
             return jsonify({
                 "candidates": [],
                 "message": "AcoustID matched the song (fingerprint found) but that cluster has no "

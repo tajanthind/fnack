@@ -9,12 +9,6 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from services.itunes_service import (
-    _normalize,
-    get_itunes_album_tracks,
-    get_itunes_artist_albums,
-)
-
 logger = logging.getLogger("fnack.deezer")
 
 DEEZER_API = "https://api.deezer.com"
@@ -284,11 +278,16 @@ def get_artist_discography(
             "track_count": len(tracks),
         })
 
-    # Complement with iTunes discography for releases missing on Deezer (e.g. Enigma)
+    # Complement with iTunes discography for releases missing on Deezer (e.g.
+    # Enigma). The iTunes implementation lives in the fnack.itunes plugin
+    # (Phase 4 extraction); the import is lazy + guarded so this provider
+    # works standalone and the complementary sync degrades gracefully when
+    # the itunes plugin is not installed.
     try:
-        album_by_norm: dict[str, dict] = {_normalize(alb["title"]): alb for alb in filtered_albums if alb.get("title")}
+        import itunes as _itunes  # sibling plugin module (multi-file import)
+        album_by_norm: dict[str, dict] = {_itunes._normalize(alb["title"]): alb for alb in filtered_albums if alb.get("title")}
         existing_titles = {alb["title"] for alb in filtered_albums}
-        itunes_albums = get_itunes_artist_albums(
+        itunes_albums = _itunes.get_itunes_artist_albums(
             artist_name=artist_name,
             filter_remixes=filter_remixes,
             filter_lofi=filter_lofi,
@@ -303,7 +302,7 @@ def get_artist_discography(
             norm_title = _normalize(ia["title"])
             existing_alb = album_by_norm.get(norm_title)
             if existing_alb is None:
-                i_tracks = get_itunes_album_tracks(ia["itunes_id"])
+                i_tracks = _itunes.get_itunes_album_tracks(ia["itunes_id"])
                 if not i_tracks:
                     continue
                 new_alb = {
@@ -320,7 +319,7 @@ def get_artist_discography(
                 logger.info("[DISCOGRAPHY] Added missing release from iTunes: '%s' (%s, %d tracks)", ia["title"], ia["year"], len(i_tracks))
             elif len(existing_alb.get("tracks", [])) <= 1 and ia.get("track_count", 0) > len(existing_alb.get("tracks", [])):
                 # Upgrade partial/sample release with full tracklist from iTunes
-                i_tracks = get_itunes_album_tracks(ia["itunes_id"])
+                i_tracks = _itunes.get_itunes_album_tracks(ia["itunes_id"])
                 if len(i_tracks) > len(existing_alb.get("tracks", [])):
                     existing_alb["tracks"] = i_tracks
                     existing_alb["track_count"] = len(i_tracks)

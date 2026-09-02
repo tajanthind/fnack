@@ -608,8 +608,8 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         flagged_caution = None  # set when AcoustID flags a kept-but-different file
 
         # Auto-resolve ISRC and genre from a metadata provider when missing
-        # (Phase 3: through MetadataService, capability-based — no direct
-        # services.deezer_service import).
+        # (through MetadataService, capability-based — track.metadata served
+        # by the fnack.deezer-batch plugin).
         track_genre = track.genre or None
         if (not isrc or not track_genre) and track_deezer_id:
             try:

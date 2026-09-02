@@ -24,7 +24,6 @@ sys.path.insert(0, os.path.join(root_dir, "services"))
 
 from flask import Flask  # noqa: E402
 from models import Album, AppSetting, Track, db  # noqa: E402
-from services.deezer_service import get_track_info  # noqa: E402
 from verifier_service import DEFAULT_DURATION_DELTA_SECONDS  # noqa: E402
 
 DB_URI = os.environ.get("SQLALCHEMY_DATABASE_URI", "sqlite:////config/fnack.db")
@@ -62,7 +61,8 @@ def main() -> int:
             official = None
             if t.deezer_id and str(t.deezer_id).isdigit():
                 try:
-                    info = get_track_info(int(t.deezer_id))
+                    from services.metadata_service import MetadataService
+                    info = MetadataService().get_track_metadata(str(t.deezer_id)) or {}
                     official = info.get("duration")
                 except Exception:
                     official = None

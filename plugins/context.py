@@ -131,25 +131,17 @@ class LibraryContext:
         return key
 
     def search_albums(self, query: str, limit: int = 10) -> list[dict]:
-        """Live album search (deezer, core-direct). Same underlying function
-        the interactive search endpoint uses — the confirmed search split
-        keeps interactive/search paths core, calling the bundled provider
-        directly rather than through the plugin chain.
-
-        NOTE (Phase 1.1 review §3): this is a KNOWN Deezer-hardwired boundary
-        inside the supposedly-generic PluginContext (it imports
-        services.deezer_service). It exists so the Lidarr plugin can search
-        without reaching into services. Phase 2 removes it: the Lidarr plugin
-        will call the metadata capability instead, and PluginContext stays
-        provider-generic. Do NOT "solve" this by adding more generic-looking
-        Deezer methods here."""
-        from services.deezer_service import search_album
-        return search_album(query, limit=limit)
+        """Live album search (Phase 4: via MetadataService — album.search
+        capability, served by the fnack.deezer-batch plugin). Provider-
+        generic: the plugin boundary owns the implementation."""
+        from services.metadata_service import MetadataService
+        return MetadataService().search_album(query, limit=limit)
 
     def search_tracks(self, query: str, limit: int = 10) -> list[dict]:
-        """Live track search (deezer, core-direct — see search_albums)."""
-        from services.deezer_service import search_track
-        return search_track(query, limit=limit)
+        """Live track search (Phase 4: via MetadataService — track.search
+        capability, served by the fnack.deezer-batch plugin)."""
+        from services.metadata_service import MetadataService
+        return MetadataService().search_track(query, limit=limit)
 
     def get_album_info(self, album_id: int) -> dict:
         """Album metadata (Phase 3: via MetadataService — album.metadata
@@ -170,13 +162,14 @@ class LibraryContext:
         DownloadJob per track so the queue worker downloads them like any
         other track. Returns the created/queued job ids (moved verbatim from
         the former `services/lidarr_service.py::_create_lidarr_grab_job`)."""
-        from services.deezer_service import get_album_tracks, get_album_info, get_track_info
+        from services.metadata_service import MetadataService
         from models import Album, Artist, DownloadJob, Track, db
 
+        _md = MetadataService()
         job_ids: list = []
 
         if item_type == "track":
-            info = get_track_info(item_id)
+            info = _md.get_track_metadata(str(item_id)) or {}
             artist_name = info.get("artist_name") or "Unknown Artist"
             track_title = info.get("title") or "Unknown Track"
             album_title = info.get("album_title") or track_title
@@ -192,14 +185,14 @@ class LibraryContext:
                 "duration": float(info.get("duration") or 0),
             }]
         else:
-            info = get_album_info(item_id)
+            info = _md.get_album_metadata(str(item_id)) or {}
             artist_name = info.get("artist_name") or "Unknown Artist"
             album_title = info.get("title") or "Unknown Album"
             album_deezer_id = info.get("id") or item_id
             cover_url = info.get("cover_url")
             year = info.get("year")
             record_type = info.get("record_type") or "album"
-            tracks_to_queue = get_album_tracks(item_id)
+            tracks_to_queue = _md.get_album_tracks(str(item_id))
 
         if not tracks_to_queue:
             log.warning("[LIDARR] Grab for %s %d returned no tracks", item_type, item_id)
@@ -352,13 +345,21 @@ class LibraryContext:
         expected_duration: Optional[float] = None,
     ) -> dict:
         """Optional AcoustID rescue for wrong-tags-but-right-audio files
-        (Phase 2, PR 4): exposed generically so plugins don't import
-        services.acoustid_service. Returns a dict with status/match info;
-        fail-soft (empty dict) when AcoustID is disabled or unavailable."""
+        (Phase 4): resolved through the fnack.acoustid plugin's
+        fingerprint.identify capability via the manager boundary — plugins
+        never import a core AcoustID implementation. Returns a dict with
+        status/match info; fail-soft when AcoustID is disabled/unavailable."""
         try:
-            from services.acoustid_service import verify_download
-            return verify_download(file_path, expected_artist, expected_title,
-                                   expected_duration if expected_duration else None)
+            from plugins.manager import plugin_manager as _pm
+            from fnack.plugin_api.capabilities import FINGERPRINT_IDENTIFY
+            if _pm is None or not _pm.has_capability(FINGERPRINT_IDENTIFY):
+                return {"status": "unsupported"}
+            for h in _pm.capability_registry.providers_for(FINGERPRINT_IDENTIFY):
+                if hasattr(h.provider, "verify_download"):
+                    return h.provider.verify_download(
+                        file_path, expected_artist, expected_title,
+                        expected_duration if expected_duration else None)
+            return {"status": "unsupported"}
         except Exception:
             return {"status": "unsupported"}
 

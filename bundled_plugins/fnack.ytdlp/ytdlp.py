@@ -393,15 +393,12 @@ def download_track_ytdlp(
         _log = _logging.getLogger("fnack.ytdlp")
         try:
             from services.verifier_service import verify_audio_file as _v
-            from services.acoustid_service import verify_download as _vd
         except Exception:
-            _v, _vd = None, None
+            _v = None
 
         if verify_audio_file is None and _v is not None:
             verify_audio_file = _v
-        if verify_download is None and _vd is not None:
-            verify_download = _vd
-        if verify_audio_file is None or verify_download is None:
+        if verify_audio_file is None:
             _log.debug("[YT-DLP] verifier helpers unavailable (standalone context)")
     output_dir.mkdir(parents=True, exist_ok=True)
     target = query_or_url.strip()
