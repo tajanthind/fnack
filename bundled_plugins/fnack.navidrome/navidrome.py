@@ -148,18 +148,16 @@ def consolidate_split_albums(db_path) -> dict:
     return stats
 
 
-def run_auto_split_repair(app) -> dict:
+def run_auto_split_repair(config: Optional[dict] = None, app=None) -> dict:
     """Auto-fix Navidrome album splits at boot / periodically.
 
-    Reads the `navidrome_db_path` setting (or NAVIDROME_DB_PATH env). When set,
-    consolidates split album rows (with a snapshot backup) and triggers a
-    Navidrome rescan if anything was merged. Returns a status dict.
+    `config` is plugin-owned (Phase 4): {"db_path"}. When set, consolidates
+    split album rows (with a snapshot backup) and triggers a Navidrome
+    rescan if anything was merged (using the plugin's scan config). Returns
+    a status dict.
     """
-    from models import AppSetting, db
-
-    with app.app_context():
-        s = db.session.get(AppSetting, "navidrome_db_path")
-        db_path = (s.value or "").strip() if s and s.value else ""
+    config = config or {}
+    db_path = (config.get("db_path") or "").strip()
     if not db_path:
         db_path = os.environ.get("NAVIDROME_DB_PATH", "").strip()
     if not db_path:
@@ -171,7 +169,7 @@ def run_auto_split_repair(app) -> dict:
     try:
         stats = consolidate_split_albums(db_path)
         if stats["merged_rows"] > 0:
-            trigger_navidrome_scan(app)
+            trigger_navidrome_scan(config)
         return {"enabled": True, **stats}
     except Exception as e:
         logger.exception("[NAVIDROME] Split-repair failed: %s", e)
@@ -234,9 +232,14 @@ def test_navidrome_connection(url: str, user: str = "", token_or_pass: str = "")
     return False, "Unknown response from Navidrome"
 
 
-def trigger_navidrome_scan(app) -> Tuple[bool, str]:
-    """Trigger library rescan on configured Navidrome server (debounced)."""
-    from models import AppSetting, db
+def trigger_navidrome_scan(config: Optional[dict] = None) -> Tuple[bool, str]:
+    """Trigger library rescan on the configured Navidrome server (debounced).
+
+    `config` is plugin-owned (Phase 4: provider settings live in the plugin):
+    {"url", "user", "token", "auto_scan"}. The plugin injects it; no core
+    AppSetting reads.
+    """
+    config = config or {}
 
     global _last_scan_time
     with _scan_lock:
@@ -245,16 +248,10 @@ def trigger_navidrome_scan(app) -> Tuple[bool, str]:
             return False, "Scan already triggered recently (debounced)"
         _last_scan_time = now
 
-    with app.app_context():
-        s_url = db.session.get(AppSetting, "navidrome_url")
-        s_user = db.session.get(AppSetting, "navidrome_user")
-        s_token = db.session.get(AppSetting, "navidrome_token")
-        s_auto = db.session.get(AppSetting, "navidrome_auto_scan")
-
-        url = s_url.value.strip() if s_url else ""
-        user = s_user.value.strip() if s_user else ""
-        token = s_token.value.strip() if s_token else ""
-        auto = s_auto.value.lower() != "false" if s_auto else True
+    url = (config.get("url") or "").strip()
+    user = (config.get("user") or "").strip()
+    token = (config.get("token") or "").strip()
+    auto = str(config.get("auto_scan", "true")).lower() != "false"
 
     if not url or not auto:
         return False, "Navidrome scan not configured or disabled"

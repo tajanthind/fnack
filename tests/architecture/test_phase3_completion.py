@@ -66,10 +66,12 @@ def test_app_routes_use_application_services() -> None:
     src = (ROOT / "app.py").read_text(encoding="utf-8")
     assert "MetadataService" in src      # search-artist / sync routes
     assert "MediaServerService" in src   # navidrome test/scan routes
-    # The only remaining direct provider-service usage:
-    assert "from services.musicbrainz_service import enrich_albums" in src
-    assert "from services.acoustid_service import is_enabled, identify" in src
-    assert "from services.navidrome_service import run_auto_split_repair" in src
+    # Navidrome extracted (Phase 4 PR 5): no service import; split repair
+    # resolves through the plugin.
+    assert "services.navidrome_service" not in src
+    assert "run_split_repair" in src
+    # Other providers extracted in their own Phase 4 PRs (musicbrainz PR 3,
+    # acoustid PR 4) — the transitional asserts were updated there.
 
 
 def test_zero_providers_produce_structured_unavailable() -> None:

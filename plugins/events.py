@@ -1,7 +1,7 @@
 """A minimal synchronous pub/sub bus shared by core and plugins.
 
 Core code calls `event_bus.emit("track.verified", track_id=..., ...)` at the
-relevant points (queue_service, import_service, navidrome_service, ...).
+relevant points (queue_service, import_service, tag normalization, ...).
 Plugins call `context.events.subscribe("track.verified", my_callback)` in
 `on_load()`. Callback exceptions are caught and logged by the caller
 (PluginManager wraps every emit in `_call_safe`) so one bad subscriber never

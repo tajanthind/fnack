@@ -140,7 +140,6 @@ FORBIDDEN_PROVIDER_MODULES = {
 TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {
     "app.py": {
         "services.deezer_service": "onboarding artist-info lookup (get_artist_info — no capability yet; Phase 6 removes)",
-        "services.navidrome_service": "split-repair library task run_auto_split_repair (no capability yet; Phase 10 removes)",
         "services.musicbrainz_service": "discography enrichment helper called from sync (Phase 7 removes)",
         "services.acoustid_service": "identify/last-lookup helpers on verify route (Phase 9 removes)",
     },
@@ -152,9 +151,6 @@ TRANSITIONAL_PROVIDER_IMPORTS: dict[str, dict[str, str]] = {
     },
     "deezer_service.py": {
         "services.itunes_service": "regional album fallback inside provider (Phase 7 removes)",
-    },
-    "tag_normalization_service.py": {
-        "services.navidrome_service": "split-repair scan helper (Phase 10 removes)",
     },
 }
 

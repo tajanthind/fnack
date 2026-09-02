@@ -1586,9 +1586,15 @@ def api_navidrome_scan():
 
 @app.route("/api/navidrome/fix-splits", methods=["POST"])
 def api_navidrome_fix_splits():
-    """Run the Navidrome album-split repair now (also runs automatically at boot)."""
-    from services.navidrome_service import run_auto_split_repair
-    res = run_auto_split_repair(app)
+    """Run the Navidrome album-split repair now (also runs automatically at
+    boot). Phase 4: resolved through the fnack.navidrome plugin (owns the
+    config + implementation) — no core navidrome import."""
+    from plugins.manager import plugin_manager as _pm
+    if _pm is None or _pm.get_plugin("fnack.navidrome") is None:
+        return jsonify({"success": False, "error": "Navidrome plugin not enabled"}), 400
+    res = _pm.invoke_provider(_pm.get_plugin("fnack.navidrome"), "run_split_repair")
+    if res is None:
+        return jsonify({"success": False, "error": "Split repair failed"}), 400
     if res.get("error"):
         return jsonify({"success": False, **res}), 400
     return jsonify({"success": True, **res})
