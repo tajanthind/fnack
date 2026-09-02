@@ -49,11 +49,16 @@ class DeezerBatchProvider(MetadataProviderPlugin):
         """Deezer ids are plain integers. A track/album whose metadata came
         from another provider carries a prefixed id (e.g. 'itunes_12345'),
         which Deezer cannot resolve — return None so the metadata chain moves
-        to the next provider instead of raising ValueError."""
+        to the next provider.
+
+        Only the id CONVERSION is guarded: an API failure (e.g. Deezer quota
+        error code 4, which _get raises as ValueError) must propagate so the
+        caller sees a real provider error instead of a fake "not found"."""
         try:
-            return lookup(int(provider_id))
+            deezer_id = int(provider_id)
         except (TypeError, ValueError):
             return None
+        return lookup(deezer_id)
 
     def search_album(self, query: str, limit: int = 20) -> list[dict]:
         return deezer.search_album(query, limit=limit)
