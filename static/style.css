@@ -619,6 +619,25 @@ body {
   background-color: rgba(0, 0, 0, 0.05);
 }
 
+/* Plugin settings modal ("Settings — <plugin>"): same add-artist card look
+   (modal-dialog-box), but WIDE and filled — the whole dialog is dedicated to
+   the plugin's settings form, so it grows to fit the content and scrolls
+   when the form is long. Generic confirms keep the small default card. */
+#confirmModal.settings-mode .modal-dialog-box {
+  width: min(720px, 100%);
+  max-width: 720px;
+  max-height: min(88vh, 780px);
+  display: flex;
+  flex-direction: column;
+}
+
+#confirmModal.settings-mode .modal-body {
+  flex: 1 1 auto;
+  min-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
