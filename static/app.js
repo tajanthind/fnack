@@ -87,7 +87,10 @@ function showConfirmModal(title, message, onConfirm, confirmText = 'Confirm', bt
 
 function hideConfirmModal() {
   const modal = document.getElementById('confirmModal');
-  if (modal) modal.classList.add('d-none');
+  if (modal) {
+    modal.classList.add('d-none');
+    modal.classList.remove('settings-mode');
+  }
   _customModalCallback = null;
 }
 
@@ -1783,7 +1786,11 @@ let _pluginActions = {};
 
 // Per-plugin settings modal — each plugin gets its own settings form rendered
 // from its declared settings_schema (user requirement: no global settings).
+// Opens in the add-artist-style "settings-mode" dialog: a wide card that fills
+// with the settings form (generic confirms stay the small default card).
 async function openPluginSettings(pluginId, pluginName) {
+  const modal = document.getElementById('confirmModal');
+  if (modal) modal.classList.add('settings-mode');
   showConfirmModal(`Settings — ${escapeHtml(pluginName)}`,
     '<div class="text-secondary small py-2"><i class="fas fa-spinner fa-spin me-1"></i>Loading settings...</div>',
     async () => { await savePluginSettings(pluginId); },

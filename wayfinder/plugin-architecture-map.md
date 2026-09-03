@@ -254,6 +254,23 @@ phase.
   fnack-plugins gains `tests/test_manifest_index_parity.py`
   (manifest ↔ index parity, deterministic) and its README gains the missing
   fnack.lidarr row. Smoke + 20 architecture tests green.
+- [P0 follow-up: app context by construction + settings-modal UI](tickets/plugin-phase-4-hardening-deletion.md):
+  PR #37's wrapper->impl context fix was functionally correct but
+  structurally fragile (head-only inner `with` invited the "provider calls
+  outside the context" misreading). The three background entry points
+  (`_process_track_job`, `download_manual_match_track`,
+  `_sync_artist_discography_background`) are now SINGLE functions whose
+  ENTIRE body is indented under one `with app.app_context():` — nothing can
+  run outside the context by construction. New
+  `tests/architecture/test_background_download_app_context.py` (structural
+  scan + runtime: real `_process_track_job` on a ThreadPoolExecutor worker
+  with a downloader that calls `context.settings.get()` first, asserting the
+  read completes). UI: the plugin-settings modal previously used an
+  unstyled `.custom-modal` (settings floated on the translucent overlay);
+  it now uses the standard add-artist `modal-dialog-box` card, and opening
+  plugin settings adds `settings-mode` — a wide (720px) card whose body
+  scrolls so the modal fills with the settings form (generic confirms stay
+  small). Smoke + 21 architecture tests green.
 
 ## Roadmap (execution carried into the map)
 

@@ -461,14 +461,10 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
     """Background task to fetch artist discography from Deezer and index albums & tracks.
 
     Runs as a SocketIO background greenlet (no inherited app context), so the
-    WHOLE function executes inside one app context — provider invocations
+    ENTIRE body below executes inside one app context — provider invocations
     (MetadataService chain, enrich) read plugin settings through the DB.
+    Everything is indented under the single `with` below, by construction.
     """
-    with app.app_context():
-        _sync_artist_discography_background_impl(artist_id, deezer_artist_id, options)
-
-
-def _sync_artist_discography_background_impl(artist_id: int, deezer_artist_id: int, options: dict):
     with app.app_context():
         artist = db.session.get(Artist, artist_id)
         if not artist:
@@ -481,166 +477,166 @@ def _sync_artist_discography_background_impl(artist_id: int, deezer_artist_id: i
         socketio.emit("artist_updated", {"artist_id": artist_id, "sync_status": "syncing"})
         logger.info("[DEEZER] Starting background discography fetch for artist '%s' (%d)", artist.name, deezer_artist_id)
 
-    try:
-        # Phase 3: MetadataService (artist.discography capability) owns the
-        # provider chain — Deezer batch (p10) authoritative, then MusicBrainz
-        # (p20, enrichment-only), Spotify (p30), iTunes (p40), first usable
-        # discography wins. No hidden fallback: if no artist.discography
-        # provider is enabled the service returns the empty shape (MASTER
-        # rule 3).
-        disco = None
-        served_by = None
         try:
-            from services.metadata_service import MetadataService
-            disco = MetadataService().get_artist_discography(
-                str(deezer_artist_id),
-                artist_name=artist.name,
-                filter_remixes=options.get("filter_remixes", True),
-                filter_lofi=options.get("filter_lofi", True),
-                filter_live=options.get("filter_live", True),
-                filter_compilations=options.get("filter_compilations", True),
-                include_albums=options.get("include_albums", True),
-                include_singles=options.get("include_singles", True),
-                include_compilations=options.get("include_compilations", False),
-            )
-            if disco and disco.get("albums"):
-                served_by = "metadata_service"
-                logger.info("[METADATA] Discography served for '%s' (%d albums)",
-                            artist.name, len(disco.get("albums", [])))
-        except Exception:
-            logger.debug("[METADATA] discography fetch failed, using empty shape", exc_info=True)
-            disco = {"artist_name": artist.name, "albums": []}
+            # Phase 3: MetadataService (artist.discography capability) owns the
+            # provider chain — Deezer batch (p10) authoritative, then MusicBrainz
+            # (p20, enrichment-only), Spotify (p30), iTunes (p40), first usable
+            # discography wins. No hidden fallback: if no artist.discography
+            # provider is enabled the service returns the empty shape (MASTER
+            # rule 3).
+            disco = None
+            served_by = None
+            try:
+                from services.metadata_service import MetadataService
+                disco = MetadataService().get_artist_discography(
+                    str(deezer_artist_id),
+                    artist_name=artist.name,
+                    filter_remixes=options.get("filter_remixes", True),
+                    filter_lofi=options.get("filter_lofi", True),
+                    filter_live=options.get("filter_live", True),
+                    filter_compilations=options.get("filter_compilations", True),
+                    include_albums=options.get("include_albums", True),
+                    include_singles=options.get("include_singles", True),
+                    include_compilations=options.get("include_compilations", False),
+                )
+                if disco and disco.get("albums"):
+                    served_by = "metadata_service"
+                    logger.info("[METADATA] Discography served for '%s' (%d albums)",
+                                artist.name, len(disco.get("albums", [])))
+            except Exception:
+                logger.debug("[METADATA] discography fetch failed, using empty shape", exc_info=True)
+                disco = {"artist_name": artist.name, "albums": []}
 
-        # MusicBrainz enrichment (additive only; regional artists are
-        # negative-cached and never probed; fail-soft on any error). Routed
-        # through any chain provider that exposes `enrich` — the fnack.
-        # musicbrainz plugin owns the pacing + cache. No hidden fallback: if
-        # no enrich provider is enabled, enrichment is skipped (it is
-        # additive by design).
-        try:
-            from plugins.manager import plugin_manager as _pm2
-            if _pm2 is not None:
-                for provider in _pm2.get_metadata_providers():
-                    if not getattr(provider, "enrich", None):
-                        continue
-                    # Phase 1.1 §3: provider invocation via the central executor.
-                    _pm2.invoke_provider(provider, "enrich",
-                                      disco.get("artist_name") or artist.name,
-                                      disco.get("albums") or [])
-                    break
-        except Exception:
-            logger.debug("[MB] enrichment skipped", exc_info=True)
+            # MusicBrainz enrichment (additive only; regional artists are
+            # negative-cached and never probed; fail-soft on any error). Routed
+            # through any chain provider that exposes `enrich` — the fnack.
+            # musicbrainz plugin owns the pacing + cache. No hidden fallback: if
+            # no enrich provider is enabled, enrichment is skipped (it is
+            # additive by design).
+            try:
+                from plugins.manager import plugin_manager as _pm2
+                if _pm2 is not None:
+                    for provider in _pm2.get_metadata_providers():
+                        if not getattr(provider, "enrich", None):
+                            continue
+                        # Phase 1.1 §3: provider invocation via the central executor.
+                        _pm2.invoke_provider(provider, "enrich",
+                                          disco.get("artist_name") or artist.name,
+                                          disco.get("albums") or [])
+                        break
+            except Exception:
+                logger.debug("[MB] enrichment skipped", exc_info=True)
 
-        with app.app_context():
-            artist = db.session.get(Artist, artist_id)
-            if not artist:
-                return
+            with app.app_context():
+                artist = db.session.get(Artist, artist_id)
+                if not artist:
+                    return
 
-            if disco.get("artist_image") and not artist.image_url:
-                artist.image_url = disco["artist_image"]
+                if disco.get("artist_image") and not artist.image_url:
+                    artist.image_url = disco["artist_image"]
 
-            # Save albums and tracks
-            for a in disco.get("albums", []):
-                album = Album.query.filter_by(artist_id=artist.id, deezer_id=str(a["id"])).first()
-                if not album:
-                    album = Album(
-                        artist_id=artist.id,
-                        name=a["title"],
-                        year=a.get("year"),
-                        cover_url=a.get("cover_url"),
-                        deezer_id=str(a["id"]),
-                        record_type=a.get("record_type", "album"),
-                    )
-                    db.session.add(album)
-                    db.session.flush()
-                else:
-                    if a.get("cover_url") and not album.cover_url:
-                        album.cover_url = a["cover_url"]
-                    if a.get("year") and not album.year:
-                        album.year = a["year"]
-                    if a.get("record_type") and not album.record_type:
-                        album.record_type = a["record_type"]
-                # MusicBrainz enrichment is additive-only
-                if a.get("mb_release_group_id"):
-                    if not album.mb_release_group_id:
-                        album.mb_release_group_id = a["mb_release_group_id"]
-                    if not album.mb_title and a.get("mb_title"):
-                        album.mb_title = a["mb_title"]
-                    if not album.mb_year and a.get("mb_year"):
-                        album.mb_year = a["mb_year"]
-
-                for t in a.get("tracks", []):
-                    track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()
-                    if not track:
-                        track = Track(
-                            album_id=album.id,
+                # Save albums and tracks
+                for a in disco.get("albums", []):
+                    album = Album.query.filter_by(artist_id=artist.id, deezer_id=str(a["id"])).first()
+                    if not album:
+                        album = Album(
                             artist_id=artist.id,
-                            title=t["title"],
-                            track_number=t.get("track_position"),
-                            disc_number=t.get("disk_number", 1),
-                            duration=t.get("duration"),
-                            isrc=t.get("isrc"),
-                            deezer_id=str(t["id"]),
-                            genre=t.get("genre"),
-                            status="missing",
+                            name=a["title"],
+                            year=a.get("year"),
+                            cover_url=a.get("cover_url"),
+                            deezer_id=str(a["id"]),
+                            record_type=a.get("record_type", "album"),
                         )
-                        db.session.add(track)
+                        db.session.add(album)
                         db.session.flush()
                     else:
-                        if t.get("isrc") and not track.isrc:
-                            track.isrc = t["isrc"]
-                        if t.get("duration") and not track.duration:
-                            track.duration = t["duration"]
-                        if t.get("genre") and not track.genre:
-                            track.genre = t["genre"]
+                        if a.get("cover_url") and not album.cover_url:
+                            album.cover_url = a["cover_url"]
+                        if a.get("year") and not album.year:
+                            album.year = a["year"]
+                        if a.get("record_type") and not album.record_type:
+                            album.record_type = a["record_type"]
+                    # MusicBrainz enrichment is additive-only
+                    if a.get("mb_release_group_id"):
+                        if not album.mb_release_group_id:
+                            album.mb_release_group_id = a["mb_release_group_id"]
+                        if not album.mb_title and a.get("mb_title"):
+                            album.mb_title = a["mb_title"]
+                        if not album.mb_year and a.get("mb_year"):
+                            album.mb_year = a["mb_year"]
 
-            valid_deezer_ids = {str(a["id"]) for a in disco.get("albums", [])}
+                    for t in a.get("tracks", []):
+                        track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()
+                        if not track:
+                            track = Track(
+                                album_id=album.id,
+                                artist_id=artist.id,
+                                title=t["title"],
+                                track_number=t.get("track_position"),
+                                disc_number=t.get("disk_number", 1),
+                                duration=t.get("duration"),
+                                isrc=t.get("isrc"),
+                                deezer_id=str(t["id"]),
+                                genre=t.get("genre"),
+                                status="missing",
+                            )
+                            db.session.add(track)
+                            db.session.flush()
+                        else:
+                            if t.get("isrc") and not track.isrc:
+                                track.isrc = t["isrc"]
+                            if t.get("duration") and not track.duration:
+                                track.duration = t["duration"]
+                            if t.get("genre") and not track.genre:
+                                track.genre = t["genre"]
 
-            # Prune stale or misattributed albums that are not downloaded and no longer in discography
-            for existing_alb in artist.albums.all():
-                if existing_alb.deezer_id not in valid_deezer_ids and not existing_alb.is_downloaded:
-                    has_downloaded = any(t.is_downloaded for t in existing_alb.tracks.all())
-                    if not has_downloaded:
-                        logger.info("[DEEZER] Pruning stale/misattributed album '%s' (id=%d) for artist '%s'", existing_alb.name, existing_alb.id, artist.name)
-                        for t in existing_alb.tracks.all():
-                            DownloadJob.query.filter_by(track_id=t.id).delete()
-                            db.session.delete(t)
-                        db.session.delete(existing_alb)
-            db.session.flush()
+                valid_deezer_ids = {str(a["id"]) for a in disco.get("albums", [])}
 
-            artist.sync_status = "ready"
-            artist.sync_error = None
-            artist.last_synced_at = datetime.now(timezone.utc)
+                # Prune stale or misattributed albums that are not downloaded and no longer in discography
+                for existing_alb in artist.albums.all():
+                    if existing_alb.deezer_id not in valid_deezer_ids and not existing_alb.is_downloaded:
+                        has_downloaded = any(t.is_downloaded for t in existing_alb.tracks.all())
+                        if not has_downloaded:
+                            logger.info("[DEEZER] Pruning stale/misattributed album '%s' (id=%d) for artist '%s'", existing_alb.name, existing_alb.id, artist.name)
+                            for t in existing_alb.tracks.all():
+                                DownloadJob.query.filter_by(track_id=t.id).delete()
+                                db.session.delete(t)
+                            db.session.delete(existing_alb)
+                db.session.flush()
 
-            # Phase 1 (scale-to-millions): after inserts + prunes, recompute the
-            # denormalized counters for this artist in one indexed pass.
-            try:
-                from services.counters_service import recompute_artist
-                recompute_artist(artist.id)
-            except Exception:
-                logger.debug("[SCALE] counter recompute skipped", exc_info=True)
+                artist.sync_status = "ready"
+                artist.sync_error = None
+                artist.last_synced_at = datetime.now(timezone.utc)
 
-            db.session.commit()
+                # Phase 1 (scale-to-millions): after inserts + prunes, recompute the
+                # denormalized counters for this artist in one indexed pass.
+                try:
+                    from services.counters_service import recompute_artist
+                    recompute_artist(artist.id)
+                except Exception:
+                    logger.debug("[SCALE] counter recompute skipped", exc_info=True)
 
-            logger.info("[DEEZER] Discography sync complete for '%s' (%d albums)", artist.name, len(disco.get("albums", [])))
-
-            # If auto_download enabled, queue missing tracks
-            if artist.auto_download:
-                queued = queue_artist_missing(app, artist.id, source="auto")
-                logger.info("[DEEZER] Auto-download queued %d tracks for '%s'", queued, artist.name)
-
-        socketio.emit("artist_synced", {"artist_id": artist_id, "sync_status": "ready"})
-        socketio.emit("toast", {"message": f"Discography indexed for '{disco['artist_name']}'", "type": "success"})
-
-    except Exception as e:
-        logger.exception("[DEEZER] Discography ingestion failed for artist %d: %s", artist_id, e)
-        with app.app_context():
-            artist = db.session.get(Artist, artist_id)
-            if artist:
-                artist.sync_status = "error"
-                artist.sync_error = str(e)
                 db.session.commit()
-        socketio.emit("artist_updated", {"artist_id": artist_id, "sync_status": "error", "error": str(e)})
+
+                logger.info("[DEEZER] Discography sync complete for '%s' (%d albums)", artist.name, len(disco.get("albums", [])))
+
+                # If auto_download enabled, queue missing tracks
+                if artist.auto_download:
+                    queued = queue_artist_missing(app, artist.id, source="auto")
+                    logger.info("[DEEZER] Auto-download queued %d tracks for '%s'", queued, artist.name)
+
+            socketio.emit("artist_synced", {"artist_id": artist_id, "sync_status": "ready"})
+            socketio.emit("toast", {"message": f"Discography indexed for '{disco['artist_name']}'", "type": "success"})
+
+        except Exception as e:
+            logger.exception("[DEEZER] Discography ingestion failed for artist %d: %s", artist_id, e)
+            with app.app_context():
+                artist = db.session.get(Artist, artist_id)
+                if artist:
+                    artist.sync_status = "error"
+                    artist.sync_error = str(e)
+                    db.session.commit()
+            socketio.emit("artist_updated", {"artist_id": artist_id, "sync_status": "error", "error": str(e)})
 
 
 @app.route("/api/add-artist", methods=["POST"])
