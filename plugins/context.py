@@ -212,7 +212,9 @@ class LibraryContext:
 
         album = None
         if album_external_id:
-            album = Album.query.filter_by(artist_id=artist.id, external_id=str(album_external_id)).first()
+            album = Album.query.filter_by(artist_id=artist.id,
+                                          provider_id=None,
+                                          external_id=str(album_external_id)).first()
         if not album:
             album = Album(
                 artist_id=artist.id,
@@ -226,7 +228,8 @@ class LibraryContext:
             db.session.flush()
 
         for t in tracks_to_queue:
-            track = Track.query.filter_by(album_id=album.id, external_id=str(t["id"])).first()
+            track = Track.query.filter_by(album_id=album.id, provider_id=None,
+                                          external_id=str(t["id"])).first()
             if not track:
                 track = Track(
                     album_id=album.id,

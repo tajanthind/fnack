@@ -598,6 +598,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         track_num = track.track_number or 0
         disc_num = track.disc_number or 1
         track_external_id = track.external_id
+        track_provider_id = track.provider_id  # provenance of the external id
 
         quality_setting = _get_setting(app, "spotiflac_quality", "LOSSLESS")
         fallback_format = _get_setting(app, "ytdlp_format") or _get_setting(app, "spotdl_format", "flac")
@@ -678,55 +679,57 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 existing_match_dur = None
                 existing_match_bitrate = None
 
-                with app.app_context():
-                    existing_match: Optional[Track] = None
-                    # 1. Match by ISRC (highest accuracy)
-                    if isrc and len(str(isrc).strip()) == 12:
-                        existing_match = Track.query.filter(
+                existing_match: Optional[Track] = None
+                # 1. Match by ISRC (highest accuracy)
+                if isrc and len(str(isrc).strip()) == 12:
+                    existing_match = Track.query.filter(
+                        Track.id != track_id,
+                        Track.isrc == isrc,
+                        Track.is_downloaded == True,
+                        Track.local_path.isnot(None),
+                        Track.local_path != "",
+                    ).first()
+
+                # 2. Match by external id within the SAME provider namespace
+                #    (a different provider may use the same id for another
+                #    track — never reuse across providers).
+                if not existing_match and track_external_id:
+                    existing_match = Track.query.filter(
+                        Track.id != track_id,
+                        Track.provider_id == track_provider_id,
+                        Track.external_id == track_external_id,
+                        Track.is_downloaded == True,
+                        Track.local_path.isnot(None),
+                        Track.local_path != "",
+                    ).first()
+
+                # 3. Match by normalized title and duration
+                if not existing_match and track_title and expected_duration:
+                    norm_current = re.sub(r"[^\w\s]", "", track_title.lower()).strip()
+                    if len(norm_current) >= 4:
+                        # Narrow with a LIKE filter instead of scanning the whole library
+                        candidates = Track.query.filter(
                             Track.id != track_id,
-                            Track.isrc == isrc,
                             Track.is_downloaded == True,
                             Track.local_path.isnot(None),
                             Track.local_path != "",
-                        ).first()
+                            Track.title.ilike(f"%{track_title[:60]}%"),
+                        ).limit(50).all()
+                        for cand in candidates:
+                            if not cand.title:
+                                continue
+                            norm_cand = re.sub(r"[^\w\s]", "", cand.title.lower()).strip()
+                            if (norm_current == norm_cand or norm_current in norm_cand or norm_cand in norm_current):
+                                if cand.duration and abs(cand.duration - expected_duration) <= 3.0:
+                                    if cand.local_path and Path(cand.local_path).exists():
+                                        existing_match = cand
+                                        break
 
-                    # 2. Match by external id
-                    if not existing_match and track_external_id:
-                        existing_match = Track.query.filter(
-                            Track.id != track_id,
-                            Track.external_id == track_external_id,
-                            Track.is_downloaded == True,
-                            Track.local_path.isnot(None),
-                            Track.local_path != "",
-                        ).first()
-
-                    # 3. Match by normalized title and duration
-                    if not existing_match and track_title and expected_duration:
-                        norm_current = re.sub(r"[^\w\s]", "", track_title.lower()).strip()
-                        if len(norm_current) >= 4:
-                            # Narrow with a LIKE filter instead of scanning the whole library
-                            candidates = Track.query.filter(
-                                Track.id != track_id,
-                                Track.is_downloaded == True,
-                                Track.local_path.isnot(None),
-                                Track.local_path != "",
-                                Track.title.ilike(f"%{track_title[:60]}%"),
-                            ).limit(50).all()
-                            for cand in candidates:
-                                if not cand.title:
-                                    continue
-                                norm_cand = re.sub(r"[^\w\s]", "", cand.title.lower()).strip()
-                                if (norm_current == norm_cand or norm_current in norm_cand or norm_cand in norm_current):
-                                    if cand.duration and abs(cand.duration - expected_duration) <= 3.0:
-                                        if cand.local_path and Path(cand.local_path).exists():
-                                            existing_match = cand
-                                            break
-
-                    if existing_match and existing_match.local_path:
-                        existing_match_path = existing_match.local_path
-                        existing_match_size = existing_match.size_bytes
-                        existing_match_dur = existing_match.duration
-                        existing_match_bitrate = existing_match.bitrate
+                if existing_match and existing_match.local_path:
+                    existing_match_path = existing_match.local_path
+                    existing_match_size = existing_match.size_bytes
+                    existing_match_dur = existing_match.duration
+                    existing_match_bitrate = existing_match.bitrate
 
                 if existing_match_path:
                     src_file = Path(existing_match_path)
@@ -880,211 +883,209 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 return
 
             # Step 5: Finalize, clean up superseded duplicates, tag, and move file into /music
-            with app.app_context():
-                job = db.session.get(DownloadJob, job_id)
-                track_rec = db.session.get(Track, track_id)
-                album_rec = db.session.get(Album, album_id) if album_id else None
+            job = db.session.get(DownloadJob, job_id)
+            track_rec = db.session.get(Track, track_id)
+            album_rec = db.session.get(Album, album_id) if album_id else None
 
-                if verified_file and verified_file.exists():
-                    album_year = album_rec.year if album_rec else None
-                    total_tracks_val = album_rec.tracks.count() if album_rec else None
-                    disc_num_val = track_rec.disc_number if track_rec else 1
+            if verified_file and verified_file.exists():
+                album_year = album_rec.year if album_rec else None
+                total_tracks_val = album_rec.tracks.count() if album_rec else None
+                disc_num_val = track_rec.disc_number if track_rec else 1
 
-                    ext = verified_file.suffix
-                    disc_prefix = f"{disc_num_val}-" if (disc_num_val and disc_num_val > 1) else ""
-                    track_num_prefix = f"{disc_prefix}{track_num:02d}. " if track_num else ""
-                    final_filename = f"{track_num_prefix}{_sanitize(track_title)}{ext}"
-                    final_dest = dest_dir / final_filename
+                ext = verified_file.suffix
+                disc_prefix = f"{disc_num_val}-" if (disc_num_val and disc_num_val > 1) else ""
+                track_num_prefix = f"{disc_prefix}{track_num:02d}. " if track_num else ""
+                final_filename = f"{track_num_prefix}{_sanitize(track_title)}{ext}"
+                final_dest = dest_dir / final_filename
 
-                    # Move the new file into place. shutil.move overwrites an existing
-                    # file at the destination on POSIX, so no explicit unlink is needed —
-                    # an explicit unlink here is what made the folder watcher see a
-                    # deletion of a DB-referenced file and mark the track missing.
-                    if verified_file.resolve() != final_dest.resolve():
+                # Move the new file into place. shutil.move overwrites an existing
+                # file at the destination on POSIX, so no explicit unlink is needed —
+                # an explicit unlink here is what made the folder watcher see a
+                # deletion of a DB-referenced file and mark the track missing.
+                if verified_file.resolve() != final_dest.resolve():
+                    try:
+                        shutil.move(str(verified_file), str(final_dest))
+                    except shutil.SameFileError:
+                        logger.info("[QUEUE] Work file and destination are the same file for '%s - %s'; already in place", artist_name, track_title)
+
+                # Embed clean metadata tags with album artist and optional artwork to guarantee seamless Navidrome indexing.
+                # EXCEPT AcoustID-flagged files: the audio is a DIFFERENT song, so we
+                # deliberately keep its original tags (Navidrome shows what it really
+                # is) and let the user keep/delete via the caution flag.
+                if not flagged_caution:
+                    _tag_audio_file(
+                        final_dest,
+                        artist=artist_name,
+                        album=album_name,
+                        title=track_title,
+                        track_num=track_num,
+                        year=album_year,
+                        album_artist=artist_name,
+                        disc_num=disc_num_val,
+                        total_tracks=total_tracks_val,
+                        cover_bytes=cover_bytes if embed_cover_setting else None,
+                        genre=track_genre,
+                    )
+                rel_path = str(final_dest.relative_to(music_dir))
+
+                was_downloaded = bool(track_rec.is_downloaded) if track_rec else False
+                if track_rec:
+                    track_rec.is_downloaded = True
+                    track_rec.status = "completed"
+                    track_rec.progress = 100.0
+                    track_rec.local_path = str(final_dest)
+                    track_rec.file_path = rel_path
+                    track_rec.file_format = ext.lstrip(".")
+                    track_rec.size_bytes = file_meta.get("size_bytes", final_dest.stat().st_size)
+                    # Keep the official expected duration as the verification baseline;
+                    # never overwrite it with the downloaded file's actual duration
+                    # (that would mask future mismatches). Only fill in if unknown.
+                    if not track_rec.duration:
+                        track_rec.duration = file_meta.get("duration") or expected_duration
+                    track_rec.bitrate = file_meta.get("bitrate")
+                    track_rec.error_message = None
+                    if flagged_caution:
+                        import json as _json
+                        track_rec.caution = True
+                        track_rec.caution_info = _json.dumps(flagged_caution)
+                    elif not flagged_caution:
+                        # Plugin framework (INTEGRATION.md §5): additive event emission
+                        # on successful verification (not for AcoustID-flagged files —
+                        # those are a different song, not verified).
                         try:
-                            shutil.move(str(verified_file), str(final_dest))
-                        except shutil.SameFileError:
-                            logger.info("[QUEUE] Work file and destination are the same file for '%s - %s'; already in place", artist_name, track_title)
+                            from plugins.manager import plugin_manager
+                            if plugin_manager is not None:
+                                plugin_manager.event_bus.emit("track.verified", track_id=track_id)
+                        except Exception:
+                            logger.debug("[QUEUE] plugin verified-event emission skipped", exc_info=True)
 
-                    # Embed clean metadata tags with album artist and optional artwork to guarantee seamless Navidrome indexing.
-                    # EXCEPT AcoustID-flagged files: the audio is a DIFFERENT song, so we
-                    # deliberately keep its original tags (Navidrome shows what it really
-                    # is) and let the user keep/delete via the caution flag.
-                    if not flagged_caution:
-                        _tag_audio_file(
-                            final_dest,
-                            artist=artist_name,
-                            album=album_name,
-                            title=track_title,
-                            track_num=track_num,
-                            year=album_year,
-                            album_artist=artist_name,
-                            disc_num=disc_num_val,
-                            total_tracks=total_tracks_val,
-                            cover_bytes=cover_bytes if embed_cover_setting else None,
-                            genre=track_genre,
+                if job:
+                    job.status = "completed"
+                    job.progress = 100.0
+                    job.tracks_completed = 1
+                    job.error_message = None
+
+                # Update Album stats
+                if album_rec:
+                    album_tracks = album_rec.tracks.all()
+                    downloaded_count = sum(1 for t in album_tracks if t.is_downloaded)
+                    album_rec.is_downloaded = downloaded_count == len(album_tracks)
+                    album_rec.size_bytes = sum(t.size_bytes or 0 for t in album_tracks)
+                    album_rec.local_path = str(dest_dir)
+
+                # Phase 1 (scale-to-millions): keep the denormalized per-artist
+                # counters in sync. Counters follow album.artist_id — the same
+                # grouping the old GROUP BY used. Guard False→True so
+                # re-downloads of an already-downloaded track don't double-count.
+                try:
+                    from services.counters_service import on_track_downloaded
+                    if album_rec and album_rec.artist_id and not was_downloaded:
+                        on_track_downloaded(album_rec.artist_id, is_downloaded=True)
+                except Exception:
+                    logger.debug("[QUEUE] counter update skipped", exc_info=True)
+
+                db.session.commit()
+                logger.info("[QUEUE] Download succeeded for '%s - %s' -> %s", artist_name, track_title, final_dest)
+
+                # Plugin framework (INTEGRATION.md §5): additive event emission —
+                # no existing behavior changes; event_hook/fingerprint plugins can
+                # react to real downloads.
+                try:
+                    from plugins.manager import plugin_manager
+                    if plugin_manager is not None:
+                        plugin_manager.event_bus.emit("track.after_download", track_id=track_id)
+                        plugin_manager.event_bus.emit(
+                            "queue.job_completed",
+                            job_id=job_id, track_id=track_id,
+                            title=track_title, artist_name=artist_name,
+                            album_name=album_name,
                         )
-                    rel_path = str(final_dest.relative_to(music_dir))
+                except Exception:
+                    logger.debug("[QUEUE] plugin event emission skipped (plugin_manager not ready)", exc_info=True)
 
-                    was_downloaded = bool(track_rec.is_downloaded) if track_rec else False
-                    if track_rec:
-                        track_rec.is_downloaded = True
-                        track_rec.status = "completed"
-                        track_rec.progress = 100.0
-                        track_rec.local_path = str(final_dest)
-                        track_rec.file_path = rel_path
-                        track_rec.file_format = ext.lstrip(".")
-                        track_rec.size_bytes = file_meta.get("size_bytes", final_dest.stat().st_size)
-                        # Keep the official expected duration as the verification baseline;
-                        # never overwrite it with the downloaded file's actual duration
-                        # (that would mask future mismatches). Only fill in if unknown.
-                        if not track_rec.duration:
-                            track_rec.duration = file_meta.get("duration") or expected_duration
-                        track_rec.bitrate = file_meta.get("bitrate")
-                        track_rec.error_message = None
-                        if flagged_caution:
-                            import json as _json
-                            track_rec.caution = True
-                            track_rec.caution_info = _json.dumps(flagged_caution)
-                        elif not flagged_caution:
-                            # Plugin framework (INTEGRATION.md §5): additive event emission
-                            # on successful verification (not for AcoustID-flagged files —
-                            # those are a different song, not verified).
-                            try:
-                                from plugins.manager import plugin_manager
-                                if plugin_manager is not None:
-                                    plugin_manager.event_bus.emit("track.verified", track_id=track_id)
-                            except Exception:
-                                logger.debug("[QUEUE] plugin verified-event emission skipped", exc_info=True)
+                # Clean up superseded files for this exact track position (e.g. an
+                # old .opus replaced by a lossless .flac). This runs AFTER the DB
+                # commit so no track row references the deleted file anymore and the
+                # folder watcher cannot mistake the deletion for a user removal.
+                try:
+                    for old_f in dest_dir.iterdir():
+                        if old_f.is_file() and old_f.suffix.lower() in AUDIO_EXTENSIONS:
+                            if old_f.resolve() != final_dest.resolve():
+                                if track_num and (old_f.name.startswith(f"{track_num:02d}. ") or old_f.name.startswith(f"{disc_prefix}{track_num:02d}. ")):
+                                    try:
+                                        old_f.unlink()
+                                        logger.info("[QUEUE] Cleaned up superseded audio file: %s", old_f.name)
+                                    except OSError:
+                                        pass
+                except Exception as ce:
+                    logger.debug("[QUEUE] Duplicate cleanup note: %s", ce)
 
-                    if job:
-                        job.status = "completed"
-                        job.progress = 100.0
-                        job.tracks_completed = 1
-                        job.error_message = None
+                # Trigger media-server auto-scan if configured (Phase 3: via
+                # MediaServerService — media.scan capability).
+                try:
+                    from services.media_server_service import MediaServerService
+                    MediaServerService().scan()
+                except Exception as ne:
+                    logger.debug("[QUEUE] media auto-scan trigger note: %s", ne)
 
-                    # Update Album stats
-                    if album_rec:
-                        album_tracks = album_rec.tracks.all()
-                        downloaded_count = sum(1 for t in album_tracks if t.is_downloaded)
-                        album_rec.is_downloaded = downloaded_count == len(album_tracks)
-                        album_rec.size_bytes = sum(t.size_bytes or 0 for t in album_tracks)
-                        album_rec.local_path = str(dest_dir)
+                socketio.emit("download_progress", {
+                    "job_id": job_id,
+                    "track_id": track_id,
+                    "album_id": album_id,
+                    "artist_id": artist_id,
+                    "status": "completed",
+                    "progress": 100.0,
+                    "title": track_title,
+                    "local_path": str(final_dest),
+                })
+            else:
+                combined_err = " | ".join(failure_reasons) or "Download failed"
+                if track_rec:
+                    track_rec.status = "failed"
+                    track_rec.progress = 0.0
+                    track_rec.error_message = combined_err
+                if job:
+                    job.status = "failed"
+                    job.progress = 0.0
+                    job.error_message = combined_err
+                db.session.commit()
 
-                    # Phase 1 (scale-to-millions): keep the denormalized per-artist
-                    # counters in sync. Counters follow album.artist_id — the same
-                    # grouping the old GROUP BY used. Guard False→True so
-                    # re-downloads of an already-downloaded track don't double-count.
-                    try:
-                        from services.counters_service import on_track_downloaded
-                        if album_rec and album_rec.artist_id and not was_downloaded:
-                            on_track_downloaded(album_rec.artist_id, is_downloaded=True)
-                    except Exception:
-                        logger.debug("[QUEUE] counter update skipped", exc_info=True)
+                # Plugin framework (Phase 4): additive event emission for
+                # webhook/notification plugins (queue.job_failed).
+                try:
+                    from plugins.manager import plugin_manager
+                    if plugin_manager is not None:
+                        plugin_manager.event_bus.emit(
+                            "queue.job_failed",
+                            job_id=job_id, track_id=track_id,
+                            title=track_title, artist_name=artist_name,
+                            album_name=album_name, error=combined_err,
+                        )
+                except Exception:
+                    logger.debug("[QUEUE] plugin job_failed event skipped", exc_info=True)
 
-                    db.session.commit()
-                    logger.info("[QUEUE] Download succeeded for '%s - %s' -> %s", artist_name, track_title, final_dest)
-
-                    # Plugin framework (INTEGRATION.md §5): additive event emission —
-                    # no existing behavior changes; event_hook/fingerprint plugins can
-                    # react to real downloads.
-                    try:
-                        from plugins.manager import plugin_manager
-                        if plugin_manager is not None:
-                            plugin_manager.event_bus.emit("track.after_download", track_id=track_id)
-                            plugin_manager.event_bus.emit(
-                                "queue.job_completed",
-                                job_id=job_id, track_id=track_id,
-                                title=track_title, artist_name=artist_name,
-                                album_name=album_name,
-                            )
-                    except Exception:
-                        logger.debug("[QUEUE] plugin event emission skipped (plugin_manager not ready)", exc_info=True)
-
-                    # Clean up superseded files for this exact track position (e.g. an
-                    # old .opus replaced by a lossless .flac). This runs AFTER the DB
-                    # commit so no track row references the deleted file anymore and the
-                    # folder watcher cannot mistake the deletion for a user removal.
-                    try:
-                        for old_f in dest_dir.iterdir():
-                            if old_f.is_file() and old_f.suffix.lower() in AUDIO_EXTENSIONS:
-                                if old_f.resolve() != final_dest.resolve():
-                                    if track_num and (old_f.name.startswith(f"{track_num:02d}. ") or old_f.name.startswith(f"{disc_prefix}{track_num:02d}. ")):
-                                        try:
-                                            old_f.unlink()
-                                            logger.info("[QUEUE] Cleaned up superseded audio file: %s", old_f.name)
-                                        except OSError:
-                                            pass
-                    except Exception as ce:
-                        logger.debug("[QUEUE] Duplicate cleanup note: %s", ce)
-
-                    # Trigger media-server auto-scan if configured (Phase 3: via
-                    # MediaServerService — media.scan capability).
-                    try:
-                        from services.media_server_service import MediaServerService
-                        MediaServerService().scan()
-                    except Exception as ne:
-                        logger.debug("[QUEUE] media auto-scan trigger note: %s", ne)
-
-                    socketio.emit("download_progress", {
-                        "job_id": job_id,
-                        "track_id": track_id,
-                        "album_id": album_id,
-                        "artist_id": artist_id,
-                        "status": "completed",
-                        "progress": 100.0,
-                        "title": track_title,
-                        "local_path": str(final_dest),
-                    })
-                else:
-                    combined_err = " | ".join(failure_reasons) or "Download failed"
-                    if track_rec:
-                        track_rec.status = "failed"
-                        track_rec.progress = 0.0
-                        track_rec.error_message = combined_err
-                    if job:
-                        job.status = "failed"
-                        job.progress = 0.0
-                        job.error_message = combined_err
-                    db.session.commit()
-
-                    # Plugin framework (Phase 4): additive event emission for
-                    # webhook/notification plugins (queue.job_failed).
-                    try:
-                        from plugins.manager import plugin_manager
-                        if plugin_manager is not None:
-                            plugin_manager.event_bus.emit(
-                                "queue.job_failed",
-                                job_id=job_id, track_id=track_id,
-                                title=track_title, artist_name=artist_name,
-                                album_name=album_name, error=combined_err,
-                            )
-                    except Exception:
-                        logger.debug("[QUEUE] plugin job_failed event skipped", exc_info=True)
-
-                    logger.warning("[QUEUE] Download failed for '%s - %s': %s", artist_name, track_title, combined_err)
-                    socketio.emit("download_progress", {
-                        "job_id": job_id,
-                        "track_id": track_id,
-                        "album_id": album_id,
-                        "artist_id": artist_id,
-                        "status": "failed",
-                        "progress": 0.0,
-                        "error_message": combined_err,
-                    })
+                logger.warning("[QUEUE] Download failed for '%s - %s': %s", artist_name, track_title, combined_err)
+                socketio.emit("download_progress", {
+                    "job_id": job_id,
+                    "track_id": track_id,
+                    "album_id": album_id,
+                    "artist_id": artist_id,
+                    "status": "failed",
+                    "progress": 0.0,
+                    "error_message": combined_err,
+                })
 
         except Exception as e:
             logger.exception("[QUEUE] Unexpected exception during job %d: %s", job_id, e)
-            with app.app_context():
-                job = db.session.get(DownloadJob, job_id)
-                track_rec = db.session.get(Track, track_id)
-                if job:
-                    job.status = "failed"
-                    job.error_message = str(e)
-                if track_rec:
-                    track_rec.status = "failed"
-                    track_rec.error_message = str(e)
-                db.session.commit()
+            job = db.session.get(DownloadJob, job_id)
+            track_rec = db.session.get(Track, track_id)
+            if job:
+                job.status = "failed"
+                job.error_message = str(e)
+            if track_rec:
+                track_rec.status = "failed"
+                track_rec.error_message = str(e)
+            db.session.commit()
 
         finally:
             try:
@@ -1399,13 +1400,12 @@ def download_manual_match_track(
 
             if not downloaded_file or not downloaded_file.exists():
                 err_msg = last_err or "Failed to download audio stream from provided URL"
-                with app.app_context():
-                    t = db.session.get(Track, track_id)
-                    if t:
-                        t.status = "failed"
-                        t.progress = 0.0
-                        t.error_message = err_msg
-                        db.session.commit()
+                t = db.session.get(Track, track_id)
+                if t:
+                    t.status = "failed"
+                    t.progress = 0.0
+                    t.error_message = err_msg
+                    db.session.commit()
                 socketio.emit("download_progress", {"track_id": track_id, "status": "failed", "error_message": err_msg})
                 return False, err_msg
 
@@ -1426,93 +1426,91 @@ def download_manual_match_track(
                     f"by {artist_name} ({v_err}). Check the URL and try again."
                 )
                 logger.warning("[QUEUE] %s", err_msg)
-                with app.app_context():
-                    t = db.session.get(Track, track_id)
-                    if t:
-                        t.status = "failed"
-                        t.progress = 0.0
-                        t.error_message = err_msg
-                        db.session.commit()
+                t = db.session.get(Track, track_id)
+                if t:
+                    t.status = "failed"
+                    t.progress = 0.0
+                    t.error_message = err_msg
+                    db.session.commit()
                 socketio.emit("download_progress", {"track_id": track_id, "status": "failed", "error_message": err_msg})
                 return False, err_msg
 
-            with app.app_context():
-                track_rec = db.session.get(Track, track_id)
-                album_rec = track_rec.album if track_rec else None
+            track_rec = db.session.get(Track, track_id)
+            album_rec = track_rec.album if track_rec else None
 
-                album_year = album_rec.year if album_rec else None
-                total_tracks_val = album_rec.tracks.count() if album_rec else None
+            album_year = album_rec.year if album_rec else None
+            total_tracks_val = album_rec.tracks.count() if album_rec else None
 
-                ext = downloaded_file.suffix
-                disc_prefix = f"{disc_num}-" if (disc_num and disc_num > 1) else ""
-                track_num_prefix = f"{disc_prefix}{track_num:02d}. " if track_num else ""
-                final_filename = f"{track_num_prefix}{_sanitize(track_title)}{ext}"
-                final_dest = dest_dir / final_filename
+            ext = downloaded_file.suffix
+            disc_prefix = f"{disc_num}-" if (disc_num and disc_num > 1) else ""
+            track_num_prefix = f"{disc_prefix}{track_num:02d}. " if track_num else ""
+            final_filename = f"{track_num_prefix}{_sanitize(track_title)}{ext}"
+            final_dest = dest_dir / final_filename
 
-                # Move into place (overwrites an existing file on POSIX; no unlink needed —
-                # an explicit unlink made the folder watcher mark the track missing).
-                if downloaded_file.resolve() != final_dest.resolve():
-                    try:
-                        shutil.move(str(downloaded_file), str(final_dest))
-                    except shutil.SameFileError:
-                        logger.info("[QUEUE] Work file and destination are the same file for '%s - %s'; already in place", artist_name, track_title)
-
-                # Embed uniform tags
-                _tag_audio_file(
-                    final_dest,
-                    artist=artist_name,
-                    album=album_name,
-                    title=track_title,
-                    track_num=track_num,
-                    year=album_year,
-                    album_artist=artist_name,
-                    disc_num=disc_num,
-                    total_tracks=total_tracks_val,
-                    cover_bytes=cover_bytes if embed_cover_setting else None,
-                    genre=track_genre,
-                )
-
-                rel_path = str(final_dest.relative_to(music_dir))
-
-                was_downloaded = bool(track_rec.is_downloaded) if track_rec else False
-                if track_rec:
-                    track_rec.is_downloaded = True
-                    track_rec.status = "completed"
-                    track_rec.progress = 100.0
-                    track_rec.local_path = str(final_dest)
-                    track_rec.file_path = rel_path
-                    track_rec.file_format = ext.lstrip(".")
-                    track_rec.size_bytes = file_meta.get("size_bytes", final_dest.stat().st_size)
-                    # Keep the official expected duration as the verification baseline
-                    if not track_rec.duration:
-                        track_rec.duration = file_meta.get("duration") or expected_duration
-                    track_rec.bitrate = file_meta.get("bitrate")
-                    track_rec.error_message = None
-
-                # Mark any active jobs completed
-                active_job = DownloadJob.query.filter_by(track_id=track_id).first()
-                if active_job:
-                    active_job.status = "completed"
-                    active_job.progress = 100.0
-                    active_job.error_message = None
-
-                # Phase 1 (scale-to-millions): guard False→True so counters only
-                # move when the flag actually changes (research §2.3).
+            # Move into place (overwrites an existing file on POSIX; no unlink needed —
+            # an explicit unlink made the folder watcher mark the track missing).
+            if downloaded_file.resolve() != final_dest.resolve():
                 try:
-                    from services.counters_service import on_track_downloaded
-                    if album_rec and album_rec.artist_id and not was_downloaded:
-                        on_track_downloaded(album_rec.artist_id, is_downloaded=True)
-                except Exception:
-                    logger.debug("[QUEUE] counter update skipped", exc_info=True)
+                    shutil.move(str(downloaded_file), str(final_dest))
+                except shutil.SameFileError:
+                    logger.info("[QUEUE] Work file and destination are the same file for '%s - %s'; already in place", artist_name, track_title)
 
-                if album_rec:
-                    album_tracks = album_rec.tracks.all()
-                    downloaded_count = sum(1 for t in album_tracks if t.is_downloaded)
-                    album_rec.is_downloaded = downloaded_count == len(album_tracks)
-                    album_rec.size_bytes = sum(t.size_bytes or 0 for t in album_tracks)
-                    album_rec.local_path = str(dest_dir)
+            # Embed uniform tags
+            _tag_audio_file(
+                final_dest,
+                artist=artist_name,
+                album=album_name,
+                title=track_title,
+                track_num=track_num,
+                year=album_year,
+                album_artist=artist_name,
+                disc_num=disc_num,
+                total_tracks=total_tracks_val,
+                cover_bytes=cover_bytes if embed_cover_setting else None,
+                genre=track_genre,
+            )
 
-                db.session.commit()
+            rel_path = str(final_dest.relative_to(music_dir))
+
+            was_downloaded = bool(track_rec.is_downloaded) if track_rec else False
+            if track_rec:
+                track_rec.is_downloaded = True
+                track_rec.status = "completed"
+                track_rec.progress = 100.0
+                track_rec.local_path = str(final_dest)
+                track_rec.file_path = rel_path
+                track_rec.file_format = ext.lstrip(".")
+                track_rec.size_bytes = file_meta.get("size_bytes", final_dest.stat().st_size)
+                # Keep the official expected duration as the verification baseline
+                if not track_rec.duration:
+                    track_rec.duration = file_meta.get("duration") or expected_duration
+                track_rec.bitrate = file_meta.get("bitrate")
+                track_rec.error_message = None
+
+            # Mark any active jobs completed
+            active_job = DownloadJob.query.filter_by(track_id=track_id).first()
+            if active_job:
+                active_job.status = "completed"
+                active_job.progress = 100.0
+                active_job.error_message = None
+
+            # Phase 1 (scale-to-millions): guard False→True so counters only
+            # move when the flag actually changes (research §2.3).
+            try:
+                from services.counters_service import on_track_downloaded
+                if album_rec and album_rec.artist_id and not was_downloaded:
+                    on_track_downloaded(album_rec.artist_id, is_downloaded=True)
+            except Exception:
+                logger.debug("[QUEUE] counter update skipped", exc_info=True)
+
+            if album_rec:
+                album_tracks = album_rec.tracks.all()
+                downloaded_count = sum(1 for t in album_tracks if t.is_downloaded)
+                album_rec.is_downloaded = downloaded_count == len(album_tracks)
+                album_rec.size_bytes = sum(t.size_bytes or 0 for t in album_tracks)
+                album_rec.local_path = str(dest_dir)
+
+            db.session.commit()
 
             # Clean up superseded files for this track slot AFTER the DB commit so no
             # track row references the deleted file and the folder watcher stays quiet.
@@ -1552,13 +1550,12 @@ def download_manual_match_track(
 
         except Exception as e:
             logger.exception("[QUEUE] Manual match failed for track %d: %s", track_id, e)
-            with app.app_context():
-                t = db.session.get(Track, track_id)
-                if t:
-                    t.status = "failed"
-                    t.progress = 0.0
-                    t.error_message = str(e)
-                    db.session.commit()
+            t = db.session.get(Track, track_id)
+            if t:
+                t.status = "failed"
+                t.progress = 0.0
+                t.error_message = str(e)
+                db.session.commit()
             return False, str(e)
 
         finally:

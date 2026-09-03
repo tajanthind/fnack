@@ -238,6 +238,7 @@ async function confirmAddArtist() {
   };
   const payload = {
     id: artistData.id,
+    provider: artistData.provider || null,
     filter_remixes: isChecked('filterRemixes', true),
     filter_lofi: isChecked('filterLofi', true),
     filter_live: isChecked('filterLive', true),
@@ -1120,6 +1121,7 @@ function _importItemFor(folderName) {
   return {
     folder_name: folderName,
     external_id: suggested && suggested.id ? suggested.id : null,
+    provider: suggested && suggested.provider ? suggested.provider : null,
   };
 }
 
@@ -1173,7 +1175,10 @@ async function importArtistFolder(idx, btnEl) {
   }
   const item = _importItemFor(folderName);
   const suggestedCand = cand.suggested_external_id || cand.suggested_deezer;
-  if (suggestedCand && suggestedCand.id) item.external_id = suggestedCand.id;
+  if (suggestedCand && suggestedCand.id) {
+    item.external_id = suggestedCand.id;
+    if (suggestedCand.provider) item.provider = suggestedCand.provider;
+  }
   await _postBulkImport([item], () => {
     showToast(`Import queued for '${folderName}' in the background.`, 'info');
     _setImportRowStatus(folderName, '<span class="badge bg-info-subtle text-info"><i class="fas fa-hourglass-half me-1"></i>Queued</span>');

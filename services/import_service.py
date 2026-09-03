@@ -236,7 +236,7 @@ def scan_root_folder_candidates(music_path: str) -> list[dict]:
 def import_artist_folder(
     music_path: str,
     folder_name: str,
-    external_id: Optional[int] = None,
+    external_id: Optional[str] = None,  # opaque external identity (provider-owned)
     filter_options: Optional[dict] = None,
 ) -> dict:
     """
@@ -272,10 +272,11 @@ def import_artist_folder(
     # chain — providers are tried in registry priority order; the provider
     # chain interprets the opaque external identity. No hidden fallback).
     disco = None
+    served_by = None  # plugin id of the provider that served the discography
     try:
         from services.metadata_service import MetadataService
-        disco = MetadataService().get_artist_discography(
-            str(external_id),
+        disco, served_by = MetadataService().get_artist_discography_with_provider(
+            external_id,
             artist_name=folder_name,
             filter_remixes=opts.get("filter_remixes", True),
             filter_lofi=opts.get("filter_lofi", True),
@@ -286,8 +287,8 @@ def import_artist_folder(
             include_compilations=opts.get("include_compilations", False),
         )
         if disco and disco.get("albums"):
-            logger.info("[METADATA] Discography served for '%s' (%d albums)",
-                        folder_name, len(disco.get("albums", [])))
+            logger.info("[METADATA] Discography served for '%s' by %s (%d albums)",
+                        folder_name, served_by, len(disco.get("albums", [])))
     except Exception:
         logger.debug("[METADATA] discography fetch failed, using empty shape", exc_info=True)
         disco = {"artist_name": folder_name, "albums": []}
@@ -316,10 +317,13 @@ def import_artist_folder(
         artist = Artist.query.filter(db.func.lower(Artist.name) == artist_name.lower()).first()
         if artist:
             artist.external_id = str(external_id)
+            if served_by:
+                artist.provider_id = served_by
             artist.image_url = disco["artist_image"]
         else:
             artist = Artist(
                 external_id=str(external_id),
+                provider_id=served_by,
                 name=artist_name,
                 image_url=disco["artist_image"],
                 source="folder",
@@ -341,10 +345,12 @@ def import_artist_folder(
     isrc_lookup: dict[str, Track] = {}
 
     for a in disco.get("albums", []):
-        album = Album.query.filter_by(artist_id=artist.id, external_id=str(a["id"])).first()
+        album = Album.query.filter_by(artist_id=artist.id, provider_id=served_by,
+                                      external_id=str(a["id"])).first()
         if not album:
             album = Album(
                 artist_id=artist.id,
+                provider_id=served_by,
                 name=a["title"],
                 year=a.get("year"),
                 cover_url=a.get("cover_url"),
@@ -363,11 +369,13 @@ def import_artist_folder(
                 album.mb_year = a["mb_year"]
 
         for t in a.get("tracks", []):
-            track = Track.query.filter_by(album_id=album.id, external_id=str(t["id"])).first()
+            track = Track.query.filter_by(album_id=album.id, provider_id=served_by,
+                                          external_id=str(t["id"])).first()
             if not track:
                 track = Track(
                     album_id=album.id,
                     artist_id=artist.id,
+                    provider_id=served_by,
                     title=t["title"],
                     track_number=t.get("track_position"),
                     disc_number=t.get("disk_number", 1),
