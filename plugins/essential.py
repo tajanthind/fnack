@@ -8,7 +8,11 @@ Relationship between the three plugin sets:
 - **Official** — every first-party plugin published in the fnack-plugins
   repository (`/home/tajanthind/fnack-plugins`). The vendored copy lives in
   this repo's `bundled_plugins/` directory (see
-  `wayfinder/tickets/plugin-bundled-sync-of-truth.md`).
+  `wayfinder/tickets/plugin-bundled-sync-of-truth.md`). A few official
+  plugins are intentionally NOT vendored/bundled (un-shipped: fnack.lidarr,
+  fnack.clean-navidrome-artists, fnack.fix-navidrome-splits) — they remain
+  fully installable from the fnack-plugins Marketplace so they can be
+  rebuilt/kept as plugins without core changes.
 - **Essential** — the small subset of official plugins required for the
   out-of-box, first-run workflow (below). The Docker build prunes
   `bundled_plugins/` to exactly this set (see

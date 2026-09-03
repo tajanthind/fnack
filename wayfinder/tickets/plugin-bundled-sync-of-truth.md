@@ -27,7 +27,7 @@ Release process (documented standing decision):
    fresh installs work with zero marketplace visits; the fnack-plugins repo
    is what Updates + Marketplace re-installs resolve against.
 
-Verified at reconciliation time: all 17 bundled plugins are byte-identical to
+Verified at reconciliation time: all 15 vendored bundled plugins are byte-identical to
 their `fnack-plugins/plugins/` counterparts (deep diff, no differences).
 
 Reconciliation ticket for Brief 3 §4.

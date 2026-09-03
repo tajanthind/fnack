@@ -86,8 +86,28 @@ class PluginRegistry:
         """Merged, de-duplicated (by id, newest wins) plugin listing across
         every enabled repository's cached index, annotated with whether
         it's already installed and whether the id is a bundled plugin
-        (bundled wins — never installable from a repo)."""
-        installed_ids = {p.id: p.version for p in InstalledPlugin.query.all()}
+        (bundled wins — never installable from a repo).
+
+        "Installed" is computed from what is PHYSICALLY present (a bundled
+        dir in the image or a dir under the plugins dir), not from orphaned
+        InstalledPlugin rows: rows left over from plugins that used to ship
+        with the image but no longer do must not make the Marketplace report
+        a plugin as installed when its code is not actually there."""
+        present_ids: set[str] = set()
+        try:
+            for d in self.manager.discover():
+                mf = d / "plugin.json"
+                if not mf.exists():
+                    continue
+                try:
+                    pid = json.loads(mf.read_text(encoding="utf-8")).get("id")
+                except Exception:
+                    pid = None
+                present_ids.add(pid or d.name)
+        except Exception:
+            pass
+        installed_ids = {p.id: p.version for p in InstalledPlugin.query.all()
+                         if p.id in present_ids}
         bundled_ids = set()
         try:
             bundled_ids = {d.name for d in self.manager.discover_bundled()}

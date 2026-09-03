@@ -7,8 +7,6 @@ slowed the dashboard down:
                               fuzzy, cross-artist/collab), re-tag files to the
                               canonical album/artist, strip per-track date tags,
                               backfill missing album artwork, clean empty dirs.
-  2. run_auto_split_repair  - merge split album rows inside Navidrome's DB and
-                              trigger a rescan (when navidrome_db_path is set).
 
 It is spawned at container boot and periodically (6h) by app.py. A lock file
 guarantees only one maintenance run at a time, even if boot and the periodic
@@ -72,24 +70,12 @@ def main() -> int:
     t0 = time.time()
     print("[MAINTENANCE] Starting library maintenance...")
     stats = normalize_album_tags(app, quiet=False)
-
-    repair = {"enabled": False}
-    try:
-        from plugins.manager import plugin_manager as _pm
-        if _pm is not None and _pm.get_plugin("fnack.navidrome") is not None:
-            repair = _pm.invoke_provider(_pm.get_plugin("fnack.navidrome"), "run_split_repair") or {"enabled": False}
-        else:
-            print("[MAINTENANCE] Navidrome plugin not enabled — skipping split repair")
-    except Exception as e:
-        print(f"[MAINTENANCE] Navidrome split-repair error: {e}")
-
     print(
         f"[MAINTENANCE] Done in {time.time() - t0:.1f}s | "
         f"checked {stats.get('checked', 0)}, retagged {stats.get('retagged', 0)}, "
         f"moved {stats.get('moved', 0)}, merged {stats.get('merged_albums', 0)} album(s), "
         f"{stats.get('removed_dup_tracks', 0)} dup track(s) removed, "
-        f"{stats.get('covers_backfilled', 0)} cover(s) saved | "
-        f"navidrome-repair {'enabled, ' + str(repair.get('merged_rows', 0)) + ' row(s) merged' if repair.get('enabled') else 'disabled'}"
+        f"{stats.get('covers_backfilled', 0)} cover(s) saved"
     )
     return 0
 

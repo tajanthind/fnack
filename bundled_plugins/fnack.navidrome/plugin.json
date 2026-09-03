@@ -9,7 +9,7 @@
   "min_core_version": "0.2.0",
   "entry_point": "plugin:NavidromePlugin",
   "author": "fnack",
-  "description": "Authoritative Navidrome media-server integration (media.scan / media.health / media.connection_test): ping test, debounced scan trigger, split-album repair. Config is plugin-owned. Implementation lives in this plugin (navidrome.py).",
+  "description": "Authoritative Navidrome media-server integration (media.scan / media.health / media.connection_test): ping test, debounced scan trigger. Config is plugin-owned. Implementation lives in this plugin (navidrome.py).",
   "homepage": "",
   "permissions": [
     "network",
@@ -47,5 +47,9 @@
   },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["media.scan", "media.connection_test", "media.health"]
+  "capabilities": [
+    "media.scan",
+    "media.connection_test",
+    "media.health"
+  ]
 }

@@ -206,7 +206,7 @@ class MetadataService:
                 return info
         return None
 
-    # -- album.search / track.search / album.tracks (Lidarr-facing) ---------
+    # -- album.search / track.search / album.tracks ----------------------
 
     def search_album(self, query: str, limit: int = 20) -> list[dict]:
         """Live album search. First provider returning results wins.
