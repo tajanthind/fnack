@@ -2,7 +2,7 @@
 """fnack library re-verification tool.
 
 Checks every downloaded track against the OFFICIAL duration (fetched from the
-Deezer public API, no authentication) and marks confirmed mismatches as failed
+metadata provider chain) and marks confirmed mismatches as failed
 so they can be inspected or re-downloaded. Files are NOT deleted.
 
 Also repairs the stored track duration with the official value (an earlier bug
@@ -57,12 +57,14 @@ def main() -> int:
                 skipped += 1
                 continue
 
-            # Official expected duration: Deezer first, else the stored value
+            # Official expected duration: ask the metadata chain, else the
+            # stored value. The provider chain interprets the opaque external
+            # id (non-matching providers return nothing gracefully).
             official = None
-            if t.deezer_id and str(t.deezer_id).isdigit():
+            if t.external_id:
                 try:
                     from services.metadata_service import MetadataService
-                    info = MetadataService().get_track_metadata(str(t.deezer_id)) or {}
+                    info = MetadataService().get_track_metadata(str(t.external_id)) or {}
                     official = info.get("duration")
                 except Exception:
                     official = None

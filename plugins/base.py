@@ -32,7 +32,12 @@ class TrackRef:
     isrc: Optional[str] = None
     duration: Optional[float] = None       # expected duration, seconds
     spotify_url: Optional[str] = None
-    deezer_id: Optional[str] = None
+    # Provider-neutral external track identity (opaque — the metadata
+    # provider chain that supplied the track interprets it). Core populates
+    # `external_id`; `deezer_id` is kept as a deprecated alias for plugins
+    # built against older SDK versions.
+    external_id: Optional[str] = None
+    deezer_id: Optional[str] = None        # deprecated alias of external_id
     disc_number: int = 1
     track_number: Optional[int] = None
 
@@ -65,7 +70,7 @@ class TaskResult:
 @dataclass
 class RecommendationItem:
     kind: str                              # "artist" | "album" | "track"
-    ref_id: str                            # provider-specific id (e.g. deezer id)
+    ref_id: str                            # provider-specific external id (opaque)
     title: str
     subtitle: str = ""
     score: float = 0.0
@@ -153,7 +158,8 @@ class DownloaderPlugin(PluginBase):
 
 
 class MetadataProviderPlugin(PluginBase):
-    """Artist/album/track metadata lookup, e.g. a Deezer/MusicBrainz-style source."""
+    """Artist/album/track metadata lookup: a provider supplying
+    music metadata (the capability chain resolves providers)."""
 
     priority: int = 100
 

@@ -4,8 +4,8 @@ Phase 3 (brief 03): the queue/app/import orchestrate; this service owns
 metadata resolution. Each method resolves ONE capability through the
 capability registry (enabled, priority-ordered providers) and invokes the
 best provider through the manager's ProviderExecutor boundary. Core never
-imports services.spotify/deezer/musicbrainz/itunes and never names a
-provider.
+imports a provider implementation and never names a provider; providers are
+selected by capability and registry priority alone.
 
 Methods (each resolves a capability):
 
@@ -109,8 +109,9 @@ class MetadataService:
 
     def search_artist(self, name: str, limit: int = 10) -> list[dict]:
         """Search artists by name. First provider returning results wins
-        (Deezer p10 is authoritative today). CapabilityUnavailable when no
-        artist.search provider is enabled."""
+        (providers are tried in registry priority order — the ordering is
+        configuration/registry policy, not core). CapabilityUnavailable when
+        no artist.search provider is enabled."""
         providers = self._providers_for(ARTIST_SEARCH, "search_artist")
         for provider in providers:
             try:
@@ -131,14 +132,15 @@ class MetadataService:
         **filters,
     ) -> dict:
         """Fetch an artist's discography. First provider returning a usable
-        discography wins. `provider_artist_id` is the key the PRIMARY
-        provider understands (Deezer id today); `artist_name` is passed to
-        providers keyed by name (iTunes) — the service is provider-neutral,
-        it does not branch on provider IDs.
+        discography wins. `provider_artist_id` is the opaque external
+        identity the selected provider understands — the provider owns
+        parsing/conversion; core never interprets it. `artist_name` is passed
+        to providers keyed by name. The service is provider-neutral and does
+        not branch on provider IDs.
 
         `filters` (filter_remixes/filter_lofi/...) are passed to providers
-        that accept them; providers that don't ignore them (the primary
-        Deezer provider applies them). CapabilityUnavailable when no
+        that accept them; providers that don't ignore them. Provider-specific
+        filter semantics live in the provider. CapabilityUnavailable when no
         artist.discography provider is enabled.
         """
         providers = self._providers_for(ARTIST_DISCOGRAPHY, "get_artist_discography")

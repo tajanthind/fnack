@@ -1057,7 +1057,7 @@ function renderImportCandidates(candidates) {
   for (let i = 0; i < candidates.length; i++) {
     const c = candidates[i];
     const isImported = c.is_already_imported;
-    const suggested = c.suggested_deezer;
+    const suggested = c.suggested_external_id || c.suggested_deezer;
     const rowId = _folderRowId(c.folder_name);
 
     html += `
@@ -1116,10 +1116,10 @@ function _setImportRowStatus(folderName, html) {
 
 function _importItemFor(folderName) {
   const cand = _importCandidates.find(c => c.folder_name === folderName);
-  const suggested = cand ? cand.suggested_deezer : null;
+  const suggested = cand ? (cand.suggested_external_id || cand.suggested_deezer) : null;
   return {
     folder_name: folderName,
-    deezer_id: suggested && suggested.id ? suggested.id : null,
+    external_id: suggested && suggested.id ? suggested.id : null,
   };
 }
 
@@ -1172,7 +1172,8 @@ async function importArtistFolder(idx, btnEl) {
     btnEl.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Queued...';
   }
   const item = _importItemFor(folderName);
-  if (cand.suggested_deezer && cand.suggested_deezer.id) item.deezer_id = cand.suggested_deezer.id;
+  const suggestedCand = cand.suggested_external_id || cand.suggested_deezer;
+  if (suggestedCand && suggestedCand.id) item.external_id = suggestedCand.id;
   await _postBulkImport([item], () => {
     showToast(`Import queued for '${folderName}' in the background.`, 'info');
     _setImportRowStatus(folderName, '<span class="badge bg-info-subtle text-info"><i class="fas fa-hourglass-half me-1"></i>Queued</span>');
@@ -1319,13 +1320,13 @@ function renderSelectArtistResults(results) {
   container.innerHTML = html;
 }
 
-function confirmSelectArtistForFolder(deezerId, name, imageUrl, nbAlbums) {
+function confirmSelectArtistForFolder(externalId, name, imageUrl, nbAlbums) {
   if (!_selectedImportFolder) return;
 
   const cand = _importCandidates.find(c => c.folder_name === _selectedImportFolder);
   if (cand) {
-    cand.suggested_deezer = {
-      id: deezerId,
+    cand.suggested_external_id = cand.suggested_deezer = {
+      id: externalId,
       name: name,
       image_url: imageUrl,
       nb_album: nbAlbums,

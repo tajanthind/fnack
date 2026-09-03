@@ -1,4 +1,4 @@
-"""Interactive Root Folder Importer Service: Discovers local artist folders, matches with Deezer discographies, and maps local files."""
+"""Interactive Root Folder Importer Service: Discovers local artist folders, matches them with the metadata provider chain's discographies, and maps local files."""
 
 import logging
 import re
@@ -16,13 +16,13 @@ logger = logging.getLogger("fnack.import")
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aac"}
 
 # ── Scan caches ────────────────────────────────────────────────────────────
-# Scanning a big /music root is slow mostly because of the Deezer network
+# Scanning a big /music root is slow mostly because of the metadata network
 # lookups (one search per un-imported folder) and mutagen tag sampling. Cache
 # both so repeated scans (page refresh, after each import) stay fast.
 _SCAN_TTL_SECONDS = 30.0          # whole-scan result cache
-_SEARCH_TTL_SECONDS = 600.0       # Deezer artist-search cache (per normalized name)
+_SEARCH_TTL_SECONDS = 600.0       # artist-search cache (per normalized name)
 _scan_cache: dict = {}            # str(music_path) -> {"ts": float, "candidates": list}
-_deezer_search_cache: dict = {}   # normalized query -> {"ts": float, "results": list}
+_artist_search_cache: dict = {}   # normalized query -> {"ts": float, "results": list}
 
 
 def _invalidate_scan_cache() -> None:
@@ -36,18 +36,18 @@ def _cached_search_artist(query: str, limit: int = 6) -> list:
     if not key:
         return []
     now = time.monotonic()
-    hit = _deezer_search_cache.get(key)
+    hit = _artist_search_cache.get(key)
     if hit and now - hit["ts"] < _SEARCH_TTL_SECONDS:
         return hit["results"]
     try:
-        # MetadataService (artist.search capability) — served by the
-        # fnack.deezer-batch plugin; core has no Deezer implementation.
+        # MetadataService (artist.search capability) — the provider chain
+        # owns the search; core never names a provider.
         from services.metadata_service import MetadataService
         results = MetadataService().search_artist(query, limit=limit)
     except Exception as e:
         logger.debug("[IMPORT] Artist search failed for '%s': %s", query, e)
         results = []
-    _deezer_search_cache[key] = {"ts": now, "results": results}
+    _artist_search_cache[key] = {"ts": now, "results": results}
     return results
 
 
@@ -75,7 +75,7 @@ def _scan_one_folder(
     existing_by_name: dict,
     existing_by_id: dict,
 ) -> Optional[dict]:
-    """Scan a single artist folder (tag sampling + Deezer suggestion)."""
+    """Scan a single artist folder (tag sampling + provider suggestion)."""
     audio_files = [f for f in folder.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
     if not audio_files:
         return None
@@ -121,7 +121,7 @@ def _scan_one_folder(
         or (top_artist and existing_by_name.get(_normalize(top_artist)))
     )
 
-    # Search Deezer suggestions if not imported (cached + only when needed)
+    # Search provider suggestions if not imported (cached + only when needed)
     suggested = None
     alternate_matches = []
     if not already_id:
@@ -164,7 +164,8 @@ def _scan_one_folder(
         "album_count": len(albums_set) or 1,
         "is_already_imported": bool(already_id),
         "existing_artist_id": already_id,
-        "suggested_deezer": suggested,
+        "suggested_deezer": suggested,   # legacy wire alias (frontend contract)
+        "suggested_external_id": suggested,
         "alternate_matches": alternate_matches,
     }
 
@@ -174,7 +175,7 @@ def scan_root_folder_candidates(music_path: str) -> list[dict]:
     Scan root music folder and return list of artist folder candidates for interactive import.
     Uses multi-factor scoring (folder name, albumartist tags, track tags) to accurately identify artists.
 
-    The folder walks run concurrently (bounded greenlet pool) and Deezer lookups are cached,
+    The folder walks run concurrently (bounded greenlet pool) and metadata lookups are cached,
     so large libraries scan in a few seconds instead of a network round-trip per folder.
     """
     root = Path(music_path)
@@ -190,7 +191,7 @@ def scan_root_folder_candidates(music_path: str) -> list[dict]:
 
     existing_artists = Artist.query.all()
     existing_by_name = {_normalize(a.name): a.id for a in existing_artists}
-    existing_by_id = {a.spotify_id: a.id for a in existing_artists if a.spotify_id}
+    existing_by_id = {a.external_id: a.id for a in existing_artists if a.external_id}
 
     folders = [
         folder for folder in sorted(root.iterdir())
@@ -205,7 +206,7 @@ def scan_root_folder_candidates(music_path: str) -> list[dict]:
             if cand:
                 results.append(cand)
     else:
-        # Parallel scan: the network-bound Deezer lookups and mutagen reads are
+        # Parallel scan: the network-bound metadata lookups and mutagen reads are
         # greenlet-safe under the app's gevent monkey-patching (requests is
         # patched), so we can process several folders concurrently.
         try:
@@ -235,11 +236,12 @@ def scan_root_folder_candidates(music_path: str) -> list[dict]:
 def import_artist_folder(
     music_path: str,
     folder_name: str,
-    deezer_artist_id: Optional[int] = None,
+    external_id: Optional[int] = None,
     filter_options: Optional[dict] = None,
 ) -> dict:
     """
-    Import an artist folder: Pulls Deezer discography and maps existing local audio files.
+    Import an artist folder: pulls the provider-chain discography for the artist's
+    external identity and maps existing local audio files.
     """
     root = Path(music_path)
     artist_dir = root / folder_name
@@ -252,29 +254,28 @@ def import_artist_folder(
     audio_files = [f for f in artist_dir.rglob("*") if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS]
     opts = filter_options or {}
 
-    # If deezer_artist_id not provided, try to search (Phase 3: application
+    # If external_id not provided, try to search (Phase 3: application
     # service — artist.search capability).
-    if not deezer_artist_id:
+    if not external_id:
         try:
             from services.metadata_service import MetadataService
             results = MetadataService().search_artist(folder_name, limit=1)
         except Exception:
             results = []
         if results:
-            deezer_artist_id = results[0]["id"]
+            external_id = results[0]["id"]
 
-    if not deezer_artist_id:
-        return {"error": f"Could not resolve Deezer artist for folder '{folder_name}'"}
+    if not external_id:
+        return {"error": f"Could not resolve an artist match for folder '{folder_name}'"}
 
     # Fetch discography (Phase 3: MetadataService owns the artist.discography
-    # chain — Deezer p10 authoritative, then MusicBrainz p20 / Spotify p30 /
-    # iTunes p40, first usable discography wins. No direct services.deezer
-    # call, no hidden fallback).
+    # chain — providers are tried in registry priority order; the provider
+    # chain interprets the opaque external identity. No hidden fallback).
     disco = None
     try:
         from services.metadata_service import MetadataService
         disco = MetadataService().get_artist_discography(
-            str(deezer_artist_id),
+            str(external_id),
             artist_name=folder_name,
             filter_remixes=opts.get("filter_remixes", True),
             filter_lofi=opts.get("filter_lofi", True),
@@ -309,16 +310,16 @@ def import_artist_folder(
         logger.debug("[MB] enrichment skipped", exc_info=True)
 
     artist_name = disco["artist_name"]
-    artist = Artist.query.filter_by(spotify_id=str(deezer_artist_id)).first()
+    artist = Artist.query.filter_by(external_id=str(external_id)).first()
     if not artist:
         # Check by exact name match before creating
         artist = Artist.query.filter(db.func.lower(Artist.name) == artist_name.lower()).first()
         if artist:
-            artist.spotify_id = str(deezer_artist_id)
+            artist.external_id = str(external_id)
             artist.image_url = disco["artist_image"]
         else:
             artist = Artist(
-                spotify_id=str(deezer_artist_id),
+                external_id=str(external_id),
                 name=artist_name,
                 image_url=disco["artist_image"],
                 source="folder",
@@ -340,14 +341,14 @@ def import_artist_folder(
     isrc_lookup: dict[str, Track] = {}
 
     for a in disco.get("albums", []):
-        album = Album.query.filter_by(artist_id=artist.id, deezer_id=str(a["id"])).first()
+        album = Album.query.filter_by(artist_id=artist.id, external_id=str(a["id"])).first()
         if not album:
             album = Album(
                 artist_id=artist.id,
                 name=a["title"],
                 year=a.get("year"),
                 cover_url=a.get("cover_url"),
-                deezer_id=str(a["id"]),
+                external_id=str(a["id"]),
                 record_type=a.get("record_type", "album"),
             )
             db.session.add(album)
@@ -362,7 +363,7 @@ def import_artist_folder(
                 album.mb_year = a["mb_year"]
 
         for t in a.get("tracks", []):
-            track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()
+            track = Track.query.filter_by(album_id=album.id, external_id=str(t["id"])).first()
             if not track:
                 track = Track(
                     album_id=album.id,
@@ -372,7 +373,7 @@ def import_artist_folder(
                     disc_number=t.get("disk_number", 1),
                     duration=t.get("duration"),
                     isrc=t.get("isrc"),
-                    deezer_id=str(t["id"]),
+                    external_id=str(t["id"]),
                     status="missing",
                 )
                 db.session.add(track)

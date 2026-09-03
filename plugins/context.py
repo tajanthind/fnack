@@ -132,14 +132,14 @@ class LibraryContext:
 
     def search_albums(self, query: str, limit: int = 10) -> list[dict]:
         """Live album search (Phase 4: via MetadataService — album.search
-        capability, served by the fnack.deezer-batch plugin). Provider-
-        generic: the plugin boundary owns the implementation."""
+        capability; the provider chain owns the implementation and the
+        plugin boundary stays provider-generic."""
         from services.metadata_service import MetadataService
         return MetadataService().search_album(query, limit=limit)
 
     def search_tracks(self, query: str, limit: int = 10) -> list[dict]:
         """Live track search (Phase 4: via MetadataService — track.search
-        capability, served by the fnack.deezer-batch plugin)."""
+        capability; the provider chain owns the implementation."""
         from services.metadata_service import MetadataService
         return MetadataService().search_track(query, limit=limit)
 
@@ -157,11 +157,12 @@ class LibraryContext:
         return MetadataService().get_track_metadata(str(track_id)) or {}
 
     def queue_lidarr_grab(self, item_type: str, item_id: int) -> list[int]:
-        """Expand a Lidarr grab (a Deezer album or track id) into the local
-        library — creates Artist / Album / Track rows and queues one
-        DownloadJob per track so the queue worker downloads them like any
-        other track. Returns the created/queued job ids (moved verbatim from
-        the former `services/lidarr_service.py::_create_lidarr_grab_job`)."""
+        """Expand a Lidarr grab (an opaque album or track id from the
+        Lidarr request) into the local library — creates Artist / Album /
+        Track rows and queues one DownloadJob per track so the queue worker
+        downloads them like any other track. Returns the created/queued job
+        ids (moved verbatim from the former
+        `services/lidarr_service.py::_create_lidarr_grab_job`)."""
         from services.metadata_service import MetadataService
         from models import Album, Artist, DownloadJob, Track, db
 
@@ -173,7 +174,7 @@ class LibraryContext:
             artist_name = info.get("artist_name") or "Unknown Artist"
             track_title = info.get("title") or "Unknown Track"
             album_title = info.get("album_title") or track_title
-            album_deezer_id = info.get("album_id")
+            album_external_id = info.get("album_id")
             cover_url = None
             year = None
             record_type = "single"
@@ -188,7 +189,7 @@ class LibraryContext:
             info = _md.get_album_metadata(str(item_id)) or {}
             artist_name = info.get("artist_name") or "Unknown Artist"
             album_title = info.get("title") or "Unknown Album"
-            album_deezer_id = info.get("id") or item_id
+            album_external_id = info.get("id") or item_id
             cover_url = info.get("cover_url")
             year = info.get("year")
             record_type = info.get("record_type") or "album"
@@ -201,7 +202,7 @@ class LibraryContext:
         artist = Artist.query.filter_by(name=artist_name).first()
         if not artist:
             artist = Artist(
-                spotify_id=f"lidarr:{artist_name}",
+                external_id =f"lidarr:{artist_name}",
                 name=artist_name,
                 source="lidarr",
                 monitored=True,
@@ -210,22 +211,22 @@ class LibraryContext:
             db.session.flush()
 
         album = None
-        if album_deezer_id:
-            album = Album.query.filter_by(artist_id=artist.id, deezer_id=str(album_deezer_id)).first()
+        if album_external_id:
+            album = Album.query.filter_by(artist_id=artist.id, external_id=str(album_external_id)).first()
         if not album:
             album = Album(
                 artist_id=artist.id,
                 name=album_title,
                 year=year,
                 cover_url=cover_url,
-                deezer_id=str(album_deezer_id) if album_deezer_id else None,
+                external_id=str(album_external_id) if album_external_id else None,
                 record_type=record_type,
             )
             db.session.add(album)
             db.session.flush()
 
         for t in tracks_to_queue:
-            track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()
+            track = Track.query.filter_by(album_id=album.id, external_id=str(t["id"])).first()
             if not track:
                 track = Track(
                     album_id=album.id,
@@ -234,7 +235,7 @@ class LibraryContext:
                     track_number=t.get("track_position") or 0,
                     disc_number=t.get("disk_number") or 1,
                     duration=t.get("duration"),
-                    deezer_id=str(t["id"]),
+                    external_id=str(t["id"]),
                     status="missing",
                 )
                 db.session.add(track)
@@ -250,7 +251,7 @@ class LibraryContext:
                 album_id=album.id,
                 artist_id=artist.id,
                 item_type="track",
-                album_spotify_id=str(album.deezer_id or ""),
+                album_external_id=str(album.external_id or ""),
                 album_name=album.name,
                 album_type=album.record_type,
                 album_url="",

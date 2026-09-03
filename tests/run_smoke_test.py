@@ -32,7 +32,7 @@ with app.app_context():
     db.create_all()
 
     # Real fnack Track requires an Album (and an Artist for the relationship).
-    artist = Artist(spotify_id="test-artist-1", name="Test Artist")
+    artist = Artist(external_id="test-artist-1", name="Test Artist")
     db.session.add(artist)
     db.session.flush()
     album = Album(artist_id=artist.id, name="Test Album")

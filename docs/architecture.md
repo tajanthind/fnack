@@ -100,7 +100,7 @@ is the vendored copy. Snapshot of the catalog at the time of writing:
 |--------|-------------|------|
 | `fnack.spotiflac` | `download.track` | Primary lossless downloader (FLAC via Tidal/Qobuz/Deezer/SoundCloud, zero-auth) |
 | `fnack.ytdlp` | `download.track` | Fallback downloader (YouTube / YouTube Music / SoundCloud) |
-| `fnack.deezer-batch` | `artist.search`, `artist.discography`, `artist.info`, `track.metadata`, `album.metadata`, `album.search`, `track.search`, `album.tracks` | Authoritative Deezer metadata |
+| `fnack.deezer-batch` | `artist.search`, `artist.discography`, `artist.info`, `track.metadata`, `album.metadata`, `album.search`, `track.search`, `album.tracks` | Deezer metadata provider |
 | `fnack.musicbrainz` | `artist.search`, `artist.discography` (+ `enrich`) | Catalogue enrichment |
 | `fnack.itunes` | `artist.search`, `artist.discography`, `track.metadata`, `album.tracks` | iTunes metadata fallback |
 | `fnack.spotify` | `track.resolve` | Spotify track-URL resolution (ISRC-first, zero-auth) |
@@ -135,6 +135,20 @@ the out-of-box first-run workflow: `fnack.spotiflac`, `fnack.ytdlp`,
   path that depends on any optional plugin being present.
 - Maintenance tasks run as a core subprocess (`scripts/run_maintenance.py`),
   not via `library.task` — the library-task plugins are optional.
+
+## Identity model (provider-neutral)
+
+Core stores each artist/album/track's **external identity** as an opaque
+string (`Artist.external_id`, `Album.external_id`, `Track.external_id`):
+the id the metadata provider that supplied the record uses. Core never
+parses, converts, or int()s it — when the provider chain resolves an
+artist/album/track, the selected provider interprets its own identity (a
+Deezer provider converts a numeric Deezer id, a MusicBrainz provider an
+MBID, and so on). Providers that don't recognize an id decline it
+gracefully (`None`/empty), so the chain moves on; a foreign id never
+crashes core. Values may be prefixed for uniqueness when a record was
+created outside the provider chain (e.g. `acoustid:<name>`); the prefix is
+also opaque to core.
 
 ## Configuration model
 
