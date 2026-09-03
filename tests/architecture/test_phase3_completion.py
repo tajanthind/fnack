@@ -209,7 +209,10 @@ def test_multiple_providers_work() -> None:
             return _M()
         def search_artist(self, name): return self._r
     mgr2 = Mgr({"artist.search": [MetaProv([]), MetaProv([{"id": 1, "name": "A"}])]})
-    assert MetadataService(manager=mgr2).search_artist("A") == [{"id": 1, "name": "A"}]
+    # search results are annotated with the serving provider's plugin id
+    # (provenance data) — the identity itself is unchanged.
+    res = MetadataService(manager=mgr2).search_artist("A")
+    assert res == [{"id": 1, "name": "A", "provider": "fnack.meta"}], res
 
     # Media first-success
     mgr3 = Mgr({"media.scan": [MediaProv("media.scan", False), MediaProv("media.scan", True)]})

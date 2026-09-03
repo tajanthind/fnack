@@ -45,6 +45,14 @@ from fnack.plugin_api.capabilities import (
 from fnack.plugin_api.errors import CapabilityUnavailable
 
 
+
+def _provider_id_of(provider) -> Optional[str]:
+    """Plugin id of a provider (provenance data for persisted identities)."""
+    manifest = getattr(provider, "manifest", None)
+    pid = getattr(manifest, "id", None)
+    return str(pid) if pid else None
+
+
 class MetadataService:
     """Owns metadata capability resolution + the first-non-empty policy."""
 
@@ -111,7 +119,11 @@ class MetadataService:
         """Search artists by name. First provider returning results wins
         (providers are tried in registry priority order — the ordering is
         configuration/registry policy, not core). CapabilityUnavailable when
-        no artist.search provider is enabled."""
+        no artist.search provider is enabled.
+
+        Each result is annotated with the ``provider`` that supplied it (the
+        winning provider's plugin id) so callers can persist provider-scoped
+        identities; the annotation is data, never a branch."""
         providers = self._providers_for(ARTIST_SEARCH, "search_artist")
         for provider in providers:
             try:
@@ -119,7 +131,9 @@ class MetadataService:
             except Exception:
                 continue
             if found:
-                return found[:limit]
+                provider_id = _provider_id_of(provider)
+                return [dict(item, provider=provider_id) if isinstance(item, dict) else item
+                        for item in found][:limit]
         return []
 
     # -- artist.discography -------------------------------------------------
@@ -131,14 +145,28 @@ class MetadataService:
         artist_name: Optional[str] = None,
         **filters,
     ) -> dict:
-        """Fetch an artist's discography. First provider returning a usable
-        discography wins. `provider_artist_id` is the opaque external
-        identity the selected provider understands — the provider owns
-        parsing/conversion; core never interprets it. `artist_name` is passed
-        to providers keyed by name. The service is provider-neutral and does
-        not branch on provider IDs.
+        """Fetch an artist's discography (see get_artist_discography_with_provider)."""
+        disco, _ = self.get_artist_discography_with_provider(
+            provider_artist_id, artist_name=artist_name, **filters)
+        return disco
 
-        `filters` (filter_remixes/filter_lofi/...) are passed to providers
+    def get_artist_discography_with_provider(
+        self,
+        provider_artist_id: str,
+        *,
+        artist_name: Optional[str] = None,
+        **filters,
+    ) -> tuple:
+        """Fetch an artist's discography; returns ``(discography, provider_id)``
+        where provider_id is the plugin id of the provider that SERVED it
+        (None when none could). First provider returning a usable discography
+        wins. ``provider_artist_id`` is the opaque external identity the
+        selected provider understands — the provider owns parsing/conversion;
+        core never interprets it. ``artist_name`` is passed to providers keyed
+        by name. The service is provider-neutral and does not branch on
+        provider IDs.
+
+        ``filters`` (filter_remixes/filter_lofi/...) are passed to providers
         that accept them; providers that don't ignore them. Provider-specific
         filter semantics live in the provider. CapabilityUnavailable when no
         artist.discography provider is enabled.
@@ -159,8 +187,8 @@ class MetadataService:
             except Exception:
                 continue
             if d and d.get("albums"):
-                return d
-        return {"artist_name": artist_name or "", "albums": []}
+                return d, _provider_id_of(provider)
+        return {"artist_name": artist_name or "", "albums": []}, None
 
     # -- artist.info --------------------------------------------------------
 

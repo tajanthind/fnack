@@ -136,19 +136,26 @@ the out-of-box first-run workflow: `fnack.spotiflac`, `fnack.ytdlp`,
 - Maintenance tasks run as a core subprocess (`scripts/run_maintenance.py`),
   not via `library.task` — the library-task plugins are optional.
 
-## Identity model (provider-neutral)
+## Identity model (provider-scoped, provider-neutral)
 
 Core stores each artist/album/track's **external identity** as an opaque
-string (`Artist.external_id`, `Album.external_id`, `Track.external_id`):
-the id the metadata provider that supplied the record uses. Core never
-parses, converts, or int()s it — when the provider chain resolves an
-artist/album/track, the selected provider interprets its own identity (a
-Deezer provider converts a numeric Deezer id, a MusicBrainz provider an
-MBID, and so on). Providers that don't recognize an id decline it
-gracefully (`None`/empty), so the chain moves on; a foreign id never
-crashes core. Values may be prefixed for uniqueness when a record was
-created outside the provider chain (e.g. `acoustid:<name>`); the prefix is
-also opaque to core.
+string alongside the **provider that supplied it**
+(`Artist.provider_id` / `Album.provider_id` / `Track.provider_id` hold the
+supplying plugin's id; `external_id` holds that provider's own id for the
+entity). Core never parses, converts, or int()s either value — when the
+provider chain resolves an entity, the selected provider interprets its own
+identity (a Deezer provider converts a numeric Deezer id, a MusicBrainz
+provider an MBID, and so on). Providers that don't recognize an id decline
+it gracefully (`None`/empty), so the chain moves on; a foreign id never
+crashes core.
+
+Scoping by provider means two different providers may use the SAME external
+id for different entities without colliding: artists are unique per
+(provider_id, external_id), and discography dedup/prune happens inside the
+serving provider's namespace. Search results carry the supplying provider,
+and syncs record the provider that actually served the discography.
+Self-created identities (e.g. `acoustid:<name>` created from a single
+unknown track) have provider_id NULL and use a prefixed external id.
 
 ## Configuration model
 

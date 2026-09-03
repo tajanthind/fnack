@@ -489,10 +489,10 @@ def _sync_artist_discography_background(artist_id: int, external_id: str, option
             # value. No hidden fallback: if no artist.discography provider is
             # enabled the service returns the empty shape (MASTER rule 3).
             disco = None
-            served_by = None
+            served_by = None  # plugin id of the provider that served the discography
             try:
                 from services.metadata_service import MetadataService
-                disco = MetadataService().get_artist_discography(
+                disco, served_by = MetadataService().get_artist_discography_with_provider(
                     external_id,
                     artist_name=artist.name,
                     filter_remixes=options.get("filter_remixes", True),
@@ -504,9 +504,8 @@ def _sync_artist_discography_background(artist_id: int, external_id: str, option
                     include_compilations=options.get("include_compilations", False),
                 )
                 if disco and disco.get("albums"):
-                    served_by = "metadata_service"
-                    logger.info("[METADATA] Discography served for '%s' (%d albums)",
-                                artist.name, len(disco.get("albums", [])))
+                    logger.info("[METADATA] Discography served for '%s' by %s (%d albums)",
+                                artist.name, served_by, len(disco.get("albums", [])))
             except Exception:
                 logger.debug("[METADATA] discography fetch failed, using empty shape", exc_info=True)
                 disco = {"artist_name": artist.name, "albums": []}
@@ -531,118 +530,133 @@ def _sync_artist_discography_background(artist_id: int, external_id: str, option
             except Exception:
                 logger.debug("[MB] enrichment skipped", exc_info=True)
 
-            with app.app_context():
-                artist = db.session.get(Artist, artist_id)
-                if not artist:
-                    return
+            artist = db.session.get(Artist, artist_id)
+            if not artist:
+                return
 
-                if disco.get("artist_image") and not artist.image_url:
-                    artist.image_url = disco["artist_image"]
+            if disco.get("artist_image") and not artist.image_url:
+                artist.image_url = disco["artist_image"]
+            # Provenance: the artist's external identity belongs to the
+            # provider that just served its discography (data, not a branch).
+            if served_by:
+                artist.provider_id = served_by
 
-                # Save albums and tracks
-                for a in disco.get("albums", []):
-                    album = Album.query.filter_by(artist_id=artist.id, external_id=str(a["id"])).first()
-                    if not album:
-                        album = Album(
+            # Save albums and tracks. Rows are deduped and written within the
+            # SERVING provider's identity namespace, so a row from another
+            # provider sharing an external id can never be mistaken for this
+            # provider's release.
+            for a in disco.get("albums", []):
+                album = Album.query.filter_by(artist_id=artist.id,
+                                              provider_id=served_by,
+                                              external_id=str(a["id"])).first()
+                if not album:
+                    album = Album(
+                        artist_id=artist.id,
+                        provider_id=served_by,
+                        name=a["title"],
+                        year=a.get("year"),
+                        cover_url=a.get("cover_url"),
+                        external_id=str(a["id"]),
+                        record_type=a.get("record_type", "album"),
+                    )
+                    db.session.add(album)
+                    db.session.flush()
+                else:
+                    if a.get("cover_url") and not album.cover_url:
+                        album.cover_url = a["cover_url"]
+                    if a.get("year") and not album.year:
+                        album.year = a["year"]
+                    if a.get("record_type") and not album.record_type:
+                        album.record_type = a["record_type"]
+                # MusicBrainz enrichment is additive-only
+                if a.get("mb_release_group_id"):
+                    if not album.mb_release_group_id:
+                        album.mb_release_group_id = a["mb_release_group_id"]
+                    if not album.mb_title and a.get("mb_title"):
+                        album.mb_title = a["mb_title"]
+                    if not album.mb_year and a.get("mb_year"):
+                        album.mb_year = a["mb_year"]
+
+                for t in a.get("tracks", []):
+                    track = Track.query.filter_by(album_id=album.id,
+                                                  provider_id=served_by,
+                                                  external_id=str(t["id"])).first()
+                    if not track:
+                        track = Track(
+                            album_id=album.id,
                             artist_id=artist.id,
-                            name=a["title"],
-                            year=a.get("year"),
-                            cover_url=a.get("cover_url"),
-                            external_id=str(a["id"]),
-                            record_type=a.get("record_type", "album"),
+                            provider_id=served_by,
+                            title=t["title"],
+                            track_number=t.get("track_position"),
+                            disc_number=t.get("disk_number", 1),
+                            duration=t.get("duration"),
+                            isrc=t.get("isrc"),
+                            external_id=str(t["id"]),
+                            genre=t.get("genre"),
+                            status="missing",
                         )
-                        db.session.add(album)
+                        db.session.add(track)
                         db.session.flush()
                     else:
-                        if a.get("cover_url") and not album.cover_url:
-                            album.cover_url = a["cover_url"]
-                        if a.get("year") and not album.year:
-                            album.year = a["year"]
-                        if a.get("record_type") and not album.record_type:
-                            album.record_type = a["record_type"]
-                    # MusicBrainz enrichment is additive-only
-                    if a.get("mb_release_group_id"):
-                        if not album.mb_release_group_id:
-                            album.mb_release_group_id = a["mb_release_group_id"]
-                        if not album.mb_title and a.get("mb_title"):
-                            album.mb_title = a["mb_title"]
-                        if not album.mb_year and a.get("mb_year"):
-                            album.mb_year = a["mb_year"]
+                        if t.get("isrc") and not track.isrc:
+                            track.isrc = t["isrc"]
+                        if t.get("duration") and not track.duration:
+                            track.duration = t["duration"]
+                        if t.get("genre") and not track.genre:
+                            track.genre = t["genre"]
 
-                    for t in a.get("tracks", []):
-                        track = Track.query.filter_by(album_id=album.id, external_id=str(t["id"])).first()
-                        if not track:
-                            track = Track(
-                                album_id=album.id,
-                                artist_id=artist.id,
-                                title=t["title"],
-                                track_number=t.get("track_position"),
-                                disc_number=t.get("disk_number", 1),
-                                duration=t.get("duration"),
-                                isrc=t.get("isrc"),
-                                external_id=str(t["id"]),
-                                genre=t.get("genre"),
-                                status="missing",
-                            )
-                            db.session.add(track)
-                            db.session.flush()
-                        else:
-                            if t.get("isrc") and not track.isrc:
-                                track.isrc = t["isrc"]
-                            if t.get("duration") and not track.duration:
-                                track.duration = t["duration"]
-                            if t.get("genre") and not track.genre:
-                                track.genre = t["genre"]
+            # The provider chain returns each release under the provider's
+            # own opaque external id; core stores it verbatim (never
+            # interprets it). Prune releases that are no longer part of the
+            # SERVING provider's discography — including rows left over from
+            # a different provider that previously served this artist (the
+            # current sync's namespace is authoritative).
+            current_external_ids = {str(a["id"]) for a in disco.get("albums", [])}
 
-                # The provider chain returns each release under the provider's
-                # own opaque external id; core stores it verbatim (never
-                # interprets it) and uses it to prune releases that the
-                # current discography no longer contains.
-                current_external_ids = {str(a["id"]) for a in disco.get("albums", [])}
+            for existing_alb in artist.albums.all():
+                stale = (existing_alb.external_id not in current_external_ids) or (
+                    served_by is not None and existing_alb.provider_id not in (None, served_by))
+                if stale and not existing_alb.is_downloaded:
+                    has_downloaded = any(t.is_downloaded for t in existing_alb.tracks.all())
+                    if not has_downloaded:
+                        logger.info("[SYNC] Pruning stale/misattributed album '%s' (id=%d) for artist '%s'", existing_alb.name, existing_alb.id, artist.name)
+                        for t in existing_alb.tracks.all():
+                            DownloadJob.query.filter_by(track_id=t.id).delete()
+                            db.session.delete(t)
+                        db.session.delete(existing_alb)
+            db.session.flush()
 
-                for existing_alb in artist.albums.all():
-                    if existing_alb.external_id not in current_external_ids and not existing_alb.is_downloaded:
-                        has_downloaded = any(t.is_downloaded for t in existing_alb.tracks.all())
-                        if not has_downloaded:
-                            logger.info("[SYNC] Pruning stale/misattributed album '%s' (id=%d) for artist '%s'", existing_alb.name, existing_alb.id, artist.name)
-                            for t in existing_alb.tracks.all():
-                                DownloadJob.query.filter_by(track_id=t.id).delete()
-                                db.session.delete(t)
-                            db.session.delete(existing_alb)
-                db.session.flush()
+            artist.sync_status = "ready"
+            artist.sync_error = None
+            artist.last_synced_at = datetime.now(timezone.utc)
 
-                artist.sync_status = "ready"
-                artist.sync_error = None
-                artist.last_synced_at = datetime.now(timezone.utc)
+            # Phase 1 (scale-to-millions): after inserts + prunes, recompute the
+            # denormalized counters for this artist in one indexed pass.
+            try:
+                from services.counters_service import recompute_artist
+                recompute_artist(artist.id)
+            except Exception:
+                logger.debug("[SCALE] counter recompute skipped", exc_info=True)
 
-                # Phase 1 (scale-to-millions): after inserts + prunes, recompute the
-                # denormalized counters for this artist in one indexed pass.
-                try:
-                    from services.counters_service import recompute_artist
-                    recompute_artist(artist.id)
-                except Exception:
-                    logger.debug("[SCALE] counter recompute skipped", exc_info=True)
+            db.session.commit()
 
-                db.session.commit()
+            logger.info("[SYNC] Discography sync complete for '%s' (%d albums)", artist.name, len(disco.get("albums", [])))
 
-                logger.info("[SYNC] Discography sync complete for '%s' (%d albums)", artist.name, len(disco.get("albums", [])))
-
-                # If auto_download enabled, queue missing tracks
-                if artist.auto_download:
-                    queued = queue_artist_missing(app, artist.id, source="auto")
-                    logger.info("[SYNC] Auto-download queued %d tracks for '%s'", queued, artist.name)
+            # If auto_download enabled, queue missing tracks
+            if artist.auto_download:
+                queued = queue_artist_missing(app, artist.id, source="auto")
+                logger.info("[SYNC] Auto-download queued %d tracks for '%s'", queued, artist.name)
 
             socketio.emit("artist_synced", {"artist_id": artist_id, "sync_status": "ready"})
             socketio.emit("toast", {"message": f"Discography indexed for '{disco['artist_name']}'", "type": "success"})
 
         except Exception as e:
             logger.exception("[SYNC] Discography ingestion failed for artist %d: %s", artist_id, e)
-            with app.app_context():
-                artist = db.session.get(Artist, artist_id)
-                if artist:
-                    artist.sync_status = "error"
-                    artist.sync_error = str(e)
-                    db.session.commit()
+            artist = db.session.get(Artist, artist_id)
+            if artist:
+                artist.sync_status = "error"
+                artist.sync_error = str(e)
+                db.session.commit()
             socketio.emit("artist_updated", {"artist_id": artist_id, "sync_status": "error", "error": str(e)})
 
 
@@ -652,8 +666,16 @@ def api_add_artist():
     external_id = data.get("id")
     if not external_id:
         return jsonify({"error": "No artist ID provided"}), 400
+    # Provider provenance from the search result that produced this id
+    # (opaque data; the chain interprets the id). NULL/absent keeps the
+    # legacy behavior of matching by external id alone.
+    provider_id = (str(data.get("provider") or "").strip()) or None
 
-    existing = Artist.query.filter_by(external_id=str(external_id)).first()
+    if provider_id:
+        existing = Artist.query.filter_by(provider_id=provider_id,
+                                          external_id=str(external_id)).first()
+    else:
+        existing = Artist.query.filter_by(external_id=str(external_id)).first()
     if existing:
         return jsonify({"message": f"Artist '{existing.name}' is already in your library.", "artist_id": existing.id}), 200
 
@@ -671,6 +693,7 @@ def api_add_artist():
 
     # Save artist record immediately so UI shows placeholder instantly
     artist = Artist(
+        provider_id=provider_id,
         external_id=str(external_id),
         name=artist_info["name"],
         image_url=artist_info.get("image_url"),
@@ -868,8 +891,13 @@ def api_artist_set_external_id(artist_id):
     new_external_id = str(data.get("external_id") or data.get("deezer_id") or "").strip()
     if not new_external_id:
         return jsonify({"error": "Missing external_id"}), 400
+    # Optional provider provenance (plugin id); when the discography sync
+    # runs it records the provider that actually served the discography.
+    provider_id = (str(data.get("provider") or "").strip()) or None
 
     artist.external_id = new_external_id
+    if provider_id:
+        artist.provider_id = provider_id
     db.session.commit()
 
     opts = {
@@ -894,11 +922,17 @@ def api_artist_sync(artist_id):
     external_id = artist.external_id
     if not external_id:
         # Phase 3: application service (artist.search capability) — find the
-        # artist's external identity by name when none is stored.
+        # artist's external identity by name when none is stored; results
+        # carry the supplying provider so provenance can be recorded.
         from services.metadata_service import MetadataService
         res = MetadataService().search_artist(artist.name, limit=1)
         if res:
             external_id = res[0]["id"]
+            artist.external_id = str(external_id)
+            prov = res[0].get("provider")
+            if prov:
+                artist.provider_id = str(prov)
+            db.session.commit()
 
     if not external_id:
         return jsonify({"error": "Could not resolve an external id for the artist"}), 400
@@ -2066,86 +2100,10 @@ def _periodic_discography_sync_loop():
 with app.app_context():
     db.create_all()
 
-    # Create SQLite performance indexes & schema migrations — MUST run before
-    # any ORM query touches the new columns (installed_plugins.priority_override,
-    # artists counters), which the plugin auto-install below does.
-    try:
-        with db.engine.connect() as conn:
-            conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_artists_name ON artists (name)"))
-            conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums (artist_id)"))
-            conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks (album_id)"))
-            conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks (artist_id)"))
-            conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_tracks_is_downloaded ON tracks (is_downloaded)"))
-            conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_tracks_status ON tracks (status)"))
-            conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_tracks_isrc ON tracks (isrc)"))
-            conn.execute(db.text("CREATE INDEX IF NOT EXISTS idx_jobs_status ON download_jobs (status)"))
-
-            # Safe column additions for existing databases
-            try:
-                conn.execute(db.text("ALTER TABLE albums ADD COLUMN monitored BOOLEAN DEFAULT 1"))
-            except Exception:
-                pass
-            try:
-                conn.execute(db.text("ALTER TABLE tracks ADD COLUMN monitored BOOLEAN DEFAULT 1"))
-            except Exception:
-                pass
-            try:
-                conn.execute(db.text("ALTER TABLE tracks ADD COLUMN genre VARCHAR(128)"))
-            except Exception:
-                pass
-
-            # v0.2.34+: MusicBrainz enrichment columns (albums)
-            for col, ddl in [
-                ("mb_release_group_id", "VARCHAR(64)"),
-                ("mb_title", "VARCHAR(512)"),
-                ("mb_year", "INTEGER"),
-                ("mb_checked_at", "DATETIME"),
-            ]:
-                try:
-                    conn.execute(db.text(f"ALTER TABLE albums ADD COLUMN {col} {ddl}"))
-                except Exception:
-                    pass
-            # v0.2.34+: AcoustID caution flag (tracks)
-            try:
-                conn.execute(db.text("ALTER TABLE tracks ADD COLUMN caution BOOLEAN DEFAULT 0"))
-            except Exception:
-                pass
-            try:
-                conn.execute(db.text("ALTER TABLE tracks ADD COLUMN caution_info TEXT"))
-            except Exception:
-                pass
-            # Phase 1: user-facing priority override (plugins)
-            try:
-                conn.execute(db.text("ALTER TABLE installed_plugins ADD COLUMN priority_override INTEGER"))
-            except Exception:
-                pass
-            # Phase 1: denormalized per-artist counters (scale-to-millions)
-            for col in ("total_albums", "total_tracks", "downloaded_tracks"):
-                try:
-                    conn.execute(db.text(f"ALTER TABLE artists ADD COLUMN {col} INTEGER DEFAULT 0"))
-                except Exception:
-                    pass
-            # Provider-neutral identity columns (final cleanup): the external
-            # identity columns are no longer named after a provider. Fresh
-            # databases already have the new names (create_all above); older
-            # databases are renamed in place (SQLite RENAME COLUMN preserves
-            # data, NOT NULL/unique constraints, and index definitions). The
-            # values are opaque provider identities — nothing here interprets
-            # them.
-            for table, old_col, new_col in [
-                ("artists", "spotify_id", "external_id"),
-                ("albums", "deezer_id", "external_id"),
-                ("tracks", "deezer_id", "external_id"),
-                ("download_jobs", "album_spotify_id", "album_external_id"),
-            ]:
-                try:
-                    conn.execute(db.text(
-                        f"ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}"))
-                except Exception:
-                    pass
-            conn.commit()
-    except Exception:
-        pass
+    # Create SQLite performance indexes & schema migrations (idempotent
+    # upgrades for existing databases — see services/schema_migrations.py).
+    from services.schema_migrations import run_schema_migrations
+    run_schema_migrations()
 
     # Plugin framework (INTEGRATION.md §2/§3 + PHASE1 §3): auto-install bundled
     # plugins (official, enabled-by-default, no marketplace visit needed), then

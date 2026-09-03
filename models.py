@@ -8,15 +8,24 @@ db = SQLAlchemy()
 
 class Artist(db.Model):
     __tablename__ = "artists"
+    __table_args__ = (
+        # An artist's external identity is unique only within the namespace
+        # of the provider that supplied it — two different providers may use
+        # the same external id for different entities without colliding.
+        db.Index("uq_artists_provider_external", "provider_id", "external_id", unique=True),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
-    # Provider-neutral external identity: the opaque id the metadata provider
-    # that created this artist uses (e.g. a Deezer artist id when the
+    # Provider-scoped external identity (provider-neutral): `provider_id` is
+    # the plugin id of the metadata provider that supplied `external_id` (the
+    # opaque id THAT provider uses — e.g. a Deezer artist id when the
     # fnack.deezer-batch provider supplied it, or a prefixed self-identity
     # like "acoustid:<name>" / "lidarr:<name>" for artists created from a
-    # single unknown track). Core never interprets the value — the provider
-    # chain owns parsing/conversion.
-    external_id = db.Column(db.String(64), unique=True, nullable=False)
+    # single unknown track). provider_id is NULL only for self-created
+    # identities. Core never interprets either value — the provider chain
+    # owns parsing/conversion.
+    provider_id = db.Column(db.String(64), nullable=True, index=True)
+    external_id = db.Column(db.String(64), nullable=False)
     name = db.Column(db.String(256), nullable=False, index=True)
     image_url = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -66,8 +75,10 @@ class Album(db.Model):
     name = db.Column(db.String(512), nullable=False, index=True)
     year = db.Column(db.Integer, nullable=True)
     cover_url = db.Column(db.Text, nullable=True)
-    # Provider-neutral external release identity (opaque; interpreted by the
-    # metadata provider chain that supplied this release).
+    # Provider-scoped external release identity: `provider_id` = the plugin
+    # id of the metadata provider that supplied this release's `external_id`
+    # (both opaque; interpreted only by that provider). NULL = self-created.
+    provider_id = db.Column(db.String(64), nullable=True, index=True)
     external_id = db.Column(db.String(64), nullable=True, index=True)
     record_type = db.Column(db.String(32), default="album", nullable=False, index=True)  # album, single, compile, ep, other
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -101,8 +112,10 @@ class Track(db.Model):
     track_number = db.Column(db.Integer, nullable=True)
     disc_number = db.Column(db.Integer, default=1, nullable=True)
     isrc = db.Column(db.String(64), nullable=True, index=True)
-    # Provider-neutral external track identity (opaque; interpreted by the
-    # metadata provider chain that supplied this track).
+    # Provider-scoped external track identity: `provider_id` = the plugin id
+    # of the metadata provider that supplied this track's `external_id` (both
+    # opaque; interpreted only by that provider). NULL = self-created.
+    provider_id = db.Column(db.String(64), nullable=True, index=True)
     external_id = db.Column(db.String(64), nullable=True, index=True)
     spotify_url = db.Column(db.Text, nullable=True)
     genre = db.Column(db.String(128), nullable=True)
