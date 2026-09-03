@@ -140,7 +140,7 @@ def _test_runtime_background_download() -> None:
         import tempfile as _tempfile
         _tmp_music = Path(_tempfile.mkdtemp(prefix="fnack-music-"))
         db.session.add(AppSetting(key="music_path", value=str(_tmp_music)))
-        artist = Artist(spotify_id="ctx-test", name="Ctx Artist")
+        artist = Artist(external_id="ctx-test", name="Ctx Artist")
         db.session.add(artist)
         db.session.flush()
         album = Album(artist_id=artist.id, name="Ctx Album")

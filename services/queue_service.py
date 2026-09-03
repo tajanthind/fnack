@@ -439,7 +439,7 @@ def queue_track(app: Flask, track_id: int, source: str = "manual") -> Optional[D
             album_id=album.id,
             artist_id=artist.id,
             item_type="track",
-            album_spotify_id=str(album.deezer_id or ""),
+            album_external_id=str(album.external_id or ""),
             album_name=album.name,
             album_type=album.record_type,
             album_url="",
@@ -597,7 +597,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         artist_id = artist.id if artist else 0
         track_num = track.track_number or 0
         disc_num = track.disc_number or 1
-        track_deezer_id = track.deezer_id
+        track_external_id = track.external_id
 
         quality_setting = _get_setting(app, "spotiflac_quality", "LOSSLESS")
         fallback_format = _get_setting(app, "ytdlp_format") or _get_setting(app, "spotdl_format", "flac")
@@ -616,13 +616,14 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
         flagged_caution = None  # set when AcoustID flags a kept-but-different file
 
         # Auto-resolve ISRC and genre from a metadata provider when missing
-        # (through MetadataService, capability-based — track.metadata served
-        # by the fnack.deezer-batch plugin).
+        # (through MetadataService, capability-based — track.metadata is
+        # resolved via the registry; the provider that owns the external id
+        # interprets it).
         track_genre = track.genre or None
-        if (not isrc or not track_genre) and track_deezer_id:
+        if (not isrc or not track_genre) and track_external_id:
             try:
                 from services.metadata_service import MetadataService
-                t_info = MetadataService().get_track_metadata(str(track_deezer_id)) or {}
+                t_info = MetadataService().get_track_metadata(str(track_external_id)) or {}
                 if t_info.get("isrc") and not isrc:
                     isrc = t_info["isrc"]
                     track.isrc = isrc
@@ -636,7 +637,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 if t_info.get("genre"):
                     logger.info("[QUEUE] Auto-resolved genre '%s' for '%s - %s'", track_genre, artist_name, track_title)
             except Exception as ie:
-                logger.debug("[QUEUE] Deezer ISRC/genre lookup failed for track %d: %s", track_id, ie)
+                logger.debug("[QUEUE] ISRC/genre metadata lookup failed for track %d: %s", track_id, ie)
 
         if job_id in cancel_requested_jobs:
             _handle_cancellation(app, socketio, job_id, track_id)
@@ -670,7 +671,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
 
         try:
             # Step 0: Cross-Artist & Featuring Deduplication
-            # If this track (or a matching version with same ISRC / Deezer ID / Title + Duration) was already downloaded under another artist or album, reuse the existing audio file without redownloading.
+            # If this track (or a matching version with same ISRC / external id / title + duration) was already downloaded under another artist or album, reuse the existing audio file without redownloading.
             if job_id not in cancel_requested_jobs:
                 existing_match_path = None
                 existing_match_size = None
@@ -689,11 +690,11 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                             Track.local_path != "",
                         ).first()
 
-                    # 2. Match by Deezer ID
-                    if not existing_match and track_deezer_id:
+                    # 2. Match by external id
+                    if not existing_match and track_external_id:
                         existing_match = Track.query.filter(
                             Track.id != track_id,
-                            Track.deezer_id == track_deezer_id,
+                            Track.external_id == track_external_id,
                             Track.is_downloaded == True,
                             Track.local_path.isnot(None),
                             Track.local_path != "",
@@ -803,7 +804,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 isrc=isrc,
                 duration=expected_duration,
                 spotify_url=spotify_url,
-                deezer_id=track_deezer_id,
+                external_id=track_external_id,
                 disc_number=disc_num or 1,   # captured before the dedup app_context closed
                 track_number=track_num,
             )
@@ -1230,7 +1231,7 @@ def download_manual_match_track(
         disc_num = track.disc_number or 1
         expected_duration = track.duration
         track_isrc = track.isrc
-        track_deezer_id = track.deezer_id
+        track_external_id = track.external_id
         track_genre = track.genre or None
         # Capture plain IDs before session expiry/detachment (safe to use outside app context)
         album_id = album.id if album else 0
@@ -1337,7 +1338,8 @@ def download_manual_match_track(
                     else:
                         last_err = direct_err
 
-            # 3. Deezer URL
+            # 3. User-pasted Deezer track link (manual match; the
+            #    metadata lookup below goes through the capability chain)
             elif "deezer.com/track/" in target_input:
                 m = re.search(r"deezer\.com/track/(\d+)", target_input)
                 if m:

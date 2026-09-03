@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """fnack – Modern Lossless Music Discography Downloader & Manager.
 
-A modular Flask + SocketIO application with Deezer metadata ingestion,
-ISRC-first SpotiFLAC / yt-dlp download pipeline, Sonarr-style artist discography views,
-and interactive library import. Lidarr emulation ships as the bundled
-`fnack.lidarr` plugin (Newznab/Torznab + SABnzbd), enabled by default.
+A modular Flask + SocketIO application with provider-neutral metadata
+ingestion (capability-based; official providers ship as plugins),
+ISRC-first SpotiFLAC / yt-dlp download pipeline, Sonarr-style artist
+discography views, and interactive library import. Lidarr emulation ships as
+the bundled `fnack.lidarr` plugin (Newznab/Torznab + SABnzbd), enabled by
+default.
 """
 
 import nest_asyncio
@@ -438,9 +440,9 @@ def _retry_interval_seconds() -> int:
         return 24 * 3600
 
 
-def _start_bounded_artist_sync(artist_id: int, deezer_artist_id: int, options: dict):
+def _start_bounded_artist_sync(artist_id: int, external_id: str, options: dict):
     """Run a discography sync as a background task without blocking the scheduler,
-    bounded so bursts of overdue artists cannot hammer the Deezer API."""
+    bounded so bursts of overdue artists cannot hammer the metadata provider."""
     global _running_artist_syncs
     if _running_artist_syncs >= _MAX_CONCURRENT_SYNCS:
         logger.info("[SCHEDULER] Skipping sync for artist %d: %d syncs already in flight", artist_id, _running_artist_syncs)
@@ -450,15 +452,16 @@ def _start_bounded_artist_sync(artist_id: int, deezer_artist_id: int, options: d
     def _wrapped():
         global _running_artist_syncs
         try:
-            _sync_artist_discography_background(artist_id, deezer_artist_id, options)
+            _sync_artist_discography_background(artist_id, external_id, options)
         finally:
             _running_artist_syncs -= 1
 
     socketio.start_background_task(_wrapped)
 
 
-def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, options: dict):
-    """Background task to fetch artist discography from Deezer and index albums & tracks.
+def _sync_artist_discography_background(artist_id: int, external_id: str, options: dict):
+    """Background task to fetch an artist's discography from the metadata
+    provider chain and index albums & tracks.
 
     Runs as a SocketIO background greenlet (no inherited app context), so the
     ENTIRE body below executes inside one app context — provider invocations
@@ -475,21 +478,22 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
         db.session.commit()
 
         socketio.emit("artist_updated", {"artist_id": artist_id, "sync_status": "syncing"})
-        logger.info("[DEEZER] Starting background discography fetch for artist '%s' (%d)", artist.name, deezer_artist_id)
+        logger.info("[SYNC] Starting background discography fetch for artist '%s' (external id %s)",
+                    artist.name, external_id)
 
         try:
             # Phase 3: MetadataService (artist.discography capability) owns the
-            # provider chain — Deezer batch (p10) authoritative, then MusicBrainz
-            # (p20, enrichment-only), Spotify (p30), iTunes (p40), first usable
-            # discography wins. No hidden fallback: if no artist.discography
-            # provider is enabled the service returns the empty shape (MASTER
-            # rule 3).
+            # provider chain — providers are tried in registry priority order
+            # and the FIRST usable discography wins. The provider chain
+            # interprets the external identity; core only routes the opaque
+            # value. No hidden fallback: if no artist.discography provider is
+            # enabled the service returns the empty shape (MASTER rule 3).
             disco = None
             served_by = None
             try:
                 from services.metadata_service import MetadataService
                 disco = MetadataService().get_artist_discography(
-                    str(deezer_artist_id),
+                    external_id,
                     artist_name=artist.name,
                     filter_remixes=options.get("filter_remixes", True),
                     filter_lofi=options.get("filter_lofi", True),
@@ -537,14 +541,14 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
 
                 # Save albums and tracks
                 for a in disco.get("albums", []):
-                    album = Album.query.filter_by(artist_id=artist.id, deezer_id=str(a["id"])).first()
+                    album = Album.query.filter_by(artist_id=artist.id, external_id=str(a["id"])).first()
                     if not album:
                         album = Album(
                             artist_id=artist.id,
                             name=a["title"],
                             year=a.get("year"),
                             cover_url=a.get("cover_url"),
-                            deezer_id=str(a["id"]),
+                            external_id=str(a["id"]),
                             record_type=a.get("record_type", "album"),
                         )
                         db.session.add(album)
@@ -566,7 +570,7 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                             album.mb_year = a["mb_year"]
 
                     for t in a.get("tracks", []):
-                        track = Track.query.filter_by(album_id=album.id, deezer_id=str(t["id"])).first()
+                        track = Track.query.filter_by(album_id=album.id, external_id=str(t["id"])).first()
                         if not track:
                             track = Track(
                                 album_id=album.id,
@@ -576,7 +580,7 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                                 disc_number=t.get("disk_number", 1),
                                 duration=t.get("duration"),
                                 isrc=t.get("isrc"),
-                                deezer_id=str(t["id"]),
+                                external_id=str(t["id"]),
                                 genre=t.get("genre"),
                                 status="missing",
                             )
@@ -590,14 +594,17 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
                             if t.get("genre") and not track.genre:
                                 track.genre = t["genre"]
 
-                valid_deezer_ids = {str(a["id"]) for a in disco.get("albums", [])}
+                # The provider chain returns each release under the provider's
+                # own opaque external id; core stores it verbatim (never
+                # interprets it) and uses it to prune releases that the
+                # current discography no longer contains.
+                current_external_ids = {str(a["id"]) for a in disco.get("albums", [])}
 
-                # Prune stale or misattributed albums that are not downloaded and no longer in discography
                 for existing_alb in artist.albums.all():
-                    if existing_alb.deezer_id not in valid_deezer_ids and not existing_alb.is_downloaded:
+                    if existing_alb.external_id not in current_external_ids and not existing_alb.is_downloaded:
                         has_downloaded = any(t.is_downloaded for t in existing_alb.tracks.all())
                         if not has_downloaded:
-                            logger.info("[DEEZER] Pruning stale/misattributed album '%s' (id=%d) for artist '%s'", existing_alb.name, existing_alb.id, artist.name)
+                            logger.info("[SYNC] Pruning stale/misattributed album '%s' (id=%d) for artist '%s'", existing_alb.name, existing_alb.id, artist.name)
                             for t in existing_alb.tracks.all():
                                 DownloadJob.query.filter_by(track_id=t.id).delete()
                                 db.session.delete(t)
@@ -618,18 +625,18 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
 
                 db.session.commit()
 
-                logger.info("[DEEZER] Discography sync complete for '%s' (%d albums)", artist.name, len(disco.get("albums", [])))
+                logger.info("[SYNC] Discography sync complete for '%s' (%d albums)", artist.name, len(disco.get("albums", [])))
 
                 # If auto_download enabled, queue missing tracks
                 if artist.auto_download:
                     queued = queue_artist_missing(app, artist.id, source="auto")
-                    logger.info("[DEEZER] Auto-download queued %d tracks for '%s'", queued, artist.name)
+                    logger.info("[SYNC] Auto-download queued %d tracks for '%s'", queued, artist.name)
 
             socketio.emit("artist_synced", {"artist_id": artist_id, "sync_status": "ready"})
             socketio.emit("toast", {"message": f"Discography indexed for '{disco['artist_name']}'", "type": "success"})
 
         except Exception as e:
-            logger.exception("[DEEZER] Discography ingestion failed for artist %d: %s", artist_id, e)
+            logger.exception("[SYNC] Discography ingestion failed for artist %d: %s", artist_id, e)
             with app.app_context():
                 artist = db.session.get(Artist, artist_id)
                 if artist:
@@ -642,25 +649,29 @@ def _sync_artist_discography_background(artist_id: int, deezer_artist_id: int, o
 @app.route("/api/add-artist", methods=["POST"])
 def api_add_artist():
     data = request.get_json(silent=True) or {}
-    deezer_id = data.get("id")
-    if not deezer_id:
+    external_id = data.get("id")
+    if not external_id:
         return jsonify({"error": "No artist ID provided"}), 400
 
-    existing = Artist.query.filter_by(spotify_id=str(deezer_id)).first()
+    existing = Artist.query.filter_by(external_id=str(external_id)).first()
     if existing:
         return jsonify({"message": f"Artist '{existing.name}' is already in your library.", "artist_id": existing.id}), 200
 
     try:
-        # Phase 4: artist.info capability via MetadataService (the
-        # fnack.deezer-batch plugin serves it) — core has no Deezer import.
+        # Phase 4: artist.info capability via MetadataService — the provider
+        # chain interprets the opaque external identity (the provider that
+        # owns the id parses/converts it); core never assumes what the id is.
         from services.metadata_service import MetadataService
-        artist_info = MetadataService().get_artist_info(str(deezer_id)) or {}
+        artist_info = MetadataService().get_artist_info(external_id) or {}
     except Exception as e:
-        return jsonify({"error": f"Failed to reach Deezer: {e}"}), 500
+        return jsonify({"error": f"Metadata lookup failed: {e}"}), 500
+    if not artist_info.get("name"):
+        return jsonify({"error": "The metadata provider could not resolve "
+                                 f"artist info for external id '{external_id}'"}), 400
 
     # Save artist record immediately so UI shows placeholder instantly
     artist = Artist(
-        spotify_id=str(deezer_id),
+        external_id=str(external_id),
         name=artist_info["name"],
         image_url=artist_info.get("image_url"),
         monitored=bool(data.get("monitored", True)),
@@ -681,7 +692,7 @@ def api_add_artist():
 
     # Start background ingestion
     socketio.start_background_task(
-        _sync_artist_discography_background, artist.id, int(deezer_id), data
+        _sync_artist_discography_background, artist.id, str(external_id), data
     )
 
     return jsonify({
@@ -842,18 +853,23 @@ def api_delete_album(album_id):
     return jsonify({"message": f"Album '{album_name}' deleted from discography."})
 
 
+# Primary provider-neutral path. `/set-deezer-id` below is a deprecated
+# alias kept for older clients; the wire key "deezer_id" is likewise accepted
+# as a legacy alias of "external_id" (the value is an opaque provider
+# identity — nothing in core assumes it is a Deezer id).
+@app.route("/api/artist/<int:artist_id>/set-external-id", methods=["POST"])
 @app.route("/api/artist/<int:artist_id>/set-deezer-id", methods=["POST"])
-def api_artist_set_deezer_id(artist_id):
+def api_artist_set_external_id(artist_id):
     artist = db.session.get(Artist, artist_id)
     if not artist:
         return jsonify({"error": "Artist not found"}), 404
 
     data = request.get_json(silent=True) or {}
-    new_deezer_id = str(data.get("deezer_id", "")).strip()
-    if not new_deezer_id:
-        return jsonify({"error": "Missing deezer_id"}), 400
+    new_external_id = str(data.get("external_id") or data.get("deezer_id") or "").strip()
+    if not new_external_id:
+        return jsonify({"error": "Missing external_id"}), 400
 
-    artist.spotify_id = new_deezer_id
+    artist.external_id = new_external_id
     db.session.commit()
 
     opts = {
@@ -865,8 +881,8 @@ def api_artist_set_deezer_id(artist_id):
         "include_singles": artist.include_singles,
         "include_compilations": artist.include_compilations,
     }
-    socketio.start_background_task(_sync_artist_discography_background, artist.id, int(new_deezer_id), opts)
-    return jsonify({"message": f"Artist Deezer ID updated to {new_deezer_id}. Re-syncing discography."})
+    socketio.start_background_task(_sync_artist_discography_background, artist.id, new_external_id, opts)
+    return jsonify({"message": f"Artist external id updated to {new_external_id}. Re-syncing discography."})
 
 
 @app.route("/api/artist/<int:artist_id>/sync", methods=["POST"])
@@ -875,16 +891,17 @@ def api_artist_sync(artist_id):
     if not artist:
         return jsonify({"error": "Artist not found"}), 404
 
-    deezer_id = int(artist.spotify_id) if artist.spotify_id.isdigit() else None
-    if not deezer_id:
-        # Phase 3: application service (artist.search capability).
+    external_id = artist.external_id
+    if not external_id:
+        # Phase 3: application service (artist.search capability) — find the
+        # artist's external identity by name when none is stored.
         from services.metadata_service import MetadataService
         res = MetadataService().search_artist(artist.name, limit=1)
         if res:
-            deezer_id = res[0]["id"]
+            external_id = res[0]["id"]
 
-    if not deezer_id:
-        return jsonify({"error": "Could not resolve Deezer ID for artist"}), 400
+    if not external_id:
+        return jsonify({"error": "Could not resolve an external id for the artist"}), 400
 
     opts = {
         "filter_remixes": artist.filter_remixes,
@@ -896,7 +913,7 @@ def api_artist_sync(artist_id):
         "include_compilations": artist.include_compilations,
     }
 
-    socketio.start_background_task(_sync_artist_discography_background, artist.id, deezer_id, opts)
+    socketio.start_background_task(_sync_artist_discography_background, artist.id, external_id, opts)
     return jsonify({"message": f"Sync started for '{artist.name}'."})
 
 
@@ -1151,7 +1168,7 @@ def api_track_identify(track_id):
             if matched_artist:
                 artist = Artist.query.filter_by(name=matched_artist).first()
                 if not artist:
-                    artist = Artist(spotify_id=f"acoustid:{matched_artist}", name=matched_artist, source="manual")
+                    artist = Artist(external_id =f"acoustid:{matched_artist}", name=matched_artist, source="manual")
                     db.session.add(artist)
                     db.session.flush()
                 t.artist_id = artist.id
@@ -1272,7 +1289,7 @@ def api_track_caution(track_id):
         if matched_artist:
             artist = Artist.query.filter_by(name=matched_artist).first()
             if not artist:
-                artist = Artist(spotify_id=f"acoustid:{matched_artist}", name=matched_artist, source="manual")
+                artist = Artist(external_id =f"acoustid:{matched_artist}", name=matched_artist, source="manual")
                 db.session.add(artist)
                 db.session.flush()
             t.artist_id = artist.id
@@ -1447,12 +1464,15 @@ def api_import_candidates():
 def api_import_folder():
     data = request.get_json(silent=True) or {}
     folder_name = data.get("folder_name")
-    deezer_id = data.get("deezer_id")
+    # Opaque external artist identity from the UI's search suggestion. The
+    # wire key "deezer_id" is a legacy alias of "external_id" (frontend
+    # contract); core treats the value as provider-neutral.
+    external_id = data.get("external_id") or data.get("deezer_id")
     if not folder_name:
         return jsonify({"error": "Folder name required"}), 400
 
     music_path = _get_setting("music_path", "/music")
-    res = import_artist_folder(music_path, folder_name, deezer_artist_id=deezer_id, filter_options=data)
+    res = import_artist_folder(music_path, folder_name, external_id=external_id, filter_options=data)
     if "error" in res:
         return jsonify(res), 400
 
@@ -1461,7 +1481,7 @@ def api_import_folder():
 
 
 # ── Bulk folder import (background, non-blocking) ──────────────────────────
-# Importing an artist takes ~5-15s (Deezer discography + iTunes fallback +
+# Importing an artist takes ~5-15s (metadata discography + enrichment +
 # DB writes). Running many of those synchronously in the request thread made
 # the web UI freeze. These are now processed by a single background worker
 # (bounded greenlet pool) that reports progress over SocketIO, so the page
@@ -1512,7 +1532,7 @@ def _bulk_import_worker(items: list) -> None:
                 try:
                     res = import_artist_folder(
                         music_path, folder_name,
-                        deezer_artist_id=item.get("deezer_id"),
+                        external_id=item.get("external_id") or item.get("deezer_id"),
                         filter_options=opts,
                     )
                 except Exception as e:
@@ -1999,7 +2019,7 @@ def _periodic_discography_sync_loop():
                         elapsed_h = (now - last).total_seconds() / 3600.0
                         if elapsed_h < interval_h:
                             continue
-                    artists_to_sync.append((a.id, a.spotify_id, {
+                    artists_to_sync.append((a.id, a.external_id, {
                         "filter_remixes": a.filter_remixes,
                         "filter_lofi": a.filter_lofi,
                         "filter_live": a.filter_live,
@@ -2011,10 +2031,9 @@ def _periodic_discography_sync_loop():
 
             if artists_to_sync:
                 logger.info("[SCHEDULER] Running periodic discography check for %d monitored artists", len(artists_to_sync))
-                for aid, spot_id, opts in artists_to_sync:
-                    deezer_id = int(spot_id) if spot_id.isdigit() else None
-                    if deezer_id:
-                        _start_bounded_artist_sync(aid, deezer_id, opts)
+                for aid, artist_external_id, opts in artists_to_sync:
+                    if artist_external_id:
+                        _start_bounded_artist_sync(aid, str(artist_external_id), opts)
                     gevent.sleep(3)
 
         except Exception:
@@ -2104,6 +2123,24 @@ with app.app_context():
             for col in ("total_albums", "total_tracks", "downloaded_tracks"):
                 try:
                     conn.execute(db.text(f"ALTER TABLE artists ADD COLUMN {col} INTEGER DEFAULT 0"))
+                except Exception:
+                    pass
+            # Provider-neutral identity columns (final cleanup): the external
+            # identity columns are no longer named after a provider. Fresh
+            # databases already have the new names (create_all above); older
+            # databases are renamed in place (SQLite RENAME COLUMN preserves
+            # data, NOT NULL/unique constraints, and index definitions). The
+            # values are opaque provider identities — nothing here interprets
+            # them.
+            for table, old_col, new_col in [
+                ("artists", "spotify_id", "external_id"),
+                ("albums", "deezer_id", "external_id"),
+                ("tracks", "deezer_id", "external_id"),
+                ("download_jobs", "album_spotify_id", "album_external_id"),
+            ]:
+                try:
+                    conn.execute(db.text(
+                        f"ALTER TABLE {table} RENAME COLUMN {old_col} TO {new_col}"))
                 except Exception:
                     pass
             conn.commit()

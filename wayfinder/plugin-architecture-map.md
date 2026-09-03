@@ -254,6 +254,23 @@ phase.
   fnack-plugins gains `tests/test_manifest_index_parity.py`
   (manifest ↔ index parity, deterministic) and its README gains the missing
   fnack.lidarr row. Smoke + 20 architecture tests green.
+- [Provider-neutral core cleanup](tickets/plugin-phase-4-hardening-deletion.md):
+  core external identities are no longer provider-named or provider-typed.
+  `Artist.spotify_id` -> `Artist.external_id`, `Album/Track.deezer_id` ->
+  `external_id`, `DownloadJob.album_spotify_id` -> `album_external_id`
+  (SQLite RENAME COLUMN migration at startup for existing DBs; data and
+  indexes preserved). Core never int()s/parses the opaque identity — the
+  provider chain owns conversion (deezer-batch int()s inside the plugin and
+  declines foreign ids). artist.search/add/sync/import routes and the
+  scheduler take the opaque external id; MetadataService docstrings no longer
+  call any provider authoritative; legacy wire aliases (deezer_id /
+  suggested_deezer) kept + documented for old clients/frontend, then renamed
+  in the frontend to external_id. New
+  tests/architecture/test_provider_neutral_identity.py (fake non-integer and
+  colon-prefixed identities through the capability chain; deezer plugin id
+  conversion; provider-removal + CapabilityUnavailable, no hidden fallback).
+  docs/architecture.md gained a provider-neutral identity section. Smoke + 22
+  architecture tests green.
 - [P0 follow-up: app context by construction + settings-modal UI](tickets/plugin-phase-4-hardening-deletion.md):
   PR #37's wrapper->impl context fix was functionally correct but
   structurally fragile (head-only inner `with` invited the "provider calls

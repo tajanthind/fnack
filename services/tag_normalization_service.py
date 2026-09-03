@@ -10,7 +10,7 @@ metadata are skipped, so steady-state runs are fast.
 
 Also merges duplicate database album rows (same artist, album name equal
 ignoring case/whitespace, and one album's track titles a subset of the
-other's) — Deezer exposes many releases under two IDs (album + single with
+other's) — the metadata chain exposes many releases under two IDs (album + single with
 identical content), which used to split albums inside Navidrome forever.
 """
 
@@ -84,9 +84,14 @@ def _read_simple_tag(mf, keys):
 
 
 def _source_rank(al) -> int:
-    """Prefer real Deezer albums over iTunes fallback rows (often misspelled)."""
-    dz = str(al.deezer_id or "")
-    return 1 if dz and not dz.startswith("itunes_") else 0
+    """Prefer the primary metadata row over a fallback/complement row.
+
+    The provider chain writes complement releases with a provider-prefixed
+    external id (the convention today is 'itunes_<id>' for the iTunes
+    complement); core treats any prefixed id as the fallback row without
+    naming the provider."""
+    ext = str(al.external_id or "")
+    return 1 if ext and not re.match(r"^[a-zA-Z]+_", ext) else 0
 
 
 def _pick_canonical(a, b, set_a, set_b, dl_a, dl_b):
@@ -181,8 +186,8 @@ def _merge_duplicate_albums(app) -> dict:
 
     Two passes, both restricted to same-artist albums:
       1. exact:  album names equal ignoring case + whitespace, and
-      2. fuzzy:  names similar (e.g. "Patander" vs "Patandar" — Deezer and
-                 the iTunes fallback frequently spell the same release
+      2. fuzzy:  names similar (e.g. "Patander" vs "Patandar" — the primary
+                 provider and its fallback frequently spell the same release
                  differently).
     A merge only happens when one album's normalized track titles are a
     subset of the other's, so real single-vs-album pairs with different
@@ -252,7 +257,7 @@ def _merge_duplicate_albums(app) -> dict:
             _try_merge(albums)
 
         # ---- Pass 2: fuzzy name variants within each artist ----
-        # Deezer + iTunes fallback often disagree on spelling ("Patander" vs
+        # Primary + fallback providers often disagree on spelling ("Patander" vs
         # "Patandar", "Gutt" vs "Gut"); catch those when the track lists match.
         artist_ids = [r[0] for r in db.session.query(Album.artist_id).distinct().all()]
         for artist_id in artist_ids:
@@ -508,7 +513,7 @@ def normalize_album_tags(app, quiet: bool = True) -> dict:
 
     stats = {"checked": 0, "retagged": 0, "moved": 0, "skipped": 0, "errors": 0}
 
-    # First collapse duplicate DB albums (Deezer exposes many releases twice).
+    # First collapse duplicate DB albums (the metadata chain exposes many releases twice).
     # Without this, files get tagged with two spellings of the same album and
     # Navidrome keeps showing them split no matter how many times it rescans.
     merge_stats = _merge_duplicate_albums(app)

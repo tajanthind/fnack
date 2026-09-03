@@ -10,7 +10,13 @@ class Artist(db.Model):
     __tablename__ = "artists"
 
     id = db.Column(db.Integer, primary_key=True)
-    spotify_id = db.Column(db.String(64), unique=True, nullable=False)  # deezer_id or custom
+    # Provider-neutral external identity: the opaque id the metadata provider
+    # that created this artist uses (e.g. a Deezer artist id when the
+    # fnack.deezer-batch provider supplied it, or a prefixed self-identity
+    # like "acoustid:<name>" / "lidarr:<name>" for artists created from a
+    # single unknown track). Core never interprets the value — the provider
+    # chain owns parsing/conversion.
+    external_id = db.Column(db.String(64), unique=True, nullable=False)
     name = db.Column(db.String(256), nullable=False, index=True)
     image_url = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -60,7 +66,9 @@ class Album(db.Model):
     name = db.Column(db.String(512), nullable=False, index=True)
     year = db.Column(db.Integer, nullable=True)
     cover_url = db.Column(db.Text, nullable=True)
-    deezer_id = db.Column(db.String(32), nullable=True, index=True)
+    # Provider-neutral external release identity (opaque; interpreted by the
+    # metadata provider chain that supplied this release).
+    external_id = db.Column(db.String(64), nullable=True, index=True)
     record_type = db.Column(db.String(32), default="album", nullable=False, index=True)  # album, single, compile, ep, other
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     is_downloaded = db.Column(db.Boolean, default=False, nullable=False, index=True)
@@ -68,7 +76,7 @@ class Album(db.Model):
     size_bytes = db.Column(db.BigInteger, default=0, nullable=False)
     local_path = db.Column(db.Text, nullable=True)
 
-    # MusicBrainz enrichment (additive only — Deezer stays authoritative)
+    # MusicBrainz enrichment (additive only; enrichment is provider-owned)
     mb_release_group_id = db.Column(db.String(64), nullable=True, index=True)
     mb_title = db.Column(db.String(512), nullable=True)
     mb_year = db.Column(db.Integer, nullable=True)
@@ -93,7 +101,9 @@ class Track(db.Model):
     track_number = db.Column(db.Integer, nullable=True)
     disc_number = db.Column(db.Integer, default=1, nullable=True)
     isrc = db.Column(db.String(64), nullable=True, index=True)
-    deezer_id = db.Column(db.String(32), nullable=True, index=True)
+    # Provider-neutral external track identity (opaque; interpreted by the
+    # metadata provider chain that supplied this track).
+    external_id = db.Column(db.String(64), nullable=True, index=True)
     spotify_url = db.Column(db.Text, nullable=True)
     genre = db.Column(db.String(128), nullable=True)
     file_path = db.Column(db.Text, default="", nullable=False)
@@ -127,7 +137,7 @@ class DownloadJob(db.Model):
     album_id = db.Column(db.Integer, db.ForeignKey("albums.id"), nullable=True, index=True)
     artist_id = db.Column(db.Integer, db.ForeignKey("artists.id"), nullable=False, index=True)
     item_type = db.Column(db.String(16), default="track", nullable=False)  # track | album
-    album_spotify_id = db.Column(db.String(64), nullable=True)
+    album_external_id = db.Column(db.String(64), nullable=True)
     album_name = db.Column(db.String(512), nullable=False)
     album_type = db.Column(db.String(32), default="album", nullable=False)
     album_url = db.Column(db.Text, default="", nullable=False)
