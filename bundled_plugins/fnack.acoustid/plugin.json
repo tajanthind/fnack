@@ -2,19 +2,34 @@
   "id": "fnack.acoustid",
   "name": "AcoustID Fingerprinting",
   "version": "1.0.0",
-  "type": ["fingerprint"],
+  "type": [
+    "fingerprint"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:AcoustIDFingerprinter",
   "author": "fnack",
   "description": "Authoritative AcoustID fingerprinting (fingerprint.identify): verifies a download, identifies unknown/regional tracks, flags mismatches. API key is plugin-owned; keyless = disabled (silent no-op). Implementation lives in this plugin (acoustid.py).",
   "homepage": "",
-  "permissions": ["network", "filesystem:music"],
-  "settings_schema": [
-    {"key": "api_key", "type": "secret", "required": false}
+  "permissions": [
+    "network",
+    "settings",
+    "library:read",
+    "filesystem:music"
   ],
-  "ui": {"slots": []},
+  "settings_schema": [
+    {
+      "key": "api_key",
+      "type": "secret",
+      "required": false
+    }
+  ],
+  "ui": {
+    "slots": []
+  },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["fingerprint.identify"]
+  "capabilities": [
+    "fingerprint.identify"
+  ]
 }

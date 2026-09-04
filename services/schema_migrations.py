@@ -84,6 +84,12 @@ def run_schema_migrations(engine=None) -> None:
                 conn.execute(db.text("ALTER TABLE installed_plugins ADD COLUMN priority_override INTEGER"))
             except Exception:
                 pass
+            # Plugin secrets at rest: mark which PluginSetting rows are
+            # manifest-declared secrets (encrypted values).
+            try:
+                conn.execute(db.text("ALTER TABLE plugin_settings ADD COLUMN secret BOOLEAN DEFAULT 0"))
+            except Exception:
+                pass
             # Phase 1: denormalized per-artist counters (scale-to-millions)
             for col in ("total_albums", "total_tracks", "downloaded_tracks"):
                 try:

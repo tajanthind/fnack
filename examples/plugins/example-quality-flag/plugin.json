@@ -2,18 +2,33 @@
   "id": "dev.fnack.example-quality-flag",
   "name": "Example: Quality Flag (template)",
   "version": "1.0.0",
-  "type": ["event_hook", "ui_extension"],
+  "type": [
+    "event_hook",
+    "ui_extension"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:QualityFlagPlugin",
   "author": "fnack",
-  "description": "Demo/template plugin: flags a track with a caution reason when its bitrate is below a configurable threshold, and contributes a badge to the track row UI. Not a real feature — copy this to build your own hook + UI-slot plugin.",
+  "description": "Demo/template plugin: flags a track with a caution reason when its bitrate is below a configurable threshold, and contributes a badge to the track row UI. Not a real feature \u2014 copy this to build your own hook + UI-slot plugin.",
   "homepage": "",
-  "permissions": ["settings"],
-  "settings_schema": [
-    { "key": "min_bitrate_kbps", "type": "number", "default": 256 }
+  "permissions": [
+    "settings",
+    "library:read",
+    "library:write"
   ],
-  "ui": { "slots": ["track_row_actions"] },
+  "settings_schema": [
+    {
+      "key": "min_bitrate_kbps",
+      "type": "number",
+      "default": 256
+    }
+  ],
+  "ui": {
+    "slots": [
+      "track_row_actions"
+    ]
+  },
   "dependencies": {},
   "trust_level": "official"
 }

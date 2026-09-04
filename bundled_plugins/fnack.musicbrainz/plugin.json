@@ -2,17 +2,26 @@
   "id": "fnack.musicbrainz",
   "name": "MusicBrainz",
   "version": "1.0.0",
-  "type": ["metadata_provider"],
+  "type": [
+    "metadata_provider"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:MusicBrainzProvider",
   "author": "fnack",
   "description": "Enrichment-only MusicBrainz lookup (adds mb_* facts; never removes/renames). 1 req/s + Retry-After + negative cache preserved.",
   "homepage": "",
-  "permissions": ["network"],
+  "permissions": [
+    "network"
+  ],
   "settings_schema": [],
-  "ui": {"slots": []},
+  "ui": {
+    "slots": []
+  },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["artist.search", "artist.discography"]
+  "capabilities": [
+    "artist.search",
+    "artist.discography"
+  ]
 }

@@ -2,17 +2,32 @@
   "id": "fnack.deezer-batch",
   "name": "Deezer (batch enrichment)",
   "version": "1.0.0",
-  "type": ["metadata_provider"],
+  "type": [
+    "metadata_provider"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:DeezerBatchProvider",
   "author": "fnack",
   "description": "Deezer metadata provider (AUTHORITATIVE): artist search/info, rate-limited discography with filters, track/album metadata. Implementation lives in this plugin (deezer.py). Served through MetadataService.",
   "homepage": "",
-  "permissions": ["network"],
+  "permissions": [
+    "network"
+  ],
   "settings_schema": [],
-  "ui": {"slots": []},
+  "ui": {
+    "slots": []
+  },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["artist.search", "artist.discography", "artist.info", "track.metadata", "album.metadata", "album.search", "track.search", "album.tracks"]
+  "capabilities": [
+    "artist.search",
+    "artist.discography",
+    "artist.info",
+    "track.metadata",
+    "album.metadata",
+    "album.search",
+    "track.search",
+    "album.tracks"
+  ]
 }

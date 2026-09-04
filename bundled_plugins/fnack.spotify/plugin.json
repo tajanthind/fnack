@@ -2,20 +2,40 @@
   "id": "fnack.spotify",
   "name": "Spotify (URL resolution)",
   "version": "1.0.0",
-  "type": ["metadata_provider"],
+  "type": [
+    "metadata_provider"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:SpotifyProvider",
   "author": "fnack",
   "description": "Zero-auth Spotify track URL resolution (ISRC-first) for the download pipeline. Not a user-facing search box.",
   "homepage": "",
-  "permissions": ["network"],
-  "settings_schema": [
-    {"key": "client_id", "type": "string", "default": "", "required": false},
-    {"key": "client_secret", "type": "secret", "default": "", "required": false}
+  "permissions": [
+    "network",
+    "settings",
+    "library:read"
   ],
-  "ui": {"slots": []},
+  "settings_schema": [
+    {
+      "key": "client_id",
+      "type": "string",
+      "default": "",
+      "required": false
+    },
+    {
+      "key": "client_secret",
+      "type": "secret",
+      "default": "",
+      "required": false
+    }
+  ],
+  "ui": {
+    "slots": []
+  },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["track.resolve"]
+  "capabilities": [
+    "track.resolve"
+  ]
 }

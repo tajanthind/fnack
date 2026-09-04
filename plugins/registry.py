@@ -35,6 +35,21 @@ class RegistryError(Exception):
     pass
 
 
+def _safe_extract(zf: zipfile.ZipFile, dest_dir: Path) -> None:
+    """Extract an archive with a resolved-path containment check.
+
+    Every member's resolved target must stay inside ``dest_dir`` — a crafted
+    archive with ../../ entries (zip-slip) must never write outside the
+    plugin directory. Raises RegistryError before anything is extracted when
+    any member escapes."""
+    dest_root = dest_dir.resolve()
+    for member in zf.infolist():
+        target = (dest_root / member.filename).resolve()
+        if target != dest_root and dest_root not in target.parents:
+            raise RegistryError(f"unsafe path in plugin archive: {member.filename!r}")
+    zf.extractall(dest_dir)
+
+
 class PluginRegistry:
     def __init__(self, manager: PluginManager):
         self.manager = manager
@@ -158,9 +173,17 @@ class PluginRegistry:
         if not version_info:
             raise RegistryError(f"{plugin_id} has no published version {version}")
 
-        archive_bytes = self._download(version_info["download_url"])
+        # FAIL CLOSED: every install must be checksummed. A repository index
+        # entry that omits sha256 is refused — no unchecked code path exists.
         expected_sha = version_info.get("sha256")
-        if expected_sha and hashlib.sha256(archive_bytes).hexdigest() != expected_sha:
+        if not expected_sha:
+            raise RegistryError(
+                f"{plugin_id} {version} has no published sha256 in the repository "
+                f"index — refusing to install (indexes must checksum every release)"
+            )
+
+        archive_bytes = self._download(version_info["download_url"])
+        if hashlib.sha256(archive_bytes).hexdigest() != expected_sha:
             raise RegistryError(f"checksum mismatch for {plugin_id} {version} — refusing to install")
 
         dest_dir = self.manager.plugins_dir / plugin_id
@@ -168,7 +191,7 @@ class PluginRegistry:
             shutil.rmtree(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
-            zf.extractall(dest_dir)
+            _safe_extract(zf, dest_dir)  # zip-slip containment check
 
         loaded = self.manager.load_plugin(dest_dir)  # validates manifest + imports code
         manifest = loaded.manifest

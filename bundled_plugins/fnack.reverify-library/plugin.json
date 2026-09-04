@@ -2,17 +2,25 @@
   "id": "fnack.reverify-library",
   "name": "Reverify Library",
   "version": "1.0.0",
-  "type": ["library_task"],
+  "type": [
+    "library_task"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:ReverifyLibraryTask",
   "author": "fnack",
   "description": "Re-verifies downloaded files against their expected track metadata (duration + tags) and flags mismatches.",
   "homepage": "",
-  "permissions": ["settings"],
+  "permissions": [
+    "settings"
+  ],
   "settings_schema": [],
-  "ui": {"slots": []},
+  "ui": {
+    "slots": []
+  },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["library.task"]
+  "capabilities": [
+    "library.task"
+  ]
 }

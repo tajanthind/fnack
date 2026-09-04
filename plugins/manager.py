@@ -19,7 +19,10 @@ import importlib.util
 import json
 import logging
 import sys
-import threading
+try:
+    from gevent.lock import RLock as _ManagerRLock  # cooperative (fnack runs gevent)
+except ImportError:  # pragma: no cover - non-gevent context (tests/scripts)
+    from threading import RLock as _ManagerRLock
 import time
 from pathlib import Path
 from typing import Optional
@@ -142,7 +145,10 @@ class PluginManager:
         self.event_bus = EventBus()
         self.ui_slot_registry: dict[str, list] = {}
         self._plugins: dict[str, LoadedPlugin] = {}
-        self._lock = threading.Lock()
+        # Reverse index id(instance) -> plugin_id so _loaded_for_instance is
+        # O(1) instead of a linear scan on every invoke_provider().
+        self._instance_to_id: dict[int, str] = {}
+        self._lock = _ManagerRLock()
         self._scheduler_hook = self._default_scheduler_hook
         # Phase 1: the capability registry — separate concern from plugin
         # lifecycle. Application services query this; they never name a
@@ -234,6 +240,7 @@ class PluginManager:
             event_bus=self.event_bus,
             ui_slot_registry=self.ui_slot_registry,
             scheduler_hook=self._scheduler_hook,
+            settings_schema=manifest.settings_schema,
         )
         instance = plugin_cls(context)
         instance.manifest = manifest
@@ -241,6 +248,7 @@ class PluginManager:
         loaded = LoadedPlugin(instance, manifest, plugin_dir)
         with self._lock:
             self._plugins[manifest.id] = loaded
+            self._instance_to_id[id(instance)] = manifest.id
 
         loaded.refresh_from_db()  # pull priority_override + any persisted state
         # Phase 1: compute this plugin's capabilities (manifest-declared or
@@ -465,7 +473,12 @@ class PluginManager:
         self._unregister_capabilities(plugin_id)
 
     def unload_plugin(self, plugin_id: str) -> None:
-        loaded = self._plugins.pop(plugin_id, None)
+        with self._lock:
+            loaded = self._plugins.pop(plugin_id, None)
+            if loaded is not None:
+                # Keep the reverse index in sync (avoid stale entries keyed by
+                # a recycled id()).
+                self._instance_to_id.pop(id(loaded.instance), None)
         if not loaded:
             return
         if loaded.enabled:
@@ -486,10 +499,10 @@ class PluginManager:
         Used by invoke_provider when call sites hold a provider INSTANCE
         (e.g. from get_metadata_providers()/get_scan_triggers()) instead of
         the LoadedPlugin wrapper."""
-        for loaded in self._plugins.values():
-            if loaded.instance is instance:
-                return loaded
-        return None
+        plugin_id = self._instance_to_id.get(id(instance))
+        if plugin_id is None:
+            return None
+        return self._plugins.get(plugin_id)
 
     def invoke_provider(
         self,
