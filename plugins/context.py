@@ -23,16 +23,51 @@ from plugins.events import EventBus
 log = logging.getLogger("fnack.plugins.context")
 
 
+class PermissionChecker:
+    """Fail-closed manifest permission gate shared by every context facade.
+
+    A plugin may only touch a facade (network, settings, library reads or
+    writes, sandboxed filesystem paths) when its plugin.json declares the
+    matching permission — the manifest is a real contract, not documentation.
+    """
+
+    def __init__(self, plugin_id: str, permissions: list[str] | None):
+        self._plugin_id = plugin_id
+        self._permissions = set(permissions or [])
+
+    def __call__(self, permission: str) -> None:
+        if permission not in self._permissions:
+            raise PermissionError(
+                f"plugin '{self._plugin_id}' did not declare '{permission}' "
+                f"in its manifest permissions"
+            )
+
+
 # --------------------------------------------------------------------------
 # Library access — the ORM-insulation layer
 # --------------------------------------------------------------------------
 
+def core_context_checker() -> PermissionChecker:
+    """A checker that allows everything — for CORE code acting on behalf of
+    the app (seeding keys etc.), never for plugin code."""
+    return PermissionChecker("fnack-core", [
+        "network", "settings", "library:read", "library:write",
+        "filesystem:music", "filesystem:downloads",
+    ])
+
+
 class LibraryContext:
+    def __init__(self, checker: Optional[PermissionChecker] = None):
+        # Fail closed: a context built without an explicit checker permits
+        # nothing (only core_context_checker()/PluginContext should construct
+        # these).
+        self._check = checker or PermissionChecker("untrusted", [])
     """Read-mostly, method-based access to the music library. Plugins never
     see a SQLAlchemy model or session; if a plugin needs a new capability,
     add a method here rather than widening access."""
 
     def get_track(self, track_id: int) -> Optional[dict]:
+        self._check("library:read")
         from models import Track, db  # local import: avoids a hard dependency at package import time
         t = db.session.get(Track, track_id)
         if not t:
@@ -45,6 +80,7 @@ class LibraryContext:
         }
 
     def get_album(self, album_id: int) -> Optional[dict]:
+        self._check("library:read")
         from models import Album, db
         a = db.session.get(Album, album_id)
         if not a:
@@ -52,6 +88,7 @@ class LibraryContext:
         return {"id": a.id, "name": a.name, "year": a.year, "is_downloaded": a.is_downloaded}
 
     def get_artist(self, artist_id: int) -> Optional[dict]:
+        self._check("library:read")
         from models import Artist, db
         a = db.session.get(Artist, artist_id)
         if not a:
@@ -59,18 +96,21 @@ class LibraryContext:
         return {"id": a.id, "name": a.name, "monitored": a.monitored}
 
     def list_missing_tracks(self, limit: int = 500) -> list[dict]:
+        self._check("library:read")
         from models import Track
         rows = Track.query.filter_by(status="missing").limit(limit).all()
         return [{"id": t.id, "title": t.title, "isrc": t.isrc} for t in rows]
 
     def list_artists(self) -> list[dict]:
         """All artists (for Subsonic-style server extensions)."""
+        self._check("library:read")
         from models import Artist
         return [{"id": a.id, "name": a.name, "image_url": a.image_url}
                 for a in Artist.query.order_by(Artist.name).all()]
 
     def list_albums(self, artist_id: Optional[int] = None, limit: int = 500) -> list[dict]:
         """Albums, optionally filtered by artist (Subsonic album list)."""
+        self._check("library:read")
         from models import Album
         q = Album.query
         if artist_id:
@@ -82,6 +122,7 @@ class LibraryContext:
 
     def list_tracks(self, album_id: Optional[int] = None, limit: int = 1000) -> list[dict]:
         """Tracks, optionally filtered by album (Subsonic song list)."""
+        self._check("library:read")
         from models import Track
         q = Track.query
         if album_id:
@@ -96,12 +137,14 @@ class LibraryContext:
 
     def get_setting(self, key: str, default=None) -> Optional[str]:
         """Read a core AppSetting value (or default)."""
+        self._check("library:read")
         from models import AppSetting, db
         row = db.session.get(AppSetting, key)
         return row.value if row else default
 
     def set_setting(self, key: str, value) -> None:
         """Write a core AppSetting value."""
+        self._check("library:write")
         from models import AppSetting, db
         row = db.session.get(AppSetting, key)
         if row is None:
@@ -115,6 +158,7 @@ class LibraryContext:
         """The configured M2M API key ('' if unset). Exposed so server-
         extension plugins (e.g. Subsonic) can authenticate clients against
         the same key without touching models directly."""
+        self._check("library:read")
         return self.get_setting("api_key", "").strip()
 
     def get_or_create_api_key(self) -> str:
@@ -122,6 +166,7 @@ class LibraryContext:
         (moved from the former `services/lidarr_service.py` — Lidarr-style
         integrations authenticate against this key). fnack stays fully open
         (zero required auth) until a key is set."""
+        self._check("library:write")
         import secrets
         key = self.get_setting("api_key", "").strip()
         if key:
@@ -134,12 +179,14 @@ class LibraryContext:
         """Live album search (Phase 4: via MetadataService — album.search
         capability; the provider chain owns the implementation and the
         plugin boundary stays provider-generic."""
+        self._check("library:read")
         from services.metadata_service import MetadataService
         return MetadataService().search_album(query, limit=limit)
 
     def search_tracks(self, query: str, limit: int = 10) -> list[dict]:
         """Live track search (Phase 4: via MetadataService — track.search
         capability; the provider chain owns the implementation."""
+        self._check("library:read")
         from services.metadata_service import MetadataService
         return MetadataService().search_track(query, limit=limit)
 
@@ -147,12 +194,14 @@ class LibraryContext:
         """Album metadata (Phase 3: via MetadataService — album.metadata
         capability; used by the Lidarr plugin to build friendly release
         names)."""
+        self._check("library:read")
         from services.metadata_service import MetadataService
         return MetadataService().get_album_metadata(str(album_id)) or {}
 
     def get_track_info(self, track_id: int) -> dict:
         """Track metadata (Phase 3: via MetadataService — track.metadata
         capability; see get_album_info)."""
+        self._check("library:read")
         from services.metadata_service import MetadataService
         return MetadataService().get_track_metadata(str(track_id)) or {}
 
@@ -163,6 +212,7 @@ class LibraryContext:
         downloads them like any other track. Returns the created/queued job
         ids (moved verbatim from the former
         `services/lidarr_service.py::_create_lidarr_grab_job`)."""
+        self._check("library:write")
         from services.metadata_service import MetadataService
         from models import Album, Artist, DownloadJob, Track, db
 
@@ -288,6 +338,7 @@ class LibraryContext:
 
     def cancel_download_job(self, job_id: int) -> bool:
         """Cancel a DownloadJob (SABnzbd delete emulation)."""
+        self._check("library:write")
         from models import DownloadJob, db
         j = db.session.get(DownloadJob, job_id)
         if not j:
@@ -297,6 +348,7 @@ class LibraryContext:
         return True
 
     def update_track_status(self, track_id: int, status: str, error_message: str = None) -> None:
+        self._check("library:write")
         from models import Track, db
         t = db.session.get(Track, track_id)
         if not t:
@@ -310,6 +362,7 @@ class LibraryContext:
         """Flag a track for user attention without changing its download
         status or deleting anything — generalizes the AcoustID low-confidence
         caution flag into something any plugin can set."""
+        self._check("library:write")
         from models import Track, db
         t = db.session.get(Track, track_id)
         if not t:
@@ -331,6 +384,7 @@ class LibraryContext:
         verifier through the context instead of importing
         services.verifier_service. Enforces duration delta + embedded-tag
         match; returns (is_valid, error_reason, file_meta_dict)."""
+        self._check("library:read")
         from services.verifier_service import verify_audio_file as _verify
         return _verify(
             file_path,
@@ -353,6 +407,7 @@ class LibraryContext:
         fingerprint.identify capability via the manager boundary — plugins
         never import a core AcoustID implementation. Returns a dict with
         status/match info; fail-soft when AcoustID is disabled/unavailable."""
+        self._check("library:read")
         try:
             from plugins.manager import plugin_manager as _pm
             from fnack.plugin_api.capabilities import FINGERPRINT_IDENTIFY
@@ -369,34 +424,85 @@ class LibraryContext:
 
 
 # --------------------------------------------------------------------------
-# Per-plugin namespaced settings
+# Per-plugin namespaced settings (manifest-declared secrets are encrypted
+# at rest — see plugins/secret_store.py)
 # --------------------------------------------------------------------------
 
 class SettingsContext:
-    def __init__(self, plugin_id: str):
+    """Per-plugin settings, namespaced by plugin_id.
+
+    Every access requires the manifest permission "settings". Values whose
+    schema field is declared "type": "secret" are stored ENCRYPTED at rest
+    (Fernet; the key lives under CONFIG_DIR, never in the DB) and decrypted
+    on read — the manifest's secret declaration is honoured by the storage
+    layer, not just masked in the UI.
+    """
+
+    def __init__(self, plugin_id: str, checker: PermissionChecker,
+                 settings_schema: Optional[list] = None):
         self._plugin_id = plugin_id
+        self._check = checker
+        self._schema = {
+            (f or {}).get("key"): (f or {})
+            for f in (settings_schema or [])
+        }
+
+    def _is_secret_field(self, key: str) -> bool:
+        field = self._schema.get(key) or {}
+        return field.get("type") == "secret"
 
     def get(self, key: str, default=None):
-        from plugins.models import PluginSetting
-        from models import db
-        row = db.session.get(PluginSetting, (self._plugin_id, key))
-        return row.value if row else default
-
-    def set(self, key: str, value) -> None:
+        self._check("settings")
         from plugins.models import PluginSetting
         from models import db
         row = db.session.get(PluginSetting, (self._plugin_id, key))
         if row is None:
-            row = PluginSetting(plugin_id=self._plugin_id, key=key, value=str(value))
+            return default
+        if row.secret:
+            try:
+                from plugins.secret_store import decrypt
+                return decrypt(row.value)
+            except Exception:
+                return default
+        return row.value
+
+    def set(self, key: str, value, is_secret: Optional[bool] = None) -> None:
+        """Write a setting. Secret-ness is taken from the manifest
+        settings_schema entry for ``key`` (type "secret") unless overridden
+        by ``is_secret``."""
+        self._check("settings")
+        from plugins.models import PluginSetting
+        from models import db
+        secret = self._is_secret_field(key) if is_secret is None else bool(is_secret)
+        stored = str(value)
+        if secret:
+            from plugins.secret_store import encrypt
+            stored = encrypt(value)
+        row = db.session.get(PluginSetting, (self._plugin_id, key))
+        if row is None:
+            row = PluginSetting(plugin_id=self._plugin_id, key=key,
+                                value=stored, secret=secret)
             db.session.add(row)
         else:
-            row.value = str(value)
+            row.value = stored
+            row.secret = secret
         db.session.commit()
 
     def all(self) -> dict:
+        self._check("settings")
         from plugins.models import PluginSetting
+        from plugins.secret_store import decrypt
         rows = PluginSetting.query.filter_by(plugin_id=self._plugin_id).all()
-        return {r.key: r.value for r in rows}
+        out = {}
+        for r in rows:
+            if r.secret:
+                try:
+                    out[r.key] = decrypt(r.value)
+                except Exception:
+                    out[r.key] = ""
+            else:
+                out[r.key] = r.value
+        return out
 
 
 # --------------------------------------------------------------------------
@@ -407,28 +513,25 @@ class FSContext:
     """Restricts a plugin to fnack's own directories. `data_dir` is a
     private per-plugin scratch space nothing else can see."""
 
-    def __init__(self, plugin_id: str, permissions: list[str]):
+    def __init__(self, plugin_id: str, checker: PermissionChecker):
         import os
-        self._permissions = set(permissions)
+        self._check = checker
         self.downloads_dir = Path(os.environ.get("DOWNLOADS_DIR", "/downloads"))
         self.music_dir = Path(os.environ.get("MUSIC_DIR", "/music"))
         config_dir = Path(os.environ.get("CONFIG_DIR", "/config"))
         self.data_dir = config_dir / "plugins" / plugin_id / "data"
-        if "filesystem:downloads" in self._permissions or "filesystem:music" in self._permissions:
-            try:
-                self.data_dir.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                pass
-
-    def _check(self, permission: str):
-        if permission not in self._permissions:
-            raise PermissionError(
-                f"plugin did not declare '{permission}' in its manifest permissions"
-            )
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
 
     def open_download_path(self, relative: str):
         self._check("filesystem:downloads")
         return self.downloads_dir / relative
+
+    def open_music_path(self, relative: str):
+        self._check("filesystem:music")
+        return self.music_dir / relative
 
     def open_data_path(self, relative: str):
         return self.data_dir / relative
@@ -489,6 +592,15 @@ class JobsContext:
 # --------------------------------------------------------------------------
 
 class PluginContext:
+    """The only object a plugin ever receives.
+
+    Every facade enforces the plugin's DECLARED manifest permissions via the
+    shared PermissionChecker: network (context.http), settings, library reads
+    and writes, and the sandboxed filesystem paths. A plugin that did not
+    declare a permission gets a PermissionError the moment it tries to use
+    the facade — the manifest is a runtime contract, not documentation.
+    """
+
     def __init__(
         self,
         plugin_id: str,
@@ -496,13 +608,19 @@ class PluginContext:
         event_bus: EventBus,
         ui_slot_registry: dict[str, list],
         scheduler_hook: Callable[[float, Callable[[], None]], None],
+        settings_schema: Optional[list] = None,
     ):
-        self.library = LibraryContext()
-        self.settings = SettingsContext(plugin_id)
+        checker = PermissionChecker(plugin_id, permissions)
+        self._permissions = set(permissions or [])
+        self.library = LibraryContext(checker)
+        self.settings = SettingsContext(plugin_id, checker, settings_schema)
         self.events = EventsContext(plugin_id, event_bus)
-        self.http = requests.Session()
-        self.http.headers.update({"User-Agent": f"fnack-plugin/{plugin_id}"})
-        self.fs = FSContext(plugin_id, permissions)
+        if "network" in self._permissions:
+            self.http = requests.Session()
+            self.http.headers.update({"User-Agent": f"fnack-plugin/{plugin_id}"})
+        else:
+            self.http = None  # plugin did not declare "network" — no outbound HTTP
+        self.fs = FSContext(plugin_id, checker)
         self.ui = UIContext(plugin_id, ui_slot_registry)
         self.jobs = JobsContext(scheduler_hook)
         self.log = logging.getLogger(f"fnack.plugin.{plugin_id}")

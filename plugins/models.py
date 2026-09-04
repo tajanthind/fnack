@@ -57,6 +57,9 @@ class PluginSetting(db.Model):
     plugin_id = db.Column(db.String(128), primary_key=True)
     key = db.Column(db.String(128), primary_key=True)
     value = db.Column(db.Text, nullable=True)
+    # True when the value is a manifest-declared secret stored encrypted
+    # at rest (Fernet; key lives under CONFIG_DIR, not in the DB).
+    secret = db.Column(db.Boolean, default=False, nullable=False)
 
 
 class PluginCapabilityPriority(db.Model):

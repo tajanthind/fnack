@@ -283,18 +283,36 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
     @bp.route("/<plugin_id>/settings", methods=["GET"])
     def get_settings(plugin_id):
         rows = PluginSetting.query.filter_by(plugin_id=plugin_id).all()
-        return jsonify({r.key: r.value for r in rows})
+        from plugins.secret_store import decrypt as _dec
+        out = {}
+        for r in rows:
+            if r.secret:
+                try:
+                    out[r.key] = _dec(r.value)
+                except Exception:
+                    out[r.key] = ""  # key rotated/unavailable — re-enter
+            else:
+                out[r.key] = r.value
+        return jsonify(out)
 
     @bp.route("/<plugin_id>/settings", methods=["POST"])
     def set_settings(plugin_id):
         payload = request.get_json(silent=True) or {}
+        loaded = manager.get_loaded(plugin_id)
+        schema = (loaded.manifest.settings_schema if loaded else []) or []
+        secret_keys = {f.get("key") for f in schema if f.get("type") == "secret"}
+        from plugins.secret_store import encrypt as _enc
         for key, value in payload.items():
+            secret = key in secret_keys
+            stored = _enc(str(value)) if secret else str(value)
             row = db.session.get(PluginSetting, (plugin_id, key))
             if row is None:
-                row = PluginSetting(plugin_id=plugin_id, key=key, value=str(value))
+                row = PluginSetting(plugin_id=plugin_id, key=key,
+                                    value=stored, secret=secret)
                 db.session.add(row)
             else:
-                row.value = str(value)
+                row.value = stored
+                row.secret = secret
         db.session.commit()
 
         loaded = manager.get_loaded(plugin_id)

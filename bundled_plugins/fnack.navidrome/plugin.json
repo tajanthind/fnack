@@ -13,7 +13,8 @@
   "homepage": "",
   "permissions": [
     "network",
-    "settings"
+    "settings",
+    "library:read"
   ],
   "settings_schema": [
     {

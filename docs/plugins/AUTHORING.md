@@ -117,25 +117,34 @@ A plugin can be more than one type (e.g. `["scan_trigger", "ui_extension"]`).
 
 ### Permissions
 
-Declared permissions gate what the `context.*` facades will do. Using a
-facade without declaring its permission raises `PermissionError`.
+Declared permissions are a runtime contract, not documentation. Every
+`context.*` facade checks them, and a plugin that touches a facade without
+having declared the matching permission gets a `PermissionError` the moment
+it tries (fail closed — `context.http` is literally `None` unless the plugin
+declared `network`).
 
 | Permission | Gates |
 |---|---|
-| `network` | `context.http` requests (outbound network). |
+| `network` | `context.http` — outbound HTTP. Undeclared → `context.http` is `None`. |
 | `settings` | `context.settings` read/write (per-plugin key/value store). |
+| `library:read` | `context.library` read methods (track/album/artist lookups, search, verification helpers). |
+| `library:write` | `context.library` write methods (core settings, job creation/cancel, track status, caution flags). |
 | `filesystem:downloads` | `context.fs.open_download_path(...)` writes under the downloads dir. |
-| `filesystem:music` | `context.fs` access to the music library dir. |
+| `filesystem:music` | `context.fs.open_music_path(...)` access to the music library dir. |
 
-Declaring a permission you don't use shows a warning; using one you didn't
-declare is blocked.
+Using a permission you didn't declare raises `PermissionError`; declaring one
+you don't use is flagged as a warning.
 
 ### `settings_schema` entries
 
 Each entry: `{"key": "...", "type": "string|number|boolean|select|secret",
 "default": ..., "required": true|false}` and for `select` an `options` list.
-`secret: true` renders a password field and is stored encrypted-ish (never
-echoed back in full).
+A field with `"type": "secret"` renders a password input AND is genuinely
+encrypted at rest: the value is Fernet-encrypted before it touches the
+database (the key lives under fnack's config dir, outside the DB — a backup
+of the database alone does not leak it). It is decrypted only on read
+through `context.settings` / the settings API and is never echoed back in
+full elsewhere.
 
 ### Capabilities (Phase 1, MASTER)
 
@@ -703,8 +712,11 @@ To publish:
 4. Add an entry to your index JSON with the `download_url` and `sha256`.
 5. Serve the index JSON over HTTPS. Users paste the index URL into
    Settings → Plugins → Repositories, then install from the Marketplace.
-   fnack verifies the checksum before installing and never runs code from a
-   repo without an explicit install action.
+   The `sha256` is **mandatory**: an index entry that omits it is refused
+   (fail closed — fnack never installs unchecked code). fnack verifies the
+   checksum before installing, rejects archives whose members would extract
+   outside the plugin directory (zip-slip), and never runs code from a repo
+   without an explicit install action.
 
 ---
 
@@ -720,6 +732,8 @@ To publish:
   installs get an explicit permission-confirmation dialog).
 - fnack v1 runs plugins in-process. A malicious plugin can still do harm
   within its declared permissions (e.g. a `filesystem:downloads` plugin can
-  fill your disk). Only install plugins you trust. Real isolation
+  fill your disk) — and a plugin that imports a networking library directly
+  (e.g. `requests`) bypasses the `context.http` gate entirely, which is why
+  you should only install plugins you trust. Real isolation
   (subprocess/container) is the v2 roadmap; because plugins only use
   `PluginContext`, that upgrade doesn't change how you write plugins.

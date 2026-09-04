@@ -12,7 +12,9 @@
   "description": "Exposes fnack's library as a Subsonic server (Symfonium/DSub/Sublime Music). Auth via the fnack API key; open if no key set.",
   "homepage": "",
   "permissions": [
-    "settings"
+    "settings",
+    "library:read",
+    "filesystem:music"
   ],
   "settings_schema": [
     {
@@ -26,5 +28,7 @@
   },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["server.extension"]
+  "capabilities": [
+    "server.extension"
+  ]
 }

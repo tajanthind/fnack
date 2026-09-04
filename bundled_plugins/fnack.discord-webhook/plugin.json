@@ -2,23 +2,52 @@
   "id": "fnack.discord-webhook",
   "name": "Discord Webhook",
   "version": "1.0.0",
-  "type": ["event_hook"],
+  "type": [
+    "event_hook"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:DiscordWebhookPlugin",
   "author": "fnack",
   "description": "Sends Discord notifications when downloads complete, fail, or AcoustID flags a track.",
   "homepage": "",
-  "permissions": ["network", "settings"],
-  "settings_schema": [
-    {"key": "webhook_url", "type": "secret", "required": true},
-    {"key": "on_job_completed", "type": "boolean", "default": "true"},
-    {"key": "on_job_failed", "type": "boolean", "default": "true"},
-    {"key": "on_caution_flagged", "type": "boolean", "default": "true"},
-    {"key": "username", "type": "string", "default": "fnack"}
+  "permissions": [
+    "network",
+    "settings"
   ],
-  "ui": {"slots": []},
+  "settings_schema": [
+    {
+      "key": "webhook_url",
+      "type": "secret",
+      "required": true
+    },
+    {
+      "key": "on_job_completed",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "on_job_failed",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "on_caution_flagged",
+      "type": "boolean",
+      "default": "true"
+    },
+    {
+      "key": "username",
+      "type": "string",
+      "default": "fnack"
+    }
+  ],
+  "ui": {
+    "slots": []
+  },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["notification.event"]
+  "capabilities": [
+    "notification.event"
+  ]
 }

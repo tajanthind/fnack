@@ -1904,12 +1904,12 @@ def api_settings():
     fallback_fmt = _get_setting("ytdlp_format") or _get_setting("spotdl_format", "opus")
     cookies_path = _get_setting("youtube_cookies_path", "/config/cookies.txt")
 
-    from plugins.context import LibraryContext
+    from plugins.context import LibraryContext, core_context_checker
 
     return jsonify({
         "version": __version__,
         "max_concurrent": int(_get_setting("max_concurrent", str(app.config["MAX_CONCURRENT_DEFAULT"]))),
-        "api_key": LibraryContext().get_or_create_api_key(),
+        "api_key": LibraryContext(core_context_checker()).get_or_create_api_key(),
         "theme": _get_setting("theme", "onyx-dark"),
         "spotiflac_quality": _get_setting("spotiflac_quality", "LOSSLESS"),
         "spotiflac_delay": float(_get_setting("spotiflac_delay", "3.0")),
@@ -2187,6 +2187,32 @@ with app.app_context():
 
     enabled_ids = {p.id for p in InstalledPlugin.query.filter_by(enabled=True).all()}
     plugin_manager.load_all(enabled_ids=enabled_ids)
+    # Encrypt-at-rest backfill: settings declared "type": "secret" in an
+    # installed plugin's manifest are encrypted now (they may have been
+    # stored as plaintext before encryption existed). Idempotent — already
+    # encrypted rows (Fernet tokens) are skipped.
+    try:
+        from plugins.models import PluginSetting as _PS
+        from plugins.secret_store import encrypt as _enc_secret, looks_encrypted as _is_enc
+        for row in InstalledPlugin.query.all():
+            try:
+                manifest = json.loads(row.manifest_json or "{}")
+            except Exception:
+                continue
+            secret_keys = {
+                f.get("key") for f in (manifest.get("settings_schema") or [])
+                if f.get("type") == "secret"
+            }
+            for key in secret_keys:
+                sr = db.session.get(_PS, (row.id, key))
+                if sr is not None and not sr.secret and sr.value and not _is_enc(sr.value):
+                    sr.value = _enc_secret(sr.value)
+                    sr.secret = True
+        db.session.commit()
+    except Exception:
+        logger.exception("[PLUGINS] Secret at-rest backfill failed (will retry next boot)")
+
+
     plugin_registry = PluginRegistry(plugin_manager)
     app.register_blueprint(build_plugins_blueprint(plugin_manager, plugin_registry))
 
@@ -2229,8 +2255,8 @@ with app.app_context():
         if not db.session.get(AppSetting, k):
             db.session.add(AppSetting(key=k, value=v))
     db.session.commit()
-    from plugins.context import LibraryContext
-    LibraryContext().get_or_create_api_key()
+    from plugins.context import LibraryContext, core_context_checker
+    LibraryContext(core_context_checker()).get_or_create_api_key()
 
     # Phase 4: register server_extension plugin blueprints (Subsonic API, etc.).
     # Phase 1 (MASTER): enabled ServerExtension providers come from the

@@ -2,21 +2,48 @@
   "id": "fnack.spotiflac",
   "name": "SpotiFLAC",
   "version": "1.0.0",
-  "type": ["downloader"],
+  "type": [
+    "downloader"
+  ],
   "api_version": "^1.0",
   "min_core_version": "0.2.0",
   "entry_point": "plugin:SpotiFLACPlugin",
   "author": "fnack",
   "description": "Lossless audio via SpotiFLAC (Tidal/Qobuz/Deezer/SoundCloud, zero-auth). Tried first.",
   "homepage": "",
-  "permissions": ["network", "filesystem:downloads"],
-  "settings_schema": [
-    {"key": "quality", "type": "select", "options": ["LOSSLESS", "HIGH"], "default": "LOSSLESS"},
-    {"key": "delay", "type": "number", "default": "3.0"},
-    {"key": "timeout", "type": "number", "default": "180"}
+  "permissions": [
+    "network",
+    "settings",
+    "library:read",
+    "filesystem:downloads"
   ],
-  "ui": {"slots": []},
+  "settings_schema": [
+    {
+      "key": "quality",
+      "type": "select",
+      "options": [
+        "LOSSLESS",
+        "HIGH"
+      ],
+      "default": "LOSSLESS"
+    },
+    {
+      "key": "delay",
+      "type": "number",
+      "default": "3.0"
+    },
+    {
+      "key": "timeout",
+      "type": "number",
+      "default": "180"
+    }
+  ],
+  "ui": {
+    "slots": []
+  },
   "dependencies": {},
   "trust_level": "official",
-  "capabilities": ["download.track"]
+  "capabilities": [
+    "download.track"
+  ]
 }

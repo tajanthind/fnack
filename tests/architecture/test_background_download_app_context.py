@@ -105,7 +105,7 @@ def _test_runtime_background_download() -> None:
             '{"id":"fnack.testctx","name":"TestCtx","version":"1.0.0",'
             '"type":["downloader"],"api_version":"^1.0","min_core_version":"0.2.0",'
             '"entry_point":"plugin:TestCtxDownloader","author":"fnack",'
-            '"description":"app-context regression fixture","permissions":[],'
+            '"description":"app-context regression fixture","permissions":["settings"],'
             '"settings_schema":[{"key":"timeout","type":"number","default":"180"}],'
             '"ui":{"slots":[]},"dependencies":{},"trust_level":"official"}'
         )
