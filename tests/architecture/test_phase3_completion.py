@@ -72,7 +72,9 @@ def test_app_routes_use_application_services() -> None:
     assert "services.musicbrainz_service" not in src
     assert "services.navidrome_service" not in src
     assert "identify_candidates" in src
-    assert "run_split_repair" in src
+    # Direct Navidrome-DB split repair is un-shipped from core/app.
+    assert "run_split_repair" not in src
+    assert "fix-splits" not in src
 
 
 def test_zero_providers_produce_structured_unavailable() -> None:

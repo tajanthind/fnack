@@ -70,8 +70,10 @@ def test_plugin_is_authoritative_and_owns_config() -> None:
     assert "import navidrome" in src
     assert "services.navidrome_service" not in src
     cls = module.NavidromePlugin
-    for m in ("trigger_scan", "test_connection", "health", "run_split_repair", "on_load"):
+    # split repair is un-shipped (DB cleanup is plugin/catalog territory)
+    for m in ("trigger_scan", "test_connection", "health", "on_load"):
         assert hasattr(cls, m), f"plugin must expose {m}"
+    assert not hasattr(cls, "run_split_repair"), "split repair must not ship in the navidrome plugin"
     # config is plugin-owned: on_load migrates legacy globals into plugin store
     on_load = inspect.getsource(cls.on_load)
     assert "navidrome_url" in on_load and "context.settings" in on_load
@@ -82,20 +84,18 @@ def test_plugin_is_authoritative_and_owns_config() -> None:
     assert "trigger_navidrome_scan(config" in mod_src
 
 
-def test_app_and_scripts_resolve_through_plugin() -> None:
-    """app.py fix-splits + run_maintenance resolve through the plugin (no
-    hidden fallback); fix_navidrome_splits imports the plugin module."""
+def test_app_and_scripts_do_not_touch_navidrome_db() -> None:
+    """Direct Navidrome-DB split repair is un-shipped: app.py and the
+    maintenance subprocess no longer invoke it (it is catalog/plugin
+    territory)."""
     app_src = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert "run_split_repair" in app_src
+    assert "run_split_repair" not in app_src
+    assert "fix-splits" not in app_src
     assert "services.navidrome_service" not in app_src
 
     maint = (ROOT / "scripts" / "run_maintenance.py").read_text(encoding="utf-8")
-    assert "run_split_repair" in maint
+    assert "run_split_repair" not in maint
     assert "services.navidrome_service" not in maint
-
-    fix = (ROOT / "scripts" / "fix_navidrome_splits.py").read_text(encoding="utf-8")
-    assert "bundled_plugins/fnack.navidrome" in fix
-    assert "services.navidrome_service" not in fix
 
 
 def test_media_service_resolves_plugin_capabilities() -> None:
@@ -119,7 +119,7 @@ def test_docs_describe_post_extraction_architecture() -> None:
 if __name__ == "__main__":
     test_provider_impl_lives_in_plugin_not_core()
     test_plugin_is_authoritative_and_owns_config()
-    test_app_and_scripts_resolve_through_plugin()
+    test_app_and_scripts_do_not_touch_navidrome_db()
     test_media_service_resolves_plugin_capabilities()
     test_docs_describe_post_extraction_architecture()
     print("test_navidrome_extraction: PASSED")

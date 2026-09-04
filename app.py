@@ -4,9 +4,8 @@
 A modular Flask + SocketIO application with provider-neutral metadata
 ingestion (capability-based; official providers ship as plugins),
 ISRC-first SpotiFLAC / yt-dlp download pipeline, Sonarr-style artist
-discography views, and interactive library import. Lidarr emulation ships as
-the bundled `fnack.lidarr` plugin (Newznab/Torznab + SABnzbd), enabled by
-default.
+discography views, and interactive library import. Integration servers
+(Subsonic, and optionally Lidarr-style APIs) ship as plugins.
 """
 
 import nest_asyncio
@@ -284,23 +283,28 @@ def api_search_artist():
         return jsonify({"error": str(e)}), 500
 
 
+_ARTISTS_PAGE_DEFAULT = 1000
+
+
 @app.route("/api/artists")
 def api_artists():
     # Phase 1 (scale-to-millions): read the denormalized per-artist counters
-    # instead of full GROUP BY scans on every request, and paginate. The
-    # response shape is unchanged (frontend works with either mode); a client
-    # that passes limit/offset gets a page + total.
-    limit = request.args.get("limit", type=int)
-    offset = request.args.get("offset", type=int)
+    # instead of full GROUP BY scans on every request, and paginate. Every
+    # response is now a page object {"total", "artists", "truncated"}: a bare
+    # unbounded array can never be produced, so thousands of artists stay
+    # cheap. `q` filters by name server-side (LIKE on the indexed name
+    # column) — use it for full-library search instead of shipping every
+    # artist to the browser.
+    limit = request.args.get("limit", type=int) or _ARTISTS_PAGE_DEFAULT
+    offset = request.args.get("offset", type=int) or 0
     q = request.args.get("q", "").strip().lower()
 
     query = Artist.query.order_by(Artist.name)
     if q:
         query = query.filter(func.lower(Artist.name).like(f"%{q}%"))
     total = query.count()
-    if limit and limit > 0:
-        query = query.limit(limit)
-    if offset and offset > 0:
+    query = query.limit(limit)
+    if offset > 0:
         query = query.offset(offset)
     artists = query.all()
 
@@ -353,9 +357,8 @@ def api_artists():
             "downloaded_tracks": dl_t,
             "percent_downloaded": round((dl_t / tot_t * 100), 1) if tot_t else 0,
         })
-    if limit is not None or offset is not None:
-        return jsonify({"total": total, "artists": out})
-    return jsonify(out)
+    return jsonify({"total": total, "artists": out,
+                    "truncated": total > (offset + len(out))})
 
 
 @app.route("/api/stats")
@@ -1652,22 +1655,6 @@ def api_navidrome_scan():
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
 
-@app.route("/api/navidrome/fix-splits", methods=["POST"])
-def api_navidrome_fix_splits():
-    """Run the Navidrome album-split repair now (also runs automatically at
-    boot). Phase 4: resolved through the fnack.navidrome plugin (owns the
-    config + implementation) — no core navidrome import."""
-    from plugins.manager import plugin_manager as _pm
-    if _pm is None or _pm.get_plugin("fnack.navidrome") is None:
-        return jsonify({"success": False, "error": "Navidrome plugin not enabled"}), 400
-    res = _pm.invoke_provider(_pm.get_plugin("fnack.navidrome"), "run_split_repair")
-    if res is None:
-        return jsonify({"success": False, "error": "Split repair failed"}), 400
-    if res.get("error"):
-        return jsonify({"success": False, **res}), 400
-    return jsonify({"success": True, **res})
-
-
 @app.route("/api/maintenance/run", methods=["POST"])
 def api_maintenance_run():
     """Run the full library maintenance (merge/retag/artwork/navidrome repair)
@@ -1987,13 +1974,6 @@ def api_version():
     return jsonify({"version": __version__})
 
 
-@app.route("/api/settings/rotate-key", methods=["POST"])
-def api_rotate_key():
-    k = secrets.token_hex(16)
-    _set_setting("api_key", k)
-    return jsonify({"message": "API key rotated. Update Lidarr.", "api_key": k})
-
-
 # ══════════════════════════════════════════════════════════════════════
 #  Socket.IO Real-time Events
 # ══════════════════════════════════════════════════════════════════════
@@ -2220,6 +2200,34 @@ with app.app_context():
             db.session.commit()
     except Exception:
         logger.exception("[PLUGINS] Could not seed official plugin repository")
+
+    # Reconcile stale InstalledPlugin rows: a row whose plugin code is no
+    # longer physically present anywhere (not a bundled dir, not a dir under
+    # the plugins dir) is an orphan from an older image that bundled more
+    # plugins. Drop it so the UI/Marketplace never report such a plugin as
+    # installed when it is not actually there. (Marketplace-installed plugins
+    # live under the plugins dir and are untouched; user-uninstalled bundled
+    # plugins carry a tombstone and no row already.)
+    try:
+        from plugins.manager import plugin_manager as _pm_reconcile
+        present = set()
+        for d in _pm_reconcile.discover():
+            mf = d / "plugin.json"
+            if mf.exists():
+                try:
+                    import json as _json2
+                    present.add(_json2.loads(mf.read_text(encoding="utf-8")).get("id") or d.name)
+                except Exception:
+                    present.add(d.name)
+        if present:
+            stale = InstalledPlugin.query.filter(~InstalledPlugin.id.in_(present)).all()
+            for row in stale:
+                logger.info("[PLUGINS] Removing stale InstalledPlugin row for %s (not bundled/installed anymore)", row.id)
+                db.session.delete(row)
+            if stale:
+                db.session.commit()
+    except Exception:
+        logger.exception("[PLUGINS] InstalledPlugin reconciliation failed")
 
     enabled_ids = {p.id for p in InstalledPlugin.query.filter_by(enabled=True).all()}
     plugin_manager.load_all(enabled_ids=enabled_ids)

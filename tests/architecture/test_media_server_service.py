@@ -185,8 +185,9 @@ def test_callers_migrated_to_application_service() -> None:
     assert "test_navidrome_connection" not in app_src
     assert "trigger_navidrome_scan" not in app_src
     assert "services.navidrome_service" not in app_src
-    # Split repair resolves through the fnack.navidrome plugin.
-    assert "run_split_repair" in app_src
+    # Direct Navidrome-DB split repair is un-shipped from core.
+    assert "run_split_repair" not in app_src
+    assert "fix-splits" not in app_src
 
     queue_src = (ROOT / "services" / "queue_service.py").read_text(encoding="utf-8")
     assert "MediaServerService" in queue_src

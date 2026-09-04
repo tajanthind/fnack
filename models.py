@@ -144,6 +144,14 @@ class Track(db.Model):
 
 class DownloadJob(db.Model):
     __tablename__ = "download_jobs"
+    __table_args__ = (
+        # Scale (millions of job rows accumulate): the queue page reads the
+        # active set ordered by creation and history ordered by recency —
+        # composite indexes keep those reads on the index instead of sorting
+        # the whole table every poll.
+        db.Index("idx_jobs_status_created", "status", "created_at"),
+        db.Index("idx_jobs_status_updated", "status", "updated_at"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     track_id = db.Column(db.Integer, db.ForeignKey("tracks.id"), nullable=True, index=True)

@@ -274,6 +274,7 @@ async function confirmAddArtist() {
 
 // ----- Dashboard Artists Loader -----
 let _libraryArtists = [];
+let _libraryArtistTotal = 0;
 
 function applyLibraryFilter(artists) {
   const input = document.getElementById('libraryFilterInput');
@@ -282,13 +283,30 @@ function applyLibraryFilter(artists) {
   return artists.filter(a => (a.name || '').toLowerCase().includes(q));
 }
 
+let _libraryFilterTimer = null;
 function initLibraryFilter() {
   const input = document.getElementById('libraryFilterInput');
   if (!input) return;
   input.addEventListener('input', () => {
-    if (_libraryArtists.length) {
-      renderDashboardArtists(applyLibraryFilter(_libraryArtists));
-    }
+    clearTimeout(_libraryFilterTimer);
+    const q = input.value.trim();
+    // Debounced server-side filter: searches the WHOLE library, not just the
+    // loaded first page (scale: thousands of artists are never shipped to the
+    // browser at once).
+    _libraryFilterTimer = setTimeout(async () => {
+      if (!q) {
+        renderDashboardArtists(applyLibraryFilter(_libraryArtists), _libraryArtistTotal);
+        return;
+      }
+      try {
+        const resp = await fetch(`/api/artists?limit=200&q=${encodeURIComponent(q)}`);
+        const data = await resp.json();
+        const found = Array.isArray(data) ? data : (data.artists || []);
+        renderDashboardArtists(found, Array.isArray(data) ? found.length : (data.total || found.length));
+      } catch (e) {
+        console.error('Artist filter error:', e);
+      }
+    }, 250);
   });
 }
 
@@ -298,12 +316,18 @@ async function loadDashboardArtists() {
 
   try {
     const [respArtists, respStats] = await Promise.all([
-      fetch('/api/artists'),
+      fetch('/api/artists?limit=1000'),
       fetch('/api/stats'),
     ]);
-    const artists = await respArtists.json();
+    const data = await respArtists.json();
+    // Scale: /api/artists returns {total, artists, truncated}. Keep only the
+    // first page in memory; full-library filtering runs server-side via `q`
+    // (see initLibraryFilter) instead of shipping every artist here.
+    const artists = Array.isArray(data) ? data : (data.artists || []);
+    const total = Array.isArray(data) ? artists.length : (data.total || artists.length);
     _libraryArtists = artists;
-    renderDashboardArtists(applyLibraryFilter(artists));
+    _libraryArtistTotal = total;
+    renderDashboardArtists(applyLibraryFilter(artists), total);
 
     if (respStats.ok) {
       const stats = await respStats.json();
@@ -314,16 +338,26 @@ async function loadDashboardArtists() {
   }
 }
 
-function renderDashboardArtists(artists) {
+function renderDashboardArtists(artists, total) {
   const grid = document.getElementById('artistsDashboardGrid');
   if (!grid) return;
+  const label = document.getElementById('artistCountLabel');
+  if (label) {
+    const n = total !== undefined && total !== null ? total : (Array.isArray(artists) ? artists.length : 0);
+    label.textContent = `${n.toLocaleString()} artist${n === 1 ? '' : 's'}`;
+  }
 
   if (!Array.isArray(artists) || artists.length === 0) {
+    const filterQ = (document.getElementById('libraryFilterInput') || {}).value || '';
+    const emptyTitle = filterQ ? 'No artists match your filter' : 'Your library is empty';
+    const emptyHint = filterQ
+      ? 'Try a different name — search covers the whole library.'
+      : 'Search for an artist above to start downloading their discography in FLAC.';
     grid.innerHTML = `
       <div class="col-12 text-center text-secondary py-5">
         <i class="fas fa-compact-disc fa-3x mb-3 text-secondary d-block"></i>
-        <h5>Your library is empty</h5>
-        <p class="small text-secondary">Search for an artist above to start downloading their discography in FLAC.</p>
+        <h5>${emptyTitle}</h5>
+        <p class="small text-secondary">${emptyHint}</p>
       </div>`;
     return;
   }

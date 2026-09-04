@@ -226,31 +226,12 @@
             <span>Open Plugins Manager</span>
           </a>
         </div>
-        <div class="row g-2 pt-2 border-top border-secondary border-opacity-25">
-          <div class="col-6 col-md-3">
-            <div class="p-2 bg-dark rounded text-center">
-              <div class="text-secondary small fw-bold"><i class="fas fa-download text-warning me-1"></i>Downloaders</div>
-              <div class="small text-white mt-1">SpotiFLAC, yt-dlp</div>
-            </div>
-          </div>
-          <div class="col-6 col-md-3">
-            <div class="p-2 bg-dark rounded text-center">
-              <div class="text-secondary small fw-bold"><i class="fas fa-database text-info me-1"></i>Metadata</div>
-              <div class="small text-white mt-1">Deezer, Spotify, MB, iTunes</div>
-            </div>
-          </div>
-          <div class="col-6 col-md-3">
-            <div class="p-2 bg-dark rounded text-center">
-              <div class="text-secondary small fw-bold"><i class="fas fa-server text-success me-1"></i>Servers & Media</div>
-              <div class="small text-white mt-1">Navidrome, Subsonic API</div>
-            </div>
-          </div>
-          <div class="col-6 col-md-3">
-            <div class="p-2 bg-dark rounded text-center">
-              <div class="text-secondary small fw-bold"><i class="fas fa-shield-halved text-danger me-1"></i>VPN & Hooks</div>
-              <div class="small text-white mt-1">VPN, Discord, ntfy</div>
-            </div>
-          </div>
+        <div class="pt-2 border-top border-secondary border-opacity-25 text-secondary small">
+          <i class="fas fa-puzzle-piece me-1"></i>
+          The <strong>essential</strong> plugins (downloads + discography sync) ship with the
+          image; every other official plugin — fingerprinting, media-server
+          integrations, VPN, webhooks, Subsonic, and more — is one click away
+          in the Marketplace. Disable or replace any plugin from the manager.
         </div>
       </div>
     </div>
@@ -346,7 +327,7 @@
         <div class="mb-3">
           <label class="form-label fw-bold small">Discography Auto-Sync Interval (Hours)</label>
           <input type="number" class="form-control form-control-sm bg-dark text-white border-secondary settings-input" id="syncIntervalInput" min="1" max="72" value="6" style="max-width: 140px;">
-          <div class="form-text text-secondary small">How often fnack queries Deezer to discover new releases for monitored artists.</div>
+          <div class="form-text text-secondary small">How often fnack asks the metadata providers to discover new releases for monitored artists.</div>
         </div>
 
         <!-- Library Maintenance Schedule -->
@@ -360,9 +341,9 @@
           </select>
           <div class="form-text text-secondary small">
             One setting controls ALL library cleanup: duplicate-album merging,
-            tag normalization, missing-artwork backfill, and Navidrome split
-            repair. Runs in the background so the dashboard stays fast, no
-            matter how many artists you have.
+            tag normalization and missing-artwork backfill. Runs in the
+            background so the dashboard stays fast, no matter how many
+            artists you have.
           </div>
           <button type="button" class="btn btn-outline-info btn-sm mt-2" id="btnRunMaintenance" onclick="runMaintenanceNow()">
             <i class="fas fa-broom me-1"></i>Run Maintenance Now
@@ -409,38 +390,6 @@
       </div>
     </div>
 
-    <!-- Lidarr Integration (SABnzbd & Newznab) -->
-    <div class="card bg-dark-card border-0 shadow-sm mb-4">
-      <div class="card-body p-4">
-        <div class="d-flex align-items-center justify-content-between mb-2">
-          <h5 class="fw-bold m-0"><i class="fas fa-link text-primary me-2"></i>Lidarr Integration</h5>
-          <span class="badge bg-primary-subtle text-primary">SABnzbd + Torznab</span>
-        </div>
-        <p class="text-secondary small mb-3">Connect Lidarr to fnack as a Download Client and Indexer.
-          These endpoints ship as the bundled <code>fnack.lidarr</code> plugin (Settings → Plugins), enabled by default.
-          If the plugin is disabled or uninstalled, Lidarr will no longer reach fnack.</p>
-
-        <div class="mb-3">
-          <label class="form-label small fw-bold">API Key</label>
-          <div class="input-group input-group-sm">
-            <input type="text" class="form-control bg-dark text-white border-secondary font-monospace" id="apiKeyInput" readonly>
-            <button class="btn btn-outline-secondary" onclick="copyApiKey()" title="Copy API Key"><i class="fas fa-copy"></i></button>
-            <button class="btn btn-outline-warning" onclick="rotateApiKey()" title="Rotate API Key"><i class="fas fa-sync"></i></button>
-          </div>
-        </div>
-
-        <div class="bg-dark p-3 rounded">
-          <div class="mb-2 small">
-            <span class="text-secondary">Download Client (SABnzbd):</span><br>
-            <code>Host: &lt;fnack-ip&gt; · Port: 4688 · URL Base: /api/sabnzbd</code>
-          </div>
-          <div class="small">
-            <span class="text-secondary">Indexer (Torznab / Newznab):</span><br>
-            <code>URL: http://&lt;fnack-ip&gt;:4688/api/newznab · Categories: 3000, 3020</code>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- Sticky Bottom Save Bar (Appears when changes are detected) -->
@@ -624,7 +573,6 @@
 
         _setVal('syncIntervalInput', s.discography_interval_hours || 6);
         _setVal('musicPathInput', s.music_path || '/music');
-        _setVal('apiKeyInput', s.api_key || '');
 
         _setChecked('setSaveCoverArt', s.save_cover_art !== false);
         _setVal('setCoverArtFilename', s.cover_art_filename || 'cover.jpg');
@@ -1093,60 +1041,6 @@
       }
     }
 
-    async function testNavidromeConnection() {
-      const btn = document.getElementById('btnTestNavidrome');
-      const resDiv = document.getElementById('navidromeTestResult');
-      if (btn) btn.disabled = true;
-      if (resDiv) resDiv.innerHTML = '<span class="text-secondary small"><i class="fas fa-spinner fa-spin me-1"></i>Testing...</span>';
-
-      const payload = {
-        url: document.getElementById('setNavidromeUrl').value.trim(),
-        user: document.getElementById('setNavidromeUser').value.trim(),
-        token: document.getElementById('setNavidromeToken').value,
-      };
-
-      try {
-        const resp = await fetch('/api/navidrome/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const data = await resp.json();
-        if (resp.ok) {
-          if (resDiv) resDiv.innerHTML = `<span class="text-success small fw-semibold"><i class="fas fa-check-circle me-1"></i>${escapeHtml(data.message)}</span>`;
-          showToast(data.message, 'success');
-        } else {
-          if (resDiv) resDiv.innerHTML = `<span class="text-danger small fw-semibold"><i class="fas fa-times-circle me-1"></i>${escapeHtml(data.message)}</span>`;
-          showToast(data.message || 'Connection failed', 'error');
-        }
-      } catch (err) {
-        if (resDiv) resDiv.innerHTML = `<span class="text-danger small fw-semibold"><i class="fas fa-times-circle me-1"></i>${escapeHtml(err.message)}</span>`;
-        showToast('Connection error: ' + err.message, 'error');
-      } finally {
-        if (btn) btn.disabled = false;
-      }
-    }
-
-    async function triggerNavidromeScan() {
-      const btn = document.getElementById('btnScanNavidrome');
-      if (btn) btn.disabled = true;
-      showToast('Triggering Navidrome scan...', 'info');
-
-      try {
-        const resp = await fetch('/api/navidrome/scan', { method: 'POST' });
-        const data = await resp.json();
-        if (resp.ok) {
-          showToast(data.message, 'success');
-        } else {
-          showToast(data.message || 'Scan failed', 'error');
-        }
-      } catch (err) {
-        showToast('Network error: ' + err.message, 'error');
-      } finally {
-        if (btn) btn.disabled = false;
-      }
-    }
-
     async function runMaintenanceNow() {
       const btn = document.getElementById('btnRunMaintenance');
       if (btn) {
@@ -1185,55 +1079,6 @@
         }
       } catch (err) {
         showToast('Network error: ' + err.message, 'error');
-      }
-    }
-
-    async function fixNavidromeSplits() {
-      const btn = document.getElementById('btnFixNavidromeSplits');
-      if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Fixing...';
-      }
-      try {
-        const resp = await fetch('/api/navidrome/fix-splits', { method: 'POST' });
-        const data = await resp.json();
-        if (resp.ok && data.success) {
-          if (!data.enabled) {
-            showToast('Split auto-repair is disabled — set the Navidrome database path first.', 'warning');
-          } else if (data.groups === 0) {
-            showToast('No split albums found — library is clean.', 'success');
-          } else {
-            showToast(`Merged ${data.merged_rows} split album row(s) (${data.groups} group(s), ${data.moved_files} files repointed).`, 'success');
-          }
-        } else {
-          showToast(data.error || 'Split repair failed', 'error');
-        }
-      } catch (err) {
-        showToast('Network error: ' + err.message, 'error');
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = '<i class="fas fa-merge me-1"></i>Fix Album Splits Now';
-        }
-      }
-    }
-
-    function copyApiKey() {
-      const input = document.getElementById('apiKeyInput');
-      input.select();
-      navigator.clipboard.writeText(input.value);
-      showToast('API Key copied to clipboard', 'info');
-    }
-
-    async function rotateApiKey() {
-      if (!confirm('Rotate API Key? You will need to update Lidarr with the new key.')) return;
-      try {
-        const resp = await fetch('/api/settings/rotate-key', { method: 'POST' });
-        const data = await resp.json();
-        document.getElementById('apiKeyInput').value = data.api_key;
-        showToast('API key rotated', 'success');
-      } catch (err) {
-        showToast('Error rotating key: ' + err.message, 'error');
       }
     }
 

@@ -1,7 +1,7 @@
 """Bundled first-party plugin: Navidrome media-server integration.
 
 AUTHORITATIVE implementation (Phase 4): the Navidrome-specific logic — ping
-connection test, debounced scan trigger, and split-album repair — lives in
+connection test, debounced scan trigger — lives in
 this plugin's `navidrome.py` (moved from the deleted
 `services/navidrome_service.py`). All config (url/user/token/auto_scan/
 db_path) is PLUGIN-OWNED via the standard settings schema; the plugin
@@ -72,8 +72,3 @@ class NavidromePlugin(ScanTriggerPlugin):
             self._config().get("token") or "",
         )
         return {"ok": ok, "message": msg, "configured": bool(self._config().get("url"))}
-
-    def run_split_repair(self) -> dict:
-        """Split-album repair (library task): consolidates split rows in the
-        configured Navidrome DB and rescans on merge."""
-        return navidrome.run_auto_split_repair(self._config())

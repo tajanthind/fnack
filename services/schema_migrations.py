@@ -190,6 +190,8 @@ def run_schema_migrations(engine=None) -> None:
             # Indexes for the provider-scoped identity model (recreated after
             # the artists rebuild dropped the old ones; idempotent).
             for ddl in [
+                "CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON download_jobs (status, created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_jobs_status_updated ON download_jobs (status, updated_at)",
                 "CREATE INDEX IF NOT EXISTS idx_artists_name ON artists (name)",
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_artists_provider_external ON artists (provider_id, external_id)",
                 "CREATE INDEX IF NOT EXISTS ix_artists_provider_id ON artists (provider_id)",

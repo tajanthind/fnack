@@ -95,8 +95,11 @@ phase.
   image. Release process: edit + package in `fnack-plugins` (run
   `package_plugins.py` to regenerate `index.json` + `dist/`), then copy the
   same plugin sources into fnack's `bundled_plugins/` before tagging a core
-  release. Verified identical today (all 18 plugins byte-for-byte). The
-  auto-seeded official repo URL points at the fnack-plugins `index.json`.
+  release. Verified identical today (all 15 vendored plugins byte-for-byte;
+  fnack.lidarr / fnack.clean-navidrome-artists / fnack.fix-navidrome-splits
+  are intentionally UN-SHIPPED — catalog-only, still installable from the
+  Marketplace, rebuildable as plugins without core changes). The auto-seeded
+  official repo URL points at the fnack-plugins `index.json`.
 
 - [Phase 5: Settings-surface gaps (VPN/yt-dlp), plugin descriptions, reconciliation verification](tickets/plugin-phase-5-settings-and-descriptions.md):
   §1 metadata-chain fix confirmed live on main (stale-blob audit artifact);
