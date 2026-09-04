@@ -330,26 +330,6 @@
           <div class="form-text text-secondary small">How often fnack asks the metadata providers to discover new releases for monitored artists.</div>
         </div>
 
-        <!-- Library Maintenance Schedule -->
-        <div class="mb-3">
-          <label class="form-label fw-bold small">Library Maintenance Schedule</label>
-          <select class="form-select form-select-sm bg-dark text-white border-secondary settings-input" id="setMaintenanceInterval" style="max-width: 260px;">
-            <option value="weekly" selected>Weekly + every restart (Recommended)</option>
-            <option value="daily">Daily + every restart</option>
-            <option value="restart">Every restart only</option>
-            <option value="manual">Manual only (button below)</option>
-          </select>
-          <div class="form-text text-secondary small">
-            One setting controls ALL library cleanup: duplicate-album merging,
-            tag normalization and missing-artwork backfill. Runs in the
-            background so the dashboard stays fast, no matter how many
-            artists you have.
-          </div>
-          <button type="button" class="btn btn-outline-info btn-sm mt-2" id="btnRunMaintenance" onclick="runMaintenanceNow()">
-            <i class="fas fa-broom me-1"></i>Run Maintenance Now
-          </button>
-        </div>
-
         <!-- Failed-Song Auto-Retry Schedule (Brief 7 §5) -->
         <div class="mb-3">
           <label class="form-label fw-bold small">Failed-Song Auto-Retry Schedule</label>
@@ -583,7 +563,6 @@
         _setChecked('setEnableDurationCheck', s.enable_duration_check !== false);
         _setChecked('setEnableFolderWatcher', s.enable_folder_watcher !== false);
 
-        _setVal('setMaintenanceInterval', s.maintenance_interval || 'weekly');
         _setVal('setRetryInterval', s.retry_interval || 'daily');
 
         setDirty(false);
@@ -871,7 +850,6 @@
       const curDurCheck = _getChecked('setEnableDurationCheck', true);
       const curWatcher = _getChecked('setEnableFolderWatcher', true);
 
-      const curMaintInt = _getVal('setMaintenanceInterval', 'weekly');
       const curRetryInt = _getVal('setRetryInterval', 'daily');
       const curTheme = _currentTheme;
 
@@ -887,7 +865,6 @@
         curReject !== (_initialSettings.reject_mismatches !== false) ||
         curDurCheck !== (_initialSettings.enable_duration_check !== false) ||
         curWatcher !== (_initialSettings.enable_folder_watcher !== false) ||
-        curMaintInt !== (_initialSettings.maintenance_interval || 'weekly') ||
         curRetryInt !== (_initialSettings.retry_interval || 'daily')
       );
 
@@ -933,7 +910,6 @@
       _setChecked('setEnableDurationCheck', _initialSettings.enable_duration_check !== false);
       _setChecked('setEnableFolderWatcher', _initialSettings.enable_folder_watcher !== false);
 
-      _setVal('setMaintenanceInterval', _initialSettings.maintenance_interval || 'weekly');
       _setVal('setRetryInterval', _initialSettings.retry_interval || 'daily');
 
       setDirty(false);
@@ -981,7 +957,6 @@
         reject_mismatches: _getChecked('setRejectMismatches', true),
         enable_duration_check: _getChecked('setEnableDurationCheck', true),
         enable_folder_watcher: _getChecked('setEnableFolderWatcher', true),
-        maintenance_interval: _getVal('setMaintenanceInterval', 'weekly'),
         retry_interval: _getVal('setRetryInterval', 'daily'),
       };
 
@@ -1041,29 +1016,6 @@
       }
     }
 
-    async function runMaintenanceNow() {
-      const btn = document.getElementById('btnRunMaintenance');
-      if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Starting...';
-      }
-      try {
-        const resp = await fetch('/api/maintenance/run', { method: 'POST' });
-        const data = await resp.json();
-        if (resp.ok) {
-          showToast(data.message || 'Maintenance started in the background.', 'success');
-        } else {
-          showToast(data.error || 'Could not start maintenance', 'error');
-        }
-      } catch (err) {
-        showToast('Network error: ' + err.message, 'error');
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = '<i class="fas fa-broom me-1"></i>Run Maintenance Now';
-        }
-      }
-    }
 
     // Brief 7 §5: manual "Retry All Failed" from the settings page (the same
     // route the home page button uses; the scheduled variant calls the same

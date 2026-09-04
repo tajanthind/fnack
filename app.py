@@ -404,41 +404,24 @@ def api_stats():
 _running_artist_syncs = 0
 _MAX_CONCURRENT_SYNCS = 3
 
-# Library maintenance schedule. One setting controls ALL the cleanup work
-# (album merge/de-dupe, tag normalization, artwork backfill, Navidrome split
-# repair): "weekly" (default) = every restart + once a week, "daily" = every
-# restart + once a day, "restart" = only at every container restart,
-# "manual" = never automatic (Settings -> Run Maintenance Now only).
-_MAINTENANCE_INTERVALS = {
+# Background schedule options shared by the periodic background tasks.
+_SCHEDULE_INTERVALS = {
     "weekly": 7 * 24 * 3600,
     "daily": 24 * 3600,
     "restart": 0,
     "manual": -1,
 }
 
-# When library maintenance last ran (stamped by the boot task / scheduler).
-_last_maintenance = 0.0
-
-
-def _maintenance_interval_seconds() -> int:
-    """Seconds between automatic maintenance runs (0 = at restart only, -1 = off)."""
-    try:
-        val = _get_setting("maintenance_interval", "weekly")
-        return _MAINTENANCE_INTERVALS.get(str(val).strip().lower(), 7 * 24 * 3600)
-    except Exception:
-        return 7 * 24 * 3600
-
-
 _last_retry = 0.0
 
 
 def _retry_interval_seconds() -> int:
     """Seconds between automatic failed-song retry runs (Brief 7 §5).
-    Same value set as maintenance but DEFAULT 'daily' (per the user's
-    instruction). 0 = at restart only, -1 = off."""
+    Options mirror _SCHEDULE_INTERVALS with DEFAULT 'daily'. 0 = at restart
+    only, -1 = off."""
     try:
         val = _get_setting("retry_interval", "daily")
-        return _MAINTENANCE_INTERVALS.get(str(val).strip().lower(), 24 * 3600)
+        return _SCHEDULE_INTERVALS.get(str(val).strip().lower(), 24 * 3600)
     except Exception:
         return 24 * 3600
 
@@ -1655,13 +1638,6 @@ def api_navidrome_scan():
     return jsonify({"success": ok, "message": msg}), (200 if ok else 400)
 
 
-@app.route("/api/maintenance/run", methods=["POST"])
-def api_maintenance_run():
-    """Run the full library maintenance (merge/retag/artwork/navidrome repair)
-    in the background right now. Returns immediately; progress goes to the
-    container logs (fnack-maintenance.log)."""
-    _run_maintenance_subprocess()
-    return jsonify({"accepted": True, "message": "Library maintenance started in the background."}), 202
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1915,13 +1891,9 @@ def api_settings():
             _set_setting("navidrome_auto_scan", "true" if data["navidrome_auto_scan"] else "false")
         if "navidrome_db_path" in data:
             _set_setting("navidrome_db_path", str(data["navidrome_db_path"]).strip())
-        if "maintenance_interval" in data:
-            val = str(data["maintenance_interval"]).strip().lower()
-            if val in _MAINTENANCE_INTERVALS:
-                _set_setting("maintenance_interval", val)
         if "retry_interval" in data:
             val = str(data["retry_interval"]).strip().lower()
-            if val in _MAINTENANCE_INTERVALS:
+            if val in _SCHEDULE_INTERVALS:
                 _set_setting("retry_interval", val)
         if "acoustid_api_key" in data:
             _set_setting("acoustid_api_key", str(data["acoustid_api_key"]).strip())
@@ -1963,7 +1935,6 @@ def api_settings():
         "navidrome_token": _get_setting("navidrome_token", ""),
         "navidrome_auto_scan": _get_setting("navidrome_auto_scan", "true").lower() == "true",
         "navidrome_db_path": _get_setting("navidrome_db_path", ""),
-        "maintenance_interval": _get_setting("maintenance_interval", "weekly"),
         "retry_interval": _get_setting("retry_interval", "daily"),
         "acoustid_api_key": _get_setting("acoustid_api_key", ""),
     })
@@ -2011,10 +1982,6 @@ def _periodic_failed_retry_loop():
 
 def _periodic_discography_sync_loop():
     """Periodic auto-sync for monitored artists based on configured interval."""
-    # NOTE: _last_maintenance is initialized at module level and stamped by the
-    # boot task — never reset it here, or the first scheduler cycle (~60s after
-    # boot) would re-run the whole maintenance pass right after boot did.
-    global _last_maintenance
     gevent.sleep(60)
     while True:
         try:
@@ -2061,17 +2028,6 @@ def _periodic_discography_sync_loop():
         except Exception:
             pass
 
-        # Periodically re-run library maintenance (tag normalization, album
-        # de-duplication, artwork backfill, Navidrome split repair) in a
-        # detached subprocess so the web loop is never blocked. The frequency
-        # is one adjustable setting (default: every restart + once a week).
-        try:
-            maint_secs = _maintenance_interval_seconds()
-            if maint_secs > 0 and time.time() - _last_maintenance >= maint_secs:
-                _run_maintenance_subprocess()
-                _last_maintenance = time.time()
-        except Exception:
-            logger.exception("[SCHEDULER] Periodic library maintenance failed")
 
         gevent.sleep(300)
 
@@ -2264,10 +2220,8 @@ with app.app_context():
         ("enable_duration_check", "true"),
         ("enable_folder_watcher", "true"),
         ("navidrome_auto_scan", "true"),
-        ("maintenance_interval", "weekly"),
-        # Brief 7 §5: default daily (per the user's instruction — unlike
-        # maintenance's weekly), stored explicitly so a fresh install really
-        # has 'daily' rather than only the code fallback.
+        # Brief 7 §5: default daily, stored explicitly so a fresh install
+        # really has 'daily' rather than only the code fallback.
         ("retry_interval", "daily"),
         ("theme", "onyx-dark"),
     ]
@@ -2299,36 +2253,6 @@ socketio.start_background_task(start_queue_worker, app, socketio)
 socketio.start_background_task(start_folder_watcher, app, socketio)
 socketio.start_background_task(_periodic_discography_sync_loop)
 socketio.start_background_task(_periodic_failed_retry_loop)
-
-# Retroactive metadata normalization + Navidrome split repair: fix Navidrome
-# album grouping for the existing library on every boot (skips files that
-# already match, merges any split album rows in the Navidrome DB).
-#
-# The heavy work runs in a DETACHED SUBPROCESS (scripts/run_maintenance.py) so
-# the web dashboard stays responsive even with thousands of artists — the
-# inline version slowed every request while it scanned/tagged the library.
-def _run_maintenance_subprocess():
-    try:
-        script_path = str(Path(__file__).resolve().parent / "scripts" / "run_maintenance.py")
-        subprocess.Popen(
-            [sys.executable, script_path],
-            stdout=open("/tmp/fnack-maintenance.log", "a"),
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        logger.info("[MAINTENANCE] Spawned background library maintenance (see /tmp/fnack-maintenance.log)")
-    except Exception as e:
-        logger.exception("[MAINTENANCE] Could not start maintenance subprocess: %s", e)
-
-
-def _boot_metadata_normalize():
-    global _last_maintenance
-    _run_maintenance_subprocess()
-    # Mark maintenance as just-run so the periodic scheduler (first cycle runs
-    # ~60s after boot) does not immediately re-run the whole pass.
-    _last_maintenance = time.time()
-
-socketio.start_background_task(_boot_metadata_normalize)
 logger.info("fnack server initialized and background tasks (queue, watcher, scheduler, metadata) started")
 
 if __name__ == "__main__":
