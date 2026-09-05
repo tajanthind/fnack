@@ -119,6 +119,43 @@ Note the distinction between **media-server scan** (`media.scan`, the
 your library as a server for clients) — two different concepts, two different
 plugins.
 
+## Marketplace identity (multi-repository contract)
+
+fnack supports any number of plugin repositories at once, and a plugin id is
+**not globally unique**: the same id can be published by several
+repositories with different content. The marketplace therefore has an
+explicit, single contract — there is no implicit "which repo" rule anywhere:
+
+- **Browse = one entry per (repository, plugin).** The Marketplace never
+  merges duplicate ids across repositories and never picks a "newest" one.
+  Every card names its source repository, and every card that duplicates an
+  id from another enabled repository shows an explicit warning listing the
+  other publishers.
+- **Installs carry provenance.** Installing is always installing *from a
+  repository*: the request includes `source_repo_id`, recorded on the
+  `InstalledPlugin` row (`source_repo_id`). An install request *without* a
+  source is refused as ambiguous whenever more than one enabled repository
+  publishes the id — the candidates are listed, nothing is picked for you.
+- **Updates follow provenance.** "Update" re-installs from the repository the
+  plugin was originally installed from — never from whichever repository
+  happens to be checked first. A duplicate of the same id in a second
+  repository never drives the update badge or pulls a different fork in.
+- **Switching sources is explicit.** Installing an id that is already
+  installed from a different repository is a labelled "switch" action in the
+  UI (and a plain re-install from the new source via the API); it is never a
+  silent side effect of repository order.
+- **Duplicates are detected, not ignored.** Adding or refreshing a repository
+  that publishes an id also present in another enabled repository returns a
+  conflict warning to the UI immediately; the Marketplace cards carry the
+  same warning inline.
+- Repository *order* and *insertion time* are never semantic: they affect
+  nothing except the order cards are displayed in.
+
+Consequences for plugin authors: reverse-DNS ids remain the recommended
+convention (they make collisions unlikely), but the platform no longer
+*relies* on that convention — collisions are visible, and the user picks the
+source at install time.
+
 ## Essential vs optional packaging
 
 The Docker image ships **only** the essential plugins — the set required for
