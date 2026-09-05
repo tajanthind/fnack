@@ -12,7 +12,7 @@ Automated Lossless Music Discography Downloader, Tagger, and Library Manager.
 
 **fnack** is a lightweight, self-hosted service that downloads, tags, and
 organizes complete artist discographies into your music library. It runs as a
-single container, requires no accounts, and works with your media server
+single container, and works with your media server
 (Navidrome, Plex, Jellyfin, Subsonic).
 
 > **Zero authentication required.** fnack resolves and downloads tracks without
@@ -31,8 +31,7 @@ single container, requires no accounts, and works with your media server
 - **Library management** — overview stats, one-click retry of failed tracks,
   parallel folder import, manual match & track fixer, per-track monitoring.
 - **Media-server friendly** — can trigger a rescan on your media server when
-  downloads finish, and can expose your library as a Subsonic server for
-  Symfonium, DSub, Sublime Music, etc.
+  downloads finish.
 
 ---
 
@@ -62,7 +61,10 @@ docker run -d --name fnack \
   -p 4688:4688 fnack:latest
 ```
 
-Access the web interface at `http://<server-ip>:4688`.
+Access the web interface at `http://<server-ip>:4688`. On first boot you
+are asked to **create an admin account** (`/setup`) — the whole app is behind
+a login until then (passwords are stored salted + hashed). Optional machine
+access via the M2M API key in Settings.
 
 ---
 
@@ -94,7 +96,7 @@ needed for the default out-of-box experience (Spotify + YouTube downloads and
 discography sync); everything else is optional.
 
 - **Optional official plugins** — fingerprinting, media-server scans, VPN,
-  notifications, Subsonic server, and more — are one click away in
+  notifications, and more — are one click away in
   **Settings → Plugins → Marketplace**.
 - **Community plugins** are installed the same way, can replace any official
   provider for the same capability, and need no core change.

@@ -5,7 +5,7 @@ A modular Flask + SocketIO application with provider-neutral metadata
 ingestion (capability-based; official providers ship as plugins),
 ISRC-first SpotiFLAC / yt-dlp download pipeline, Sonarr-style artist
 discography views, and interactive library import. Integration servers
-(Subsonic, and optionally Lidarr-style APIs) ship as plugins.
+(Lidarr-style APIs) ship as plugins.
 """
 
 import nest_asyncio
@@ -67,6 +67,13 @@ if not _secret_key:
     except OSError:
         _secret_key = _secret_key or secrets.token_hex(32)
 app.config["SECRET_KEY"] = _secret_key or secrets.token_hex(24)
+# Accounts (services/accounts.py): whole-app login. Cookies: HttpOnly,
+# SameSite=Lax (cross-site POSTs never carry the session cookie); Secure
+# only when FNACK_COOKIE_SECURE is set (https reverse proxy / VPN UI).
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FNACK_COOKIE_SECURE", "0") == "1"
+app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 60 * 24 * 14  # 14 days
 
 @app.errorhandler(500)
 def _json_500_handler(e):
@@ -86,6 +93,14 @@ def inject_app_context():
 
 
 @app.context_processor
+def inject_current_user():
+    """Templates see `current_user` (User model or None) for the top-bar
+    account chip / logout link (services/accounts.py)."""
+    from services.accounts import current_user
+    return {"current_user": current_user()}
+
+
+@app.context_processor
 def inject_plugin_slot_helper():
     """Jinja helper for UI slots (INTEGRATION.md §4): {{ plugin_slot('slot', track=track) }}."""
     def plugin_slot(slot_name: str, **context_data):
@@ -94,51 +109,14 @@ def inject_plugin_slot_helper():
     return {"plugin_slot": plugin_slot}
 
 
-@app.before_request
-def _plugin_auth_guard():
-    """Phase 4 optional auth (auth_provider plugins). ZERO-REQUIRED-AUTH is
-    the standing constraint: this guard only activates when at least one
-    auth_provider plugin is installed AND enabled. With none, fnack stays
-    fully open (unchanged). The existing M2M API key still works when a
-    provider is active (X-API-Key short-circuits to the same identity).
+# Whole-app accounts lockdown (services/accounts.py): first-run /setup gate,
+# session login, optional M2M API key, auth_provider plugins (reverse-proxy
+# SSO). Replaces the former optional-only auth_provider guard.
+from services.accounts import auth_guard as _accounts_auth_guard
+app.before_request(_accounts_auth_guard)
+from services.accounts import build_accounts_blueprint as _build_accounts_blueprint
+app.register_blueprint(_build_accounts_blueprint())
 
-    Phase 1 (MASTER): providers come from the capability registry
-    (AUTH_PROVIDER), not a private manager dict — core never reaches into
-    `_plugins`."""
-    from fnack.plugin_api.capabilities import AUTH_PROVIDER
-    from plugins.manager import plugin_manager as _pm
-    if _pm is None:
-        return None
-    providers = [h.provider for h in _pm.capability_registry.providers(AUTH_PROVIDER)]
-    if not providers:
-        return None  # zero auth_providers enabled -> fully open
-
-    # Health + static assets stay open (probes/UX).
-    if request.path.startswith("/health") or request.path.startswith("/static"):
-        return None
-
-    from flask import g
-    # M2M API key short-circuit.
-    api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization", "").replace("Bearer ", "")
-    from models import AppSetting
-    if api_key:
-        setting = db.session.get(AppSetting, "api_key")
-        if setting and setting.value and api_key == setting.value:
-            g.fnack_user = "api-key"
-            return None
-
-    headers = {k: v for k, v in request.headers.items()}
-    for provider in providers:
-        try:
-            # Phase 1.1 §3: provider invocation via the central executor.
-            user = _pm.invoke_provider(provider, "authenticate", headers)
-        except Exception:
-            logger.exception("[AUTH] auth_provider %s failed", getattr(provider, "manifest", None).id if getattr(provider, "manifest", None) else provider)
-            continue
-        if user:
-            g.fnack_user = user
-            return None
-    return jsonify({"error": "Unauthorized"}), 401
 
 _db_dir = Path(os.environ.get("CONFIG_DIR", "/config"))
 if not _db_dir.exists() and not os.environ.get("SQLALCHEMY_DATABASE_URI"):
@@ -1610,7 +1588,7 @@ def api_import_folder_bulk():
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Navidrome Subsonic Integration API
+#  Navidrome Integration API
 # ══════════════════════════════════════════════════════════════════════
 
 @app.route("/api/navidrome/test", methods=["POST"])
@@ -2083,7 +2061,6 @@ with app.app_context():
             # disabled-by-default (opt-in, still clearly listed in the
             # Marketplace) — 0.2.x-parity default posture, not deletion.
             default_disabled = {
-                "fnack.subsonic",            # Subsonic SERVER API (Phase 4 stretch)
                 "fnack.discord-webhook",     # Phase 4 webhook pack
                 "fnack.ntfy-webhook",        # Phase 4 webhook pack
                 "fnack.reverse-proxy-auth",  # Phase 4 auth (also auth_provider rule)
@@ -2258,7 +2235,7 @@ with app.app_context():
     from plugins.context import LibraryContext, core_context_checker
     LibraryContext(core_context_checker()).get_or_create_api_key()
 
-    # Phase 4: register server_extension plugin blueprints (Subsonic API, etc.).
+    # Phase 4: register server_extension plugin blueprints.
     # Phase 1 (MASTER): enabled ServerExtension providers come from the
     # capability registry (SERVER_EXTENSION), not a private manager dict.
     # Must run inside the app context so blueprints attach to this app.

@@ -50,6 +50,12 @@
       </div>
 
       <div class="d-flex align-items-center gap-2">
+        {% if current_user %}
+      <div class="d-flex align-items-center gap-2">
+        <span class="text-secondary small d-none d-lg-inline"><i class="fas fa-user-circle me-1"></i>{{ current_user.username }}{% if current_user.role == 'admin' %} <span class="badge bg-danger-subtle text-danger align-middle" style="font-size:0.65rem;">admin</span>{% endif %}</span>
+        <a href="/logout" class="btn btn-outline-secondary btn-sm rounded-circle d-flex align-items-center justify-content-center" style="width:36px; height:36px;" title="Log out"><i class="fas fa-sign-out-alt"></i></a>
+      </div>
+{% endif %}
         <a href="/" class="btn btn-outline-secondary btn-sm">
           <i class="fas fa-arrow-left me-1"></i>Dashboard
         </a>
@@ -91,6 +97,56 @@
       <button class="btn btn-brand btn-sm fw-bold px-3" onclick="saveSettings()">
         <i class="fas fa-save me-1"></i>Save Now
       </button>
+    </div>
+
+    <!-- Accounts: manage users (admin) + change your own password -->
+    <div class="card bg-dark-card border-0 shadow-sm mb-4" id="changePasswordCard">
+      <div class="card-body p-4">
+        <h5 class="fw-bold m-0 mb-1"><i class="fas fa-key text-danger me-2"></i>Change your password</h5>
+        <p class="text-secondary small mb-3">Signed in as <strong id="meUsername">…</strong>{% if current_user and current_user.role == 'admin' %} (<span class="badge bg-danger-subtle text-danger">admin</span>){% endif %}.</p>
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-md-4">
+            <label class="form-label small text-secondary mb-1">Current password</label>
+            <input type="password" class="form-control form-control-sm" id="pwCurrent" autocomplete="current-password">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label small text-secondary mb-1">New password</label>
+            <input type="password" class="form-control form-control-sm" id="pwNew" autocomplete="new-password" minlength="8">
+          </div>
+          <div class="col-12 col-md-4 d-flex gap-2">
+            <button class="btn btn-brand btn-sm" id="pwSaveBtn"><i class="fas fa-save me-1"></i>Update password</button>
+            <a href="/logout" class="btn btn-outline-secondary btn-sm"><i class="fas fa-sign-out-alt me-1"></i>Log out</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card bg-dark-card border-0 shadow-sm mb-4 d-none" id="accountsAdminCard">
+      <div class="card-body p-4">
+        <h5 class="fw-bold m-0 mb-1"><i class="fas fa-users text-danger me-2"></i>User accounts <span class="badge bg-secondary-subtle text-secondary align-middle" style="font-size:0.65rem;">admin</span></h5>
+        <p class="text-secondary small mb-3">Create, delete, and promote accounts. Roles: <strong>admin</strong> (manage accounts + everything) or <strong>user</strong> (everything else). Passwords are stored salted + hashed.</p>
+        <div id="accountsList"></div>
+        <div class="row g-2 align-items-end mt-1">
+          <div class="col-12 col-md-3">
+            <label class="form-label small text-secondary mb-1">Username</label>
+            <input type="text" class="form-control form-control-sm" id="newUserUsername" placeholder="e.g. partner" pattern="[A-Za-z0-9_.\-]{3,64}">
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label small text-secondary mb-1">Password</label>
+            <input type="password" class="form-control form-control-sm" id="newUserPassword" minlength="8" placeholder="8+ chars">
+          </div>
+          <div class="col-12 col-md-2">
+            <label class="form-label small text-secondary mb-1">Role</label>
+            <select class="form-select form-select-sm" id="newUserRole">
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-4">
+            <button class="btn btn-brand btn-sm w-100" id="newUserBtn"><i class="fas fa-user-plus me-1"></i>Add account</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Interface Appearance & Themes (6 Themes: 3 Dark + 3 Light) -->
