@@ -343,6 +343,10 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         payload = request.get_json(silent=True) or {}
         plugin_id = payload.get("plugin_id")
         version = payload.get("version")
+        # Provenance: the UI always sends the repository the card came from.
+        # Ambiguous ids (published by >1 enabled repo) are refused by the
+        # registry when this is absent.
+        source_repo_id = payload.get("source_repo_id")
         if not plugin_id:
             return jsonify({"error": "plugin_id is required"}), 400
         # Reinstalling a user-uninstalled bundled plugin is fine (tombstone
@@ -354,7 +358,7 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         if plugin_id in manager.bundled_ids() and not is_tombstoned:
             return jsonify({"error": "This plugin is bundled with fnack — no need to install it from a repository."}), 400
         try:
-            row = registry.install(plugin_id, version)
+            row = registry.install(plugin_id, version, source_repo_id=source_repo_id)
             # Clear the tombstone so auto-install considers it installed again.
             if is_tombstoned:
                 t = db.session.get(AppSetting, tombstone_key)
@@ -363,7 +367,8 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
                     db.session.commit()
         except RegistryError as exc:
             return jsonify({"error": str(exc)}), 400
-        return jsonify({"ok": True, "id": row.id, "version": row.version})
+        return jsonify({"ok": True, "id": row.id, "version": row.version,
+                        "source_repo_id": row.source_repo_id})
 
     @bp.route("/repositories", methods=["GET"])
     def list_repositories():
@@ -384,6 +389,22 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
             repo = registry.add_repository(url)
         except RegistryError as exc:
             return jsonify({"error": str(exc)}), 400
+        # Duplicate-id warning surface: if this repo publishes ids that
+        # another enabled repo also publishes, tell the user NOW instead of
+        # resolving duplicates silently later.
+        conflicts = registry.repository_conflicts(repo.id)
+        if conflicts:
+            summary = "; ".join(
+                f"{c['plugin_id']} (also in {', '.join(c['other_repos'])})"
+                for c in conflicts[:5]
+            )
+            return jsonify({"ok": True, "id": repo.id, "name": repo.name,
+                            "conflicts": conflicts,
+                            "warning": f"This repository publishes plugin ids that already "
+                                       f"exist in another enabled repository: {summary}. "
+                                       f"Installs/updates are repo-scoped, so you pick the "
+                                       f"source per plugin — duplicates are never merged "
+                                       f"silently."}), 200
         return jsonify({"ok": True, "id": repo.id, "name": repo.name})
 
     @bp.route("/repositories/<int:repo_id>/refresh", methods=["POST"])
@@ -392,6 +413,12 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
             registry.refresh_repository(repo_id)
         except RegistryError as exc:
             return jsonify({"error": str(exc)}), 400
+        conflicts = registry.repository_conflicts(repo_id)
+        if conflicts:
+            return jsonify({"ok": True, "conflicts": conflicts,
+                            "warning": "This repository now publishes plugin ids that "
+                                       "already exist in another enabled repository — see "
+                                       "the Marketplace for the per-repo listings."}), 200
         return jsonify({"ok": True})
 
     @bp.route("/repositories/<int:repo_id>", methods=["DELETE"])
@@ -409,6 +436,7 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         redacted) as one JSON blob — pairs with the DEPLOY.md move story."""
         repos = [{"url": r.url, "enabled": r.enabled}
                  for r in PluginRepository.query.all()]
+        repo_urls = {r.id: r.url for r in PluginRepository.query.all()}
         plugins = {}
         for row in InstalledPlugin.query.all():
             settings = {s.key: s.value for s in PluginSetting.query.filter_by(plugin_id=row.id).all()}
@@ -430,6 +458,10 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
                 "settings": redacted,
                 "priority_override": row.priority_override,
                 "capability_priorities": cap_priorities,
+                # Provenance: which repository URL this install came from, so
+                # a config move restores the SAME source (ids are not global;
+                # repo-scoped installs must not silently re-resolve).
+                "source_repo_url": repo_urls.get(row.source_repo_id) if row.source_repo_id else None,
             }
         return jsonify({"repos": repos, "plugins": plugins})
 
@@ -441,16 +473,22 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         payload = request.get_json(silent=True) or {}
         added, installed = [], []
         try:
+            added_ids: dict[str, int] = {}  # repo url -> new repo id
             for r in payload.get("repos", []):
                 if r.get("url"):
                     repo = registry.add_repository(r["url"])
                     repo.enabled = bool(r.get("enabled", True))
+                    added_ids[r["url"]] = repo.id
                     added.append(r["url"])
             db.session.commit()
             for pid, meta in (payload.get("plugins") or {}).items():
                 version = meta.get("version")
+                # Restore provenance: install from the same repository URL the
+                # plugin was originally installed from (ids are repo-scoped).
+                src_url = meta.get("source_repo_url")
+                source_repo_id = added_ids.get(src_url) if src_url else None
                 try:
-                    row = registry.install(pid, version)
+                    row = registry.install(pid, version, source_repo_id=source_repo_id)
                     row.enabled = bool(meta.get("enabled", True))
                     if meta.get("priority_override") is not None:
                         row.priority_override = meta["priority_override"]

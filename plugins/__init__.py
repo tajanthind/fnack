@@ -16,7 +16,7 @@ Everything else in this package (`manager`, `registry`, `context`, `events`,
 directly.
 """
 
-PLUGIN_API_VERSION = "1.0.0"
+PLUGIN_API_VERSION = "1.0.1"
 
 # The canonical `plugin.json` `type` enum — a single source of truth for
 # valid plugin types. HARNESS §3 types are folded in now (even where the

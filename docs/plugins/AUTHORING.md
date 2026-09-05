@@ -737,3 +737,36 @@ To publish:
   you should only install plugins you trust. Real isolation
   (subprocess/container) is the v2 roadmap; because plugins only use
   `PluginContext`, that upgrade doesn't change how you write plugins.
+
+### Network honesty is checked at load time
+
+At load, fnack statically scans every plugin's Python files for imports of
+network-capable modules (`requests`, `urllib.request`, `http.client`,
+`httpx`, `aiohttp`, `urllib3`, `socket`, `websockets`, …). If any are found
+**and the manifest does not declare `network`**, fnack logs a prominent
+warning: the plugin is doing network I/O outside the permission gate. This
+is a warning, not a block (a static scan can produce false positives and
+in-process plugins can't be sandboxed anyway) — but it makes contract drift
+visible instead of silent, and fnack's own bundled plugins are held to the
+same rule by an architecture test.
+
+- **Do** route all outbound HTTP through `context.http` and declare
+  `network` when you need it.
+- **If** you must use a library directly, still declare `network` — the
+  declaration is the honest contract; the gate is a UX/trust signal, not a
+  firewall.
+
+### Secret values: what losing the key means
+
+Manifest-declared `"type": "secret"` settings are encrypted with a Fernet key
+stored at `CONFIG_DIR/plugin_secret.key` (mode 0600) — deliberately **outside
+the database**. Consequences you should plan for:
+
+- A database backup alone does **not** leak secrets (good), but restoring a
+  DB onto a host **without** the matching `plugin_secret.key` leaves stored
+  secrets undecryptable: they read back as empty and must be re-entered.
+- Back up `plugin_secret.key` together with your database (both live under
+  the config volume); keep them together and you can restore a working
+  install including secrets.
+- Rotating the key file (deleting it) is the "revoke everything" lever: all
+  previously stored plugin secrets become unreadable and can be re-entered.
