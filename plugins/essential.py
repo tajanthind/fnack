@@ -12,7 +12,8 @@ Relationship between the three plugin sets:
   plugins are intentionally NOT vendored/bundled (un-shipped: fnack.lidarr,
   fnack.clean-navidrome-artists, fnack.fix-navidrome-splits) — they remain
   fully installable from the fnack-plugins Marketplace so they can be
-  rebuilt/kept as plugins without core changes.
+  rebuilt/kept as plugins without core changes. fnack.subsonic was removed
+  from the official catalog outright (no longer shipped or installable).
 - **Essential** — the small subset of official plugins required for the
   out-of-box, first-run workflow (below). The Docker build prunes
   `bundled_plugins/` to exactly this set (see

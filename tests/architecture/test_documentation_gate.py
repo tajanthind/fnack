@@ -155,14 +155,17 @@ def test_readme_config_is_core_vs_plugin_without_enumeration() -> None:
     assert "migration fallback" in readme
 
 
-def test_media_scan_vs_subsonic_distinction_in_architecture_doc() -> None:
-    """Navidrome (media.scan provider) and Subsonic (server.extension plugin)
-    are different concepts; the deep doc presents them as such."""
+def test_media_scan_vs_server_extension_distinction_in_architecture_doc() -> None:
+    """Navidrome (media.scan provider) and server-API plugins
+    (server.extension) are different concepts; the deep doc presents them as
+    such — and the removed fnack.subsonic plugin is referenced nowhere."""
     doc = _read(ARCHITECTURE_DOC)
     assert "fnack.navidrome" in doc and "media.scan" in doc
-    assert "fnack.subsonic" in doc and "server.extension" in doc
+    assert "server.extension" in doc
+    assert "fnack.subsonic" not in doc, \
+        "removed subsonic plugin must not appear in docs/architecture.md"
     media_section = doc.split("### Essential vs optional packaging", 1)[0]
-    assert "media-server scan" in media_section and "Subsonic/OpenSubsonic server" in media_section
+    assert "media-server scan" in media_section and "server API plugins" in media_section
 
 
 def test_no_provider_implementation_leak() -> None:
@@ -229,7 +232,7 @@ if __name__ == "__main__":
     test_architecture_doc_explains_plugin_model()
     test_readme_is_user_focused_and_architecture_light()
     test_readme_config_is_core_vs_plugin_without_enumeration()
-    test_media_scan_vs_subsonic_distinction_in_architecture_doc()
+    test_media_scan_vs_server_extension_distinction_in_architecture_doc()
     test_no_provider_implementation_leak()
     test_guides_moved_out_of_readme()
     test_obsolete_core_db_model_removed()

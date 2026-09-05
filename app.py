@@ -5,7 +5,7 @@ A modular Flask + SocketIO application with provider-neutral metadata
 ingestion (capability-based; official providers ship as plugins),
 ISRC-first SpotiFLAC / yt-dlp download pipeline, Sonarr-style artist
 discography views, and interactive library import. Integration servers
-(Subsonic, and optionally Lidarr-style APIs) ship as plugins.
+(Lidarr-style APIs) ship as plugins.
 """
 
 import nest_asyncio
@@ -1610,7 +1610,7 @@ def api_import_folder_bulk():
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Navidrome Subsonic Integration API
+#  Navidrome Integration API
 # ══════════════════════════════════════════════════════════════════════
 
 @app.route("/api/navidrome/test", methods=["POST"])
@@ -2083,7 +2083,6 @@ with app.app_context():
             # disabled-by-default (opt-in, still clearly listed in the
             # Marketplace) — 0.2.x-parity default posture, not deletion.
             default_disabled = {
-                "fnack.subsonic",            # Subsonic SERVER API (Phase 4 stretch)
                 "fnack.discord-webhook",     # Phase 4 webhook pack
                 "fnack.ntfy-webhook",        # Phase 4 webhook pack
                 "fnack.reverse-proxy-auth",  # Phase 4 auth (also auth_provider rule)
@@ -2258,7 +2257,7 @@ with app.app_context():
     from plugins.context import LibraryContext, core_context_checker
     LibraryContext(core_context_checker()).get_or_create_api_key()
 
-    # Phase 4: register server_extension plugin blueprints (Subsonic API, etc.).
+    # Phase 4: register server_extension plugin blueprints.
     # Phase 1 (MASTER): enabled ServerExtension providers come from the
     # capability registry (SERVER_EXTENSION), not a private manager dict.
     # Must run inside the app context so blueprints attach to this app.
