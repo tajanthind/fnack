@@ -549,7 +549,7 @@ you get. There is no `db`, no `app`, no `models` import.
 | `context.library` | `list_artists() -> list` | All artists (id, name, image_url). | — |
 | `context.library` | `list_albums(artist_id=None, limit=500) -> list` | Albums, optionally filtered by artist (id, name, year, artist_id, cover_url, is_downloaded). | — |
 | `context.library` | `list_tracks(album_id=None, limit=1000) -> list` | Tracks, optionally filtered by album (id, title, track_number, disc_number, duration, file_path, local_path, is_downloaded, bitrate, size_bytes). | — |
-| `context.library` | `get_api_key() -> str` | The configured M2M API key (`''` if unset — zero-auth model means unset = open). | — |
+| `context.library` | `get_api_key() -> str` | The configured M2M API key (`''` if unset — human access is via fnack accounts; the key is for machine integrations). | — |
 | `context.library` | `get_or_create_api_key() -> str` | The M2M API key, generating + persisting one if none is set (Lidarr-style integrations authenticate against this). | — |
 | `context.library` | `update_track_status(track_id, status, error_message=None)` | Set a track's status (and optional error). | — |
 | `context.library` | `mark_caution(track_id, reason)` | Flag a track for user attention (badge in the UI); does not change status or delete. | — |

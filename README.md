@@ -61,7 +61,10 @@ docker run -d --name fnack \
   -p 4688:4688 fnack:latest
 ```
 
-Access the web interface at `http://<server-ip>:4688`.
+Access the web interface at `http://<server-ip>:4688`. On first boot you
+are asked to **create an admin account** (`/setup`) — the whole app is behind
+a login until then (passwords are stored salted + hashed). Optional machine
+access via the M2M API key in Settings.
 
 ---
 

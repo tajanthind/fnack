@@ -2314,3 +2314,124 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 let _marketplaceLoaded = false;
 let _repositoriesLoaded = false;
+
+// ---------------------------------------------------------------------------
+// Accounts (settings page): change own password + admin user management.
+// ---------------------------------------------------------------------------
+
+async function loadAccountsSection() {
+  const meEl = document.getElementById('meUsername');
+  if (meEl) {
+    try {
+      const me = await (await fetch('/api/accounts/me')).json();
+      if (me && me.username) meEl.textContent = me.username;
+    } catch (e) { /* page already gated by the auth guard */ }
+  }
+  const adminCard = document.getElementById('accountsAdminCard');
+  if (!adminCard) return;
+  try {
+    const resp = await fetch('/api/accounts');
+    if (resp.status === 403) return; // signed-in non-admin: card stays hidden
+    const users = await resp.json();
+    adminCard.classList.remove('d-none');
+    const listEl = document.getElementById('accountsList');
+    if (!listEl) return;
+    listEl.innerHTML = users.map(u => {
+      const roleBadge = u.role === 'admin'
+        ? '<span class="badge bg-danger-subtle text-danger font-monospace">admin</span>'
+        : '<span class="badge bg-secondary-subtle text-secondary font-monospace">user</span>';
+      const toggle = u.role === 'admin'
+        ? `<button class="btn btn-outline-warning btn-sm" title="Demote to user" onclick="setAccountRole(${u.id}, 'user')">Demote</button>`
+        : `<button class="btn btn-outline-success btn-sm" title="Promote to admin" onclick="setAccountRole(${u.id}, 'admin')">Promote</button>`;
+      return `<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 bg-dark rounded p-2 mb-2">
+        <div class="d-flex align-items-center gap-2">
+          <i class="fas fa-user-circle text-secondary"></i>
+          <span class="fw-bold small">${escapeHtml(u.username)}</span>
+          ${roleBadge}
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          ${toggle}
+          <button class="btn btn-outline-danger btn-sm" title="Delete account" onclick="deleteAccount(${u.id}, '${escapeHtml(u.username)}')"><i class="fas fa-trash"></i></button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) { /* 401 handled by guard redirect */ }
+}
+
+async function setAccountRole(accountId, role) {
+  try {
+    const resp = await fetch(`/api/accounts/${accountId}/role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+    showToast('Role updated', 'success');
+    loadAccountsSection();
+  } catch (e) { showToast('Network error: ' + e.message, 'danger'); }
+}
+
+function deleteAccount(accountId, username) {
+  showConfirmModal('Delete account', `Delete <strong>${escapeHtml(username)}</strong>? This cannot be undone.`, async () => {
+    try {
+      const resp = await fetch(`/api/accounts/${accountId}`, { method: 'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+      showToast(`Deleted ${escapeHtml(username)}`, 'success');
+      hideConfirmModal();
+      loadAccountsSection();
+    } catch (e) { showToast('Network error: ' + e.message, 'danger'); }
+  }, 'Delete', 'btn-danger');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const changeCard = document.getElementById('changePasswordCard');
+  if (!changeCard) return;
+
+  loadAccountsSection();
+
+  const pwSaveBtn = document.getElementById('pwSaveBtn');
+  if (pwSaveBtn) {
+    pwSaveBtn.addEventListener('click', async () => {
+      const current = document.getElementById('pwCurrent').value;
+      const next = document.getElementById('pwNew').value;
+      if (!current || !next) { showToast('Fill in both password fields', 'warning'); return; }
+      try {
+        const resp = await fetch('/api/accounts/me/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ current_password: current, new_password: next }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+        showToast('Password updated', 'success');
+        document.getElementById('pwCurrent').value = '';
+        document.getElementById('pwNew').value = '';
+      } catch (e) { showToast('Network error: ' + e.message, 'danger'); }
+    });
+  }
+
+  const newUserBtn = document.getElementById('newUserBtn');
+  if (newUserBtn) {
+    newUserBtn.addEventListener('click', async () => {
+      const username = document.getElementById('newUserUsername').value.trim();
+      const password = document.getElementById('newUserPassword').value;
+      const role = document.getElementById('newUserRole').value;
+      if (!username || !password) { showToast('Username and password required', 'warning'); return; }
+      try {
+        const resp = await fetch('/api/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, role }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
+        showToast(`Account '${username}' created`, 'success');
+        document.getElementById('newUserUsername').value = '';
+        document.getElementById('newUserPassword').value = '';
+        loadAccountsSection();
+      } catch (e) { showToast('Network error: ' + e.message, 'danger'); }
+    });
+  }
+});
