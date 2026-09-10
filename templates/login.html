@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log in — fnack</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('fnack_theme') || 'onyx-dark';
+      const isLight = savedTheme.includes('light');
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      document.documentElement.setAttribute('data-bs-theme', isLight ? 'light' : 'dark');
+    })();
+  </script>
+</head>
+<body>
+  <div class="min-vh-100 d-flex align-items-center justify-content-center p-3">
+    <div class="card bg-dark-card border-0 shadow-lg" style="max-width: 400px; width: 100%;">
+      <div class="card-body p-4">
+        <div class="text-center mb-4">
+          <i class="fas fa-compact-disc text-danger" style="font-size: 2.2rem;"></i>
+          <h3 class="fw-bold mt-2 mb-1">fnack</h3>
+          <p class="text-secondary small mb-0">Sign in to your music downloader</p>
+        </div>
+        {% if error %}<div class="alert alert-danger py-2 small">{{ error }}</div>{% endif %}
+        <form method="post" action="/login">
+          <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
+          <div class="mb-3">
+            <label class="form-label small text-secondary">Username</label>
+            <input type="text" class="form-control" name="username" required autofocus
+                   autocomplete="username" placeholder="your username">
+          </div>
+          <div class="mb-4">
+            <label class="form-label small text-secondary">Password</label>
+            <input type="password" class="form-control" name="password" required
+                   autocomplete="current-password" placeholder="••••••••••••">
+          </div>
+          <button type="submit" class="btn btn-brand w-100 fw-bold">
+            <i class="fas fa-sign-in-alt me-1"></i>Sign in
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

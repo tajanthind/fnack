@@ -190,3 +190,18 @@ class AppSetting(db.Model):
     value = db.Column(db.String(256), nullable=False)
 
 
+class User(db.Model):
+    """fnack user account (whole-app login).
+
+    password_hash is a werkzeug scrypt hash — salted, one-way, never
+    plaintext (services/accounts.py). role: 'admin' (account management) or
+    'user'. The first account (created on /setup at first boot) is admin.
+    """
+
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(256), nullable=False)
+    role = db.Column(db.String(16), default="user", nullable=False)  # admin | user
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))

@@ -1,7 +1,8 @@
 # fnack – Production Deployment Guide
 
-fnack is a self-hosted, zero-authentication music discography downloader and library
-manager. It downloads **true lossless FLAC** via SpotiFLAC (Tidal / Qobuz / Deezer /
+fnack is a self-hosted music discography downloader and library
+manager. On first boot it asks you to create the initial **admin account**
+(whole-app login; passwords stored as salted scrypt hashes — never plaintext). It downloads **true lossless FLAC** via SpotiFLAC (Tidal / Qobuz / Deezer /
 SoundCloud) and falls back to **yt-dlp** (YouTube / YouTube Music / SoundCloud) for
 everything else. **No Spotify, Tidal, Qobuz, or YouTube account is required.**
 
@@ -22,6 +23,7 @@ Requirements: Docker Engine 24+ with the Compose plugin, ~3 GB free disk for the
 cp .env.example .env
 nano .env                 # set MUSIC_PATH=/home/you/Music  (defaults to ./music)
                           # SECRET_KEY="$(openssl rand -hex 32)" (optional)
+                          # FNACK_COOKIE_SECURE=1  (only behind https)
 
 # 3. Start (pulls the prebuilt image from GitHub Container Registry when
 #    possible; use --build to compile locally from this source instead)
@@ -31,6 +33,15 @@ docker compose up -d
 ```
 
 Open the web UI: **http://localhost:4688** (or `http://<server-ip>:4688`).
+On the very first boot you are taken to **/setup** to create the initial
+admin account — nothing else works until it exists (this also reappears if
+the database/config volume is ever reset and no account can be found).
+After that, sign in at **/login**.
+
+Machine/API access: send the M2M API key (`X-API-Key: <key>`, shown in
+Settings once logged in) instead of a session; the key is optional and keeps
+existing integrations (Navidrome-style triggers, Lidarr grabs, scripts)
+working under the lockdown.
 
 Check it is healthy:
 

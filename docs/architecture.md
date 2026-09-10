@@ -109,7 +109,7 @@ is the vendored copy. Snapshot of the catalog at the time of writing:
 | `fnack.vpn` | `network.route` | Optional in-container VPN tunnel |
 | `fnack.lidarr` | `server.extension` | Lidarr-compatible API |
 | `fnack.discord-webhook`, `fnack.ntfy-webhook` | `notification.event` | Download notifications |
-| `fnack.reverse-proxy-auth` | `auth.provider` | Optional header-based auth (zero-auth by default) |
+| `fnack.reverse-proxy-auth` | `auth.provider` | Optional header-based SSO (complements the built-in accounts) |
 | `fnack.clean-navidrome-artists`, `fnack.normalize-album-tags`, `fnack.fix-navidrome-splits`, `fnack.reverify-library` | `library.task` | Maintenance tasks |
 
 Note the distinction between **media-server scan** (`media.scan`, the
@@ -153,6 +153,32 @@ Consequences for plugin authors: reverse-DNS ids remain the recommended
 convention (they make collisions unlikely), but the platform no longer
 *relies* on that convention — collisions are visible, and the user picks the
 source at install time.
+
+## Accounts & authentication
+
+The whole web app (pages and `/api/*`) is behind a login — there is no
+anonymous access. On first boot, or whenever the database holds no user
+accounts (a reset config volume), fnack serves only `/setup` until the
+initial **admin** account is created; `/login` then guards everything else.
+
+- Credentials are stored **salted scrypt hashes** (`services/accounts.py`,
+  werkzeug) — never plaintext, never reversible; login compares in
+  constant time.
+- **Roles**: `admin` (account management) and `user` (everything else).
+  Only the first account is admin; admins create/promote/delete accounts
+  from Settings → user management.
+- **Machine clients** keep working via the optional M2M API key
+  (`X-API-Key`/`Authorization: Bearer`, Settings → shows the key) — the same
+  key integrations used before the lockdown.
+- **auth_provider plugins** (e.g. `fnack.reverse-proxy-auth`, header SSO) are
+  an additional identity source for users already authenticated by a reverse
+  proxy — an account must still exist.
+- Sessions are signed with the persistent `SECRET_KEY`; cookies are
+  HttpOnly + SameSite=Lax (`FNACK_COOKIE_SECURE=1` behind https), and
+  cross-origin state changes from session-authenticated requests are refused
+  (Origin check) as CSRF defence.
+- `/health`, `/static` and the Socket.IO transport stay open (probes/UX);
+  every data-bearing route requires an identity.
 
 ## Essential vs optional packaging
 
