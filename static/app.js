@@ -2087,7 +2087,10 @@ async function loadMarketplacePage() {
       const compat = pluginCompat(e);
       // Repo-scoped identity: installs carry source_repo_id. A duplicate id
       // from another repo is a DIFFERENT listing, shown and labelled as such.
-      const src = e.source_repo_id ? `, '${e.source_repo_id}'` : '';
+      // Numeric (unquoted): the backend compares this against integer repo
+      // ids — a quoted string is refused as "not published by repository N".
+      const src = (e.source_repo_id === 0 || e.source_repo_id)
+        ? `, ${Number(e.source_repo_id)}` : '';
       let action = '';
       if (!compat.compatible) {
         // Brief 6 §4: incompatible — show it, grey it out, explain why.
@@ -2155,7 +2158,10 @@ async function installPlugin(pluginId, version, sourceRepoId) {
     async () => {
       try {
         const body = { plugin_id: pluginId, version };
-        if (sourceRepoId) body.source_repo_id = sourceRepoId;
+        if (sourceRepoId !== undefined && sourceRepoId !== null && sourceRepoId !== '') {
+          const asNumber = Number(sourceRepoId);
+          body.source_repo_id = Number.isFinite(asNumber) ? asNumber : sourceRepoId;
+        }
         const resp = await fetch('/api/plugins/install', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
