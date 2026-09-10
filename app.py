@@ -117,6 +117,11 @@ app.before_request(_accounts_auth_guard)
 from services.accounts import build_accounts_blueprint as _build_accounts_blueprint
 app.register_blueprint(_build_accounts_blueprint())
 
+# Generic integration API (accounts + library + per-account user state) for
+# external server/client systems. Protocol-agnostic: JSON in, JSON out.
+from services.integration_api import build_integration_blueprint as _build_integration_blueprint
+app.register_blueprint(_build_integration_blueprint())
+
 
 _db_dir = Path(os.environ.get("CONFIG_DIR", "/config"))
 if not _db_dir.exists() and not os.environ.get("SQLALCHEMY_DATABASE_URI"):
@@ -498,6 +503,12 @@ def _sync_artist_discography_background(artist_id: int, external_id: str, option
             if not artist:
                 return
 
+            # Track rows created by this sync: after the prune below, per-account
+            # user state is re-attached to them by ISRC (a provider change can
+            # replace a recording's internal id without the user losing a star,
+            # rating, bookmark or playlist entry).
+            new_track_ids: list[int] = []
+
             if disco.get("artist_image") and not artist.image_url:
                 artist.image_url = disco["artist_image"]
             # Provenance: the artist's external identity belongs to the
@@ -561,6 +572,7 @@ def _sync_artist_discography_background(artist_id: int, external_id: str, option
                         )
                         db.session.add(track)
                         db.session.flush()
+                        new_track_ids.append(track.id)
                     else:
                         if t.get("isrc") and not track.isrc:
                             track.isrc = t["isrc"]
@@ -584,11 +596,33 @@ def _sync_artist_discography_background(artist_id: int, external_id: str, option
                     has_downloaded = any(t.is_downloaded for t in existing_alb.tracks.all())
                     if not has_downloaded:
                         logger.info("[SYNC] Pruning stale/misattributed album '%s' (id=%d) for artist '%s'", existing_alb.name, existing_alb.id, artist.name)
-                        for t in existing_alb.tracks.all():
+                        stale_tracks = existing_alb.tracks.all()
+                        # Snapshot per-account user state before the rows go:
+                        # state keeps its snapshot and is re-linked by ISRC if
+                        # the provider re-creates the recording later.
+                        try:
+                            from services import user_state as _user_state
+                            from services.library_query import track_json as _track_json
+                            _ids = [t.id for t in stale_tracks]
+                            if _ids:
+                                _user_state.snapshot_referenced_tracks(_ids)
+                        except Exception:
+                            logger.exception("[USER-STATE] snapshot before sync prune failed")
+                        for t in stale_tracks:
                             DownloadJob.query.filter_by(track_id=t.id).delete()
                             db.session.delete(t)
                         db.session.delete(existing_alb)
             db.session.flush()
+
+            if new_track_ids:
+                try:
+                    from services import user_state as _user_state
+                    _relinked = _user_state.relink_tracks(new_track_ids)
+                    if _relinked:
+                        logger.info("[USER-STATE] Re-attached %d user-state entr(ies) "
+                                    "to re-created tracks after sync", _relinked)
+                except Exception:
+                    logger.exception("[USER-STATE] relink after sync failed")
 
             artist.sync_status = "ready"
             artist.sync_error = None
@@ -796,6 +830,19 @@ def api_delete_artist(artist_id):
 
     name = artist.name
     del_files = request.args.get("delete_files", "false").lower() == "true"
+
+    # Per-account user state references tracks by internal id and must
+    # outlive the library row: snapshot it before the delete cascades, so
+    # playlists/favorites/ratings/bookmarks/history stay readable (and can
+    # be re-linked by ISRC if the track is ever re-created).
+    try:
+        from services import user_state as _user_state
+        _track_ids = [row[0] for row in db.session.query(Track.id)
+                      .filter(Track.artist_id == artist.id).all()]
+        if _track_ids:
+            _user_state.snapshot_referenced_tracks(_track_ids)
+    except Exception:
+        logger.exception("[USER-STATE] snapshot before artist delete failed")
 
     db.session.delete(artist)
     db.session.commit()

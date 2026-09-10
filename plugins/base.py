@@ -228,8 +228,8 @@ class VPNPlugin(PluginBase):
 
 
 class ServerExtensionPlugin(PluginBase):
-    """For plugins that need entirely new HTTP routes, e.g. a Subsonic-
-    compatible API surface so third-party Subsonic clients can talk to fnack
+    """For plugins that need entirely new HTTP routes, e.g. a server API
+    surface so third-party clients can talk to fnack
     directly."""
 
     @abstractmethod
