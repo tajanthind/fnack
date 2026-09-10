@@ -1,8 +1,10 @@
 # Writing fnack plugins (author guide)
 
 This guide is for **plugin authors** — people who want to build plugins for
-fnack. You do **not** need to read `PLUGIN_ARCHITECTURE.md` or `INTEGRATION.md`
-(internal design docs) to build a plugin; everything you need is here.
+fnack. You do **not** need to read [`docs/architecture.md`](../architecture.md)
+(the deep architecture reference) or
+[`wayfinder/plugin-architecture-map.md`](../../wayfinder/plugin-architecture-map.md)
+(the phase-by-phase build history) to build a plugin; everything you need is here.
 
 fnack plugins are small Python packages dropped into a folder. They run
 in-process, they are loaded at startup, and they only ever see a narrow
@@ -108,7 +110,7 @@ caution reason and contributes a badge to the track row. Copy it to start.
 | `server_extension` | Register brand-new HTTP routes | `register_routes` |
 | `ui_extension` | Contribute UI into a named slot | `render_slot` (or purely declarative via `ui.slots`) |
 | `event_hook` | React to core events, no other interface | nothing required — subscribe in `on_load` |
-| `auth_provider` | SSO / reverse-proxy auth (planned, Phase 4) | *interface lands with implementation* |
+| `auth_provider` | Add an authentication source for the app login (SSO headers, API tokens) | `authenticate(request_headers)` — return a username, or `None` |
 | `library_source` | Source of artists/albums to monitor (the mirror of `downloader`) | `list_artists` (+ optional `poll`) — see `fnack.lidarr` |
 | `conflict_resolver` | Decide between duplicate/conflicting files (planned) | *interface lands with implementation* |
 | `recommendation` | Suggest artists/albums/tracks (planned) | *interface lands with implementation* |
@@ -517,6 +519,16 @@ class MyApi(ServerExtensionPlugin):
             return {"hello": "world"}
 ```
 
+**Your routes are authenticated like every other route.** fnack requires an
+identity for all routes (the accounts login), so `GET /my-api/hello` without
+one returns `401` before your handler runs — only `/health`, `/static`,
+`/login`, `/setup`, `/logout` and the Socket.IO transport are open. Machine
+clients authenticate with the **M2M API key** (`X-API-Key: <key>`, shown in
+Settings once signed in); human/browser clients use their session. If you need
+clients to authenticate with *your own* credential instead, implement an
+`auth_provider` plugin (see "Can a plugin authenticate users?" in §4) — you
+cannot host your own unauthenticated login endpoint.
+
 ### `ui_extension`
 
 ```python
@@ -584,6 +596,49 @@ maintenance.run
 ```
 
 ---
+
+### Can a plugin authenticate users? (`auth_provider`)
+
+fnack's own accounts — the `users` table, session login, roles — are **core**
+and are deliberately **not exposed to plugins**:
+
+- There is no `context.accounts` facade. A plugin cannot list users, read a
+  username/password, verify an account password, or create/promote/delete
+  accounts. The facades in the table above are the entire surface you get
+  (an architecture test enforces it).
+- A plugin **can** be an authentication *source* via the `auth_provider`
+  type:
+
+  ```python
+  from plugins.base import AuthProviderPlugin
+
+  class MyAuth(AuthProviderPlugin):
+      def authenticate(self, request_headers: dict):
+          token = request_headers.get("X-MyPlugin-Token")
+          user = self._lookup(token)     # your own credential store
+          return user or None            # a non-empty string authorizes
+  ```
+
+  Core calls every enabled provider on each request that has no session and
+  no valid M2M API key. Returning a username authorizes that request (the
+  identity is available as `g.fnack_user`); returning `None` moves on to the
+  next provider and finally to `/login`.
+- This is how "log in via API" works for a plugin: your clients send **your**
+  credential in a header, you validate it, and every `/api/*` route is then
+  allowed for that request. `fnack.reverse-proxy-auth` does exactly this
+  (Authelia/Authentik headers).
+- What a provider identity does **not** get: a `User` row, a role, account
+  management (`/api/accounts*` needs an admin *account*), or the UI account
+  chip (session logins only). Core accounts remain the only way to
+  create and manage users.
+- Order: session account → M2M API key → `auth_provider` plugins. The
+  provider check runs **before** the first-run setup gate, so an enabled
+  `auth_provider` can authenticate requests even when no fnack account
+  exists — deliberate for proxy/SSO deployments. Disable the plugin if you
+  want the local `/setup` gate to be authoritative.
+- A plugin's own `server.extension` routes are **not** open paths: they
+  require identity like any other route, so you cannot host your own
+  unauthenticated "login" endpoint — implement `authenticate()` instead.
 
 ## 5. UI slots
 
@@ -661,8 +716,10 @@ bundled copy of the same id.
 
 ## 7. Versioning rules
 
-- `api_version: "^1.0"` means "I work with fnack plugin API 1.x". fnack will
-  refuse to load your plugin if its API major version doesn't match.
+- `api_version: "^1.0"` means "I work with fnack plugin API 1.x". **The
+  current plugin API is 1.0.1** (`plugins.PLUGIN_API_VERSION`); fnack refuses
+  to load a plugin whose declared range does not include it.
+  `^1.0` covers every 1.x release, so it stays correct across minor bumps.
 - `min_core_version` is the oldest fnack build your plugin needs. fnack
   refuses to load on older cores.
 - **Breaking changes on our side** bump the API major version (1.0 → 2.0);
@@ -718,6 +775,28 @@ To publish:
    outside the plugin directory (zip-slip), and never runs code from a repo
    without an explicit install action.
 
+### Your id is not globally unique (multi-repository rules)
+
+Users can add several repositories, and nothing stops two of them from
+publishing the same plugin id. fnack does not guess in that case:
+
+- The Marketplace lists **one entry per (repository, plugin)** — never a
+  merged "newest wins" entry — and every card shows which repository it comes
+  from. Cards whose id exists in another enabled repository carry an explicit
+  "Also in: …" warning.
+- Installing always installs **from a specific repository**; fnack records
+  that provenance on the install and uses it for updates. If a request does
+  not name a repository and more than one enabled repository publishes the
+  id, the install is **refused** (the candidates are listed) rather than
+  silently taking whichever repo was added first.
+- A plugin installed from one repository is never silently replaced by a
+  same-id plugin from another; switching source is an explicit user action.
+
+Practical advice: use reverse-DNS ids (`com.yourname.plugin`) so collisions
+are unlikely, and if you intend to publish forks/variants of a plugin, give
+them distinct ids — the platform makes collisions visible, but the user has
+to choose the source at install time.
+
 ---
 
 ## 9. What not to do / trust model
@@ -727,6 +806,10 @@ To publish:
   promise and will break on the next fnack update.
 - **Declared permissions are enforced.** Using an undeclared capability raises
   `PermissionError`; declared-but-unused permissions are flagged as a warning.
+- **fnack requires a login.** All routes need an identity (accounts session,
+  M2M API key, or an `auth_provider` plugin) — see §3 `server_extension` and
+  §4 "Can a plugin authenticate users?". Plugins have **no** access to
+  accounts: no user list, no password verification, no roles.
 - **Trust tiers** are shown in the UI: Official (fnack-maintained), Verified
   (reviewed by fnack, third-party), Community (everything else — community
   installs get an explicit permission-confirmation dialog).

@@ -426,7 +426,7 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         registry.remove_repository(repo_id)
         return jsonify({"ok": True})
 
-    # -- config-as-code (Phase 4, PLUGIN_ARCHITECTURE.md §11) ----------------
+    # -- config-as-code (Phase 4) -------------------------------------------
 
     _SECRET_KEYS = {"api_key", "token", "webhook_url", "client_secret", "password", "secret"}
 

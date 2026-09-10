@@ -32,7 +32,7 @@ from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO, emit
 
 from models import Album, AppSetting, Artist, DownloadJob, Track, db
-import plugins.models  # noqa: F401 — registers the plugin tables with `db` (INTEGRATION.md §2)
+import plugins.models  # noqa: F401 — registers the plugin tables with `db`
 from plugins.manager import init_plugin_manager  # noqa: E402 — plugin framework (Phase 0)
 from services.import_service import import_artist_folder, scan_root_folder_candidates
 from services.watcher_service import start_folder_watcher
@@ -102,7 +102,7 @@ def inject_current_user():
 
 @app.context_processor
 def inject_plugin_slot_helper():
-    """Jinja helper for UI slots (INTEGRATION.md §4): {{ plugin_slot('slot', track=track) }}."""
+    """Jinja helper for UI slots (docs/plugins/AUTHORING.md §5): {{ plugin_slot('slot', track=track) }}."""
     def plugin_slot(slot_name: str, **context_data):
         from markupsafe import Markup
         return Markup(plugin_manager.get_ui_slot_html(slot_name, context_data))
@@ -150,7 +150,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 db.init_app(app)
 socketio = SocketIO(app, async_mode="gevent", cors_allowed_origins="*")
 
-# Plugin framework (INTEGRATION.md §3): create the manager now so the
+# Plugin framework: create the manager now so the
 # `plugin_slot` context processor and queue event emissions can reference it.
 # load_all() runs inside the startup app_context block below.
 plugin_manager = init_plugin_manager(
@@ -2019,7 +2019,7 @@ with app.app_context():
     from services.schema_migrations import run_schema_migrations
     run_schema_migrations()
 
-    # Plugin framework (INTEGRATION.md §2/§3 + PHASE1 §3): auto-install bundled
+    # Plugin framework: auto-install bundled
     # plugins (official, enabled-by-default, no marketplace visit needed), then
     # load installed plugins whose InstalledPlugin.enabled is True, then
     # register the REST blueprint.

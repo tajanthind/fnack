@@ -291,10 +291,19 @@ class StorageBackendPlugin(PluginBase):
 
 
 class AuthProviderPlugin(PluginBase):
-    """Phase 4 stretch: SSO / reverse-proxy-header auth as a plugin (for
-    Authelia/Authentik deployments). Listed now so the manifest `type` enum
-    doesn't have to change shape twice. Do not implement until core auth is
-    stable."""
+    """An additional authentication SOURCE for fnack's whole-app login (SSO /
+    reverse-proxy headers, API tokens).
+
+    Core calls `authenticate(request_headers)` on every request that has no
+    valid session account and no M2M API key; returning a username (non-empty
+    string) authorizes the request. The returned value is an OPAQUE identity
+    string — it does not create or map to a fnack `User` row, so provider
+    identities have no role and cannot manage accounts.
+
+    Plugins never get access to fnack accounts (no users, passwords, or
+    roles); this hook is the ONLY plugin-side authentication surface. See
+    docs/plugins/AUTHORING.md, "Can a plugin authenticate users?".
+    """
 
     @abstractmethod
     def authenticate(self, request_headers: dict) -> Optional[str]:
