@@ -9,12 +9,16 @@ tests can build a blueprint against a throwaway PluginManager/PluginRegistry.
 
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, jsonify, request
 
 from models import db
 from plugins.manager import PluginManager
 from plugins.models import InstalledPlugin, PluginRepository, PluginSetting
 from plugins.registry import PluginRegistry, RegistryError
+
+logger = logging.getLogger("fnack.plugins.api")
 
 
 def _ensure_installed_row(manager: PluginManager, plugin_id: str, enabled: bool = True) -> InstalledPlugin:
@@ -79,6 +83,7 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         try:
             row = registry.update(plugin_id)
         except RegistryError as exc:
+            logger.warning("[PLUGINS] update refused for %s: %s", plugin_id, exc)
             return jsonify({"error": str(exc)}), 400
         return jsonify({"ok": True, "id": row.id, "version": row.version})
 
@@ -347,6 +352,14 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
         # Ambiguous ids (published by >1 enabled repo) are refused by the
         # registry when this is absent.
         source_repo_id = payload.get("source_repo_id")
+        # Repository ids are integers; a client may send "1" (JSON string, e.g.
+        # from a DOM attribute) — coerce instead of refusing it as an unknown
+        # repository. Anything non-numeric is left alone so the registry
+        # reports the real problem.
+        if isinstance(source_repo_id, str):
+            stripped = source_repo_id.strip()
+            if stripped.isdigit():
+                source_repo_id = int(stripped)
         if not plugin_id:
             return jsonify({"error": "plugin_id is required"}), 400
         # Reinstalling a user-uninstalled bundled plugin is fine (tombstone
@@ -366,7 +379,13 @@ def build_plugins_blueprint(manager: PluginManager, registry: PluginRegistry) ->
                     db.session.delete(t)
                     db.session.commit()
         except RegistryError as exc:
+            # Log the reason: the access log only records "400 <bytes>", which
+            # makes a failed install impossible to diagnose after the fact.
+            logger.warning("[PLUGINS] install refused for %s v%s (source_repo_id=%r): %s",
+                           plugin_id, version, source_repo_id, exc)
             return jsonify({"error": str(exc)}), 400
+        logger.info("[PLUGINS] installed %s v%s from repo %s",
+                    row.id, row.version, row.source_repo_id)
         return jsonify({"ok": True, "id": row.id, "version": row.version,
                         "source_repo_id": row.source_repo_id})
 

@@ -96,6 +96,9 @@ class _StubManager:
     def discover_bundled(self):
         return set()
 
+    def bundled_ids(self):
+        return set()
+
     def load_plugin(self, dest_dir: Path):
         manifest = json.loads((Path(dest_dir) / "plugin.json").read_text(encoding="utf-8"))
         self.loaded_manifests[manifest["id"]] = manifest
@@ -283,8 +286,57 @@ def test_install_takes_explicit_source_and_records_provenance() -> None:
             del os.environ["CONFIG_DIR"]
 
 
+def test_install_api_accepts_string_and_int_repo_ids() -> None:
+    """The marketplace UI embeds the repository id in an HTML attribute, so it
+    arrives as a numeric STRING ("1"). The API must accept that (and still
+    accept an int), otherwise every Install/Update click in the browser is
+    refused with "not published by repository 1"."""
+    from plugins.api import build_plugins_blueprint
+    from plugins.registry import PluginRegistry
+
+    app, db = _make_app()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["CONFIG_DIR"] = tmp
+        manager = _StubManager(Path(tmp))
+        downloads: dict[str, bytes] = {}
+        with app.app_context():
+            import plugins.models  # noqa: F401
+            db.create_all()
+            ids = _seed_repos(db, Path(tmp), downloads)
+        registry = PluginRegistry(manager)
+        registry._download = lambda url: downloads[url]
+        app.register_blueprint(build_plugins_blueprint(manager, registry))
+        client = app.test_client()
+
+        # Numeric string (what the browser sends today).
+        r = client.post("/api/plugins/install", json={
+            "plugin_id": "com.example.onlyA", "version": "1.0.0",
+            "source_repo_id": str(ids["a"])})
+        assert r.status_code == 200, r.get_json()
+
+        # Plain integer (API/M2M clients).
+        r = client.post("/api/plugins/install", json={
+            "plugin_id": "com.example.onlyB", "version": "1.0.0",
+            "source_repo_id": ids["b"]})
+        assert r.status_code == 200, r.get_json()
+
+        # A genuinely unknown repository is still refused, with the real reason.
+        r = client.post("/api/plugins/install", json={
+            "plugin_id": "com.example.dup", "version": "2.0.0",
+            "source_repo_id": 99})
+        assert r.status_code == 400
+        assert "not published by repository 99" in r.get_json()["error"]
+
+        # Ambiguity is still refused when no source is given.
+        r = client.post("/api/plugins/install", json={"plugin_id": "com.example.dup"})
+        assert r.status_code == 400
+        assert "more than one enabled repository" in r.get_json()["error"]
+        del os.environ["CONFIG_DIR"]
+
+
 if __name__ == "__main__":
     test_browse_is_per_repo_and_duplicates_are_surfaced()
     test_ambiguous_install_without_source_is_refused()
     test_install_takes_explicit_source_and_records_provenance()
+    test_install_api_accepts_string_and_int_repo_ids()
     print("test_marketplace_repo_identity: PASSED")
