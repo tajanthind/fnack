@@ -62,8 +62,11 @@ VOLUME ["/config", "/downloads", "/music"]
 
 EXPOSE 4688
 
+# Probe /health, NOT /api/*: the whole API is behind the accounts login, so
+# an unauthenticated probe of /api/artists returns 403 and the container
+# would report unhealthy. /health is the always-open liveness endpoint.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD curl -f http://localhost:4688/api/artists || exit 1
+  CMD curl -f http://localhost:4688/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 # --timeout 300: Spotify search/SpotiFLAC subprocess runs can exceed gunicorn's default 30s

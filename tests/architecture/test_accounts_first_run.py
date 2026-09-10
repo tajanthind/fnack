@@ -229,10 +229,26 @@ def test_csrf_origin_check_for_session_requests() -> None:
                              "new_password": "new-secret-99"}).status_code == 200
 
 
+def test_container_healthcheck_probes_an_open_endpoint() -> None:
+    """Under the accounts lockdown every /api/* route requires an identity, so
+    a container healthcheck that curls one would report the container
+    UNHEALTHY. The healthcheck must probe the always-open /health."""
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    for name, text in (("Dockerfile", dockerfile), ("docker-compose.yml", compose)):
+        probe_lines = [l for l in text.splitlines()
+                       if "curl" in l and "4688" in l]
+        assert probe_lines, f"{name}: expected a health probe line"
+        for line in probe_lines:
+            assert "/health" in line, f"{name}: healthcheck must probe /health: {line.strip()!r}"
+            assert "/api/" not in line, f"{name}: healthcheck must not probe a login-gated API route: {line.strip()!r}"
+
+
 if __name__ == "__main__":
     test_first_run_gate_requires_setup()
     test_login_flow_and_bad_password()
     test_m2m_api_key_still_works()
     test_roles_admin_only_account_management()
     test_csrf_origin_check_for_session_requests()
+    test_container_healthcheck_probes_an_open_endpoint()
     print("test_accounts_first_run: PASSED")
