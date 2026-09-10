@@ -122,7 +122,7 @@ with app.app_context():
     )
     assert loaded_map["dev.fnack.example-quality-flag"]["enabled"] is True, "plugin should be enabled"
 
-    # Simulate the queue emitting the after-download event (INTEGRATION.md step 5)
+    # Simulate the queue emitting the after-download event
     manager.event_bus.emit("track.after_download", track_id=track_id)
 
     refreshed = db.session.get(Track, track_id)

@@ -949,7 +949,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                         track_rec.caution = True
                         track_rec.caution_info = _json.dumps(flagged_caution)
                     elif not flagged_caution:
-                        # Plugin framework (INTEGRATION.md §5): additive event emission
+                        # Plugin framework: additive event emission
                         # on successful verification (not for AcoustID-flagged files —
                         # those are a different song, not verified).
                         try:
@@ -987,7 +987,7 @@ def _process_track_job(app: Flask, socketio: SocketIO, job_id: int):
                 db.session.commit()
                 logger.info("[QUEUE] Download succeeded for '%s - %s' -> %s", artist_name, track_title, final_dest)
 
-                # Plugin framework (INTEGRATION.md §5): additive event emission —
+                # Plugin framework: additive event emission —
                 # no existing behavior changes; event_hook/fingerprint plugins can
                 # react to real downloads.
                 try:

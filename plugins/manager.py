@@ -203,7 +203,7 @@ class PluginManager:
         # Installed list as "Unsupported / failed to load" instead of
         # silently vanishing.
         self._load_failures: dict[str, str] = {}
-        # Ensure the install dir exists so manual installs (INTEGRATION.md §7)
+        # Ensure the install dir exists so manual installs (a folder dropped under
         # and the registry have somewhere to write.
         try:
             self.plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -882,7 +882,7 @@ class PluginManager:
         return self._ordered("LibraryTaskPlugin")
 
     def get_ui_slot_html(self, slot_name: str, context_data: dict) -> str:
-        """Called by the `plugin_slot()` Jinja helper (see INTEGRATION.md)."""
+        """Called by the `plugin_slot()` Jinja helper (docs/plugins/AUTHORING.md §5)."""
         fragments = []
         for plugin_id, render_fn in self.ui_slot_registry.get(slot_name, []):
             loaded = self._plugins.get(plugin_id)
@@ -950,7 +950,7 @@ class PluginManager:
         return out
 
 
-# A module-level singleton, created at app startup (see INTEGRATION.md) and
+# A module-level singleton, created at app startup by app.py, and
 # imported by app.py / queue_service.py wherever plugin-provided behavior is needed.
 plugin_manager: Optional[PluginManager] = None
 

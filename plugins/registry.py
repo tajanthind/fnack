@@ -2,7 +2,7 @@
 available plugins, install/update/uninstall.
 
 A "repository" is nothing more than a URL to a JSON index (see
-PLUGIN_ARCHITECTURE.md §5 for the exact shape). This module never executes
+docs/plugins/AUTHORING.md §8 for the exact shape). This module never executes
 anything from a repo except after an explicit user-triggered install, and
 even then it goes through PluginManager.load_plugin(), which validates the
 manifest before importing any code.

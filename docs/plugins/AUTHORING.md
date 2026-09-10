@@ -1,8 +1,10 @@
 # Writing fnack plugins (author guide)
 
 This guide is for **plugin authors** — people who want to build plugins for
-fnack. You do **not** need to read `PLUGIN_ARCHITECTURE.md` or `INTEGRATION.md`
-(internal design docs) to build a plugin; everything you need is here.
+fnack. You do **not** need to read [`docs/architecture.md`](../architecture.md)
+(the deep architecture reference) or
+[`wayfinder/plugin-architecture-map.md`](../../wayfinder/plugin-architecture-map.md)
+(the phase-by-phase build history) to build a plugin; everything you need is here.
 
 fnack plugins are small Python packages dropped into a folder. They run
 in-process, they are loaded at startup, and they only ever see a narrow
@@ -517,6 +519,16 @@ class MyApi(ServerExtensionPlugin):
             return {"hello": "world"}
 ```
 
+**Your routes are authenticated like every other route.** fnack requires an
+identity for all routes (the accounts login), so `GET /my-api/hello` without
+one returns `401` before your handler runs — only `/health`, `/static`,
+`/login`, `/setup`, `/logout` and the Socket.IO transport are open. Machine
+clients authenticate with the **M2M API key** (`X-API-Key: <key>`, shown in
+Settings once signed in); human/browser clients use their session. If you need
+clients to authenticate with *your own* credential instead, implement an
+`auth_provider` plugin (see "Can a plugin authenticate users?" in §4) — you
+cannot host your own unauthenticated login endpoint.
+
 ### `ui_extension`
 
 ```python
@@ -704,8 +716,10 @@ bundled copy of the same id.
 
 ## 7. Versioning rules
 
-- `api_version: "^1.0"` means "I work with fnack plugin API 1.x". fnack will
-  refuse to load your plugin if its API major version doesn't match.
+- `api_version: "^1.0"` means "I work with fnack plugin API 1.x". **The
+  current plugin API is 1.0.1** (`plugins.PLUGIN_API_VERSION`); fnack refuses
+  to load a plugin whose declared range does not include it.
+  `^1.0` covers every 1.x release, so it stays correct across minor bumps.
 - `min_core_version` is the oldest fnack build your plugin needs. fnack
   refuses to load on older cores.
 - **Breaking changes on our side** bump the API major version (1.0 → 2.0);
@@ -761,6 +775,28 @@ To publish:
    outside the plugin directory (zip-slip), and never runs code from a repo
    without an explicit install action.
 
+### Your id is not globally unique (multi-repository rules)
+
+Users can add several repositories, and nothing stops two of them from
+publishing the same plugin id. fnack does not guess in that case:
+
+- The Marketplace lists **one entry per (repository, plugin)** — never a
+  merged "newest wins" entry — and every card shows which repository it comes
+  from. Cards whose id exists in another enabled repository carry an explicit
+  "Also in: …" warning.
+- Installing always installs **from a specific repository**; fnack records
+  that provenance on the install and uses it for updates. If a request does
+  not name a repository and more than one enabled repository publishes the
+  id, the install is **refused** (the candidates are listed) rather than
+  silently taking whichever repo was added first.
+- A plugin installed from one repository is never silently replaced by a
+  same-id plugin from another; switching source is an explicit user action.
+
+Practical advice: use reverse-DNS ids (`com.yourname.plugin`) so collisions
+are unlikely, and if you intend to publish forks/variants of a plugin, give
+them distinct ids — the platform makes collisions visible, but the user has
+to choose the source at install time.
+
 ---
 
 ## 9. What not to do / trust model
@@ -770,6 +806,10 @@ To publish:
   promise and will break on the next fnack update.
 - **Declared permissions are enforced.** Using an undeclared capability raises
   `PermissionError`; declared-but-unused permissions are flagged as a warning.
+- **fnack requires a login.** All routes need an identity (accounts session,
+  M2M API key, or an `auth_provider` plugin) — see §3 `server_extension` and
+  §4 "Can a plugin authenticate users?". Plugins have **no** access to
+  accounts: no user list, no password verification, no roles.
 - **Trust tiers** are shown in the UI: Official (fnack-maintained), Verified
   (reviewed by fnack, third-party), Community (everything else — community
   installs get an explicit permission-confirmation dialog).
