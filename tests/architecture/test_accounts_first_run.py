@@ -244,6 +244,31 @@ def test_container_healthcheck_probes_an_open_endpoint() -> None:
             assert "/api/" not in line, f"{name}: healthcheck must not probe a login-gated API route: {line.strip()!r}"
 
 
+def test_plugin_context_exposes_no_account_access() -> None:
+    """Plugins get facades, never accounts: no user list, no password check,
+    no role management. The only plugin-side auth surface is
+    auth_provider.authenticate(headers) — asserted here so the boundary can't
+    silently widen."""
+    import inspect
+    from plugins.base import AuthProviderPlugin
+    from plugins.context import PluginContext
+    from plugins.events import EventBus
+
+    ctx = PluginContext(plugin_id="com.example.test", permissions=[],
+                        event_bus=EventBus(), ui_slot_registry={},
+                        scheduler_hook=lambda s, f: None, settings_schema=[])
+    public = {n for n in vars(ctx) if not n.startswith("_")}
+    assert public == {"library", "settings", "events", "http", "fs",
+                      "ui", "jobs", "log"}, public
+    for name in ("accounts", "users", "user", "auth", "login", "password",
+                 "admin", "roles", "current_user"):
+        assert not hasattr(ctx, name), f"PluginContext must not expose {name!r}"
+    # The supported hook receives request headers only and returns an opaque
+    # identity string (or None) — it never touches account storage.
+    params = list(inspect.signature(AuthProviderPlugin.authenticate).parameters)
+    assert params == ["self", "request_headers"], params
+
+
 if __name__ == "__main__":
     test_first_run_gate_requires_setup()
     test_login_flow_and_bad_password()
@@ -251,4 +276,5 @@ if __name__ == "__main__":
     test_roles_admin_only_account_management()
     test_csrf_origin_check_for_session_requests()
     test_container_healthcheck_probes_an_open_endpoint()
+    test_plugin_context_exposes_no_account_access()
     print("test_accounts_first_run: PASSED")

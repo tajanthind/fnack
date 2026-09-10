@@ -108,7 +108,7 @@ caution reason and contributes a badge to the track row. Copy it to start.
 | `server_extension` | Register brand-new HTTP routes | `register_routes` |
 | `ui_extension` | Contribute UI into a named slot | `render_slot` (or purely declarative via `ui.slots`) |
 | `event_hook` | React to core events, no other interface | nothing required — subscribe in `on_load` |
-| `auth_provider` | SSO / reverse-proxy auth (planned, Phase 4) | *interface lands with implementation* |
+| `auth_provider` | Add an authentication source for the app login (SSO headers, API tokens) | `authenticate(request_headers)` — return a username, or `None` |
 | `library_source` | Source of artists/albums to monitor (the mirror of `downloader`) | `list_artists` (+ optional `poll`) — see `fnack.lidarr` |
 | `conflict_resolver` | Decide between duplicate/conflicting files (planned) | *interface lands with implementation* |
 | `recommendation` | Suggest artists/albums/tracks (planned) | *interface lands with implementation* |
@@ -584,6 +584,49 @@ maintenance.run
 ```
 
 ---
+
+### Can a plugin authenticate users? (`auth_provider`)
+
+fnack's own accounts — the `users` table, session login, roles — are **core**
+and are deliberately **not exposed to plugins**:
+
+- There is no `context.accounts` facade. A plugin cannot list users, read a
+  username/password, verify an account password, or create/promote/delete
+  accounts. The facades in the table above are the entire surface you get
+  (an architecture test enforces it).
+- A plugin **can** be an authentication *source* via the `auth_provider`
+  type:
+
+  ```python
+  from plugins.base import AuthProviderPlugin
+
+  class MyAuth(AuthProviderPlugin):
+      def authenticate(self, request_headers: dict):
+          token = request_headers.get("X-MyPlugin-Token")
+          user = self._lookup(token)     # your own credential store
+          return user or None            # a non-empty string authorizes
+  ```
+
+  Core calls every enabled provider on each request that has no session and
+  no valid M2M API key. Returning a username authorizes that request (the
+  identity is available as `g.fnack_user`); returning `None` moves on to the
+  next provider and finally to `/login`.
+- This is how "log in via API" works for a plugin: your clients send **your**
+  credential in a header, you validate it, and every `/api/*` route is then
+  allowed for that request. `fnack.reverse-proxy-auth` does exactly this
+  (Authelia/Authentik headers).
+- What a provider identity does **not** get: a `User` row, a role, account
+  management (`/api/accounts*` needs an admin *account*), or the UI account
+  chip (session logins only). Core accounts remain the only way to
+  create and manage users.
+- Order: session account → M2M API key → `auth_provider` plugins. The
+  provider check runs **before** the first-run setup gate, so an enabled
+  `auth_provider` can authenticate requests even when no fnack account
+  exists — deliberate for proxy/SSO deployments. Disable the plugin if you
+  want the local `/setup` gate to be authoritative.
+- A plugin's own `server.extension` routes are **not** open paths: they
+  require identity like any other route, so you cannot host your own
+  unauthenticated "login" endpoint — implement `authenticate()` instead.
 
 ## 5. UI slots
 
