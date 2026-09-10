@@ -79,7 +79,7 @@ def test_optional_plugins_are_not_essential() -> None:
     assert optional, "expected optional official plugins in bundled_plugins/"
     # Sanity: the optional set includes representative non-essential features.
     for pid in ["fnack.musicbrainz", "fnack.acoustid", "fnack.navidrome",
-                "fnack.vpn", "fnack.subsonic"]:
+                "fnack.vpn", "fnack.discord-webhook"]:
         assert pid in optional, f"{pid} should be optional (not essential)"
     # The deep architecture doc explicitly calls the optional ones installable.
     doc = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")

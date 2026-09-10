@@ -157,15 +157,17 @@ def test_official_bundle_capability_registration() -> None:
             f"download.track providers were {dl}"
         assert dl.index("fnack.spotiflac") < dl.index("fnack.ytdlp"), \
             "spotiflac (p10) must be tried before ytdlp (p50)"
-        # fingerprint, media, auth, network, notification, server ext.
+        # fingerprint, media, auth, network, notification. (server.extension
+        # used to ship bundled via fnack.subsonic — removed from the official
+        # catalog; only catalog-installable plugins like fnack.lidarr provide
+        # it now, so it is intentionally NOT in the bundled set.)
         assert reg.has("fingerprint.identify")
         assert reg.has("media.scan")
         assert reg.has("network.route")
-        assert reg.has("server.extension")
         assert reg.has("notification.event")
         # Every registered capability passed contract validation.
         for cap in ["download.track", "fingerprint.identify", "media.scan",
-                    "network.route", "server.extension", "notification.event"]:
+                    "network.route", "notification.event"]:
             assert reg.has(cap), f"official bundle must serve {cap}"
     logging.disable(logging.NOTSET)
 

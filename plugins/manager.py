@@ -15,6 +15,7 @@ plugin does, only how to load/run/retire one safely.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import logging
@@ -34,6 +35,47 @@ from plugins import PLUGIN_API_VERSION
 from plugins.base import PluginBase, PluginManifest
 from plugins.context import PluginContext
 from plugins.events import EventBus
+
+# Modules that give plugin code real network access WITHOUT going through
+# context.http. Importing one of these while the manifest does NOT declare
+# "network" is a manifest-contract bypass — detected at load and warned
+# about (see _network_capable_imports / load_plugin). Declaring "network" is
+# the honest signal; the scanner never blocks, it reports. 'urllib'/'http'
+# are package roots (their .request/.client submodules do the network I/O);
+# flagging a bare `import urllib` is a rare, harmless over-reach for a
+# warning-only scan.
+_NETWORK_IMPORT_MODULES = {
+    "requests", "urllib", "urllib.request", "http", "http.client",
+    "urllib3", "httpx", "aiohttp", "websocket", "websockets", "socket",
+}
+
+
+def _network_capable_imports(plugin_dir: Path) -> list[str]:
+    """AST-scan a plugin directory for imports of network-capable modules.
+
+    Returns the sorted ROOT module names found (e.g. ['requests', 'socket']),
+    so `from requests.adapters import HTTPAdapter` reports 'requests'.
+    Pure static scan — nothing is executed; unparseable files are skipped.
+    """
+    found: set[str] = set()
+    py_files = sorted(plugin_dir.rglob("*.py")) if plugin_dir.is_dir() else []
+    for py in py_files:
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    for m in _NETWORK_IMPORT_MODULES:
+                        if alias.name == m or alias.name.startswith(m + "."):
+                            found.add(m)
+            elif isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                for m in _NETWORK_IMPORT_MODULES:
+                    if mod == m or mod.startswith(m + "."):
+                        found.add(m)
+    return sorted(found)
 
 # Phase 1 (MASTER): capability registry is separate from PluginManager.
 from fnack.plugin_api.capabilities import (
@@ -227,6 +269,26 @@ class PluginManager:
     def load_plugin(self, plugin_dir: Path) -> LoadedPlugin:
         manifest = self._read_manifest(plugin_dir)
         self._check_compatibility(manifest)
+
+        # Honest-network check: importing requests/urllib/socket/etc. while
+        # the manifest does NOT declare "network" bypasses the context.http
+        # gate. Never a block (static scans can false-positive; in-process
+        # plugins can only be trusted, not sandboxed) — but it is surfaced
+        # loudly so authors notice the contract drift. Bundled official
+        # plugins are held to the same rule by an architecture test.
+        if "network" not in (manifest.permissions or []):
+            try:
+                imports = _network_capable_imports(plugin_dir)
+            except Exception:
+                imports = []
+            if imports:
+                logger.warning(
+                    "[PLUGINS] %s imports network-capable module(s) %s but does not "
+                    "declare 'network' in its manifest — this bypasses context.http "
+                    "(the permission gate). Declare the permission or route traffic "
+                    "through context.http.",
+                    manifest.id, ", ".join(imports),
+                )
 
         module = self._import_module(plugin_dir, manifest)
         cls_name = manifest.entry_point.split(":")[-1]
