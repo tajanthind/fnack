@@ -205,3 +205,230 @@ class User(db.Model):
     password_hash = db.Column(db.String(256), nullable=False)
     role = db.Column(db.String(16), default="user", nullable=False)  # admin | user
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# ---------------------------------------------------------------------------
+# Accounts: programmatic credentials
+# ---------------------------------------------------------------------------
+
+class ApiToken(db.Model):
+    """Account-scoped API credential for programmatic clients.
+
+    Only the SHA-256 hash of the token is stored (`token_hash`), so a leaked
+    database does not yield usable credentials; `prefix` keeps the first
+    characters for identification in listings. A token belongs to exactly one
+    account and inherits that account's identity on every request.
+
+    Deliberately generic: this is fnack's own credential type, not any
+    particular client protocol's.
+    """
+
+    __tablename__ = "api_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    label = db.Column(db.String(128), nullable=True)
+    prefix = db.Column(db.String(16), nullable=False, index=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    last_used_at = db.Column(db.DateTime, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+    revoked_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship("User", backref=db.backref("api_tokens", cascade="all, delete-orphan"))
+
+
+# ---------------------------------------------------------------------------
+# Per-account user state
+#
+# Every table below is explicitly scoped by `user_id` and references the
+# library through fnack's INTERNAL Artist/Album/Track ids. Those id columns
+# intentionally carry NO foreign-key constraint: user state must outlive
+# library churn (a track row deleted by a discography sync, a provider
+# replaced) instead of cascading away or blocking the delete. Each row also
+# keeps a small snapshot (title/artist/album/duration/isrc) so it stays
+# readable while the referenced object is not resolvable, and can be
+# re-attached to a re-created object through its ISRC.
+# ---------------------------------------------------------------------------
+
+class Playlist(db.Model):
+    """An account-owned, ordered list of library tracks."""
+
+    __tablename__ = "playlists"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    name = db.Column(db.String(256), nullable=False)
+    comment = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    items = db.relationship(
+        "PlaylistItem",
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+        order_by="PlaylistItem.position",
+    )
+
+
+class PlaylistItem(db.Model):
+    """One track entry inside a playlist.
+
+    `position` is unique per playlist (deterministic ordering, no duplicate or
+    conflicting positions) and always compacted to 0..n-1 by the service.
+    """
+
+    __tablename__ = "playlist_items"
+    __table_args__ = (
+        db.UniqueConstraint("playlist_id", "position", name="uq_playlist_items_position"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    playlist_id = db.Column(db.Integer, db.ForeignKey("playlists.id"), nullable=False, index=True)
+    position = db.Column(db.Integer, nullable=False, index=True)
+    track_id = db.Column(db.Integer, nullable=True, index=True)  # no FK: state outlives tracks
+    # Snapshot of the referenced track at write time (also the re-link key).
+    title = db.Column(db.String(512), nullable=True)
+    artist_name = db.Column(db.String(512), nullable=True)
+    album_name = db.Column(db.String(512), nullable=True)
+    duration = db.Column(db.Float, nullable=True)
+    isrc = db.Column(db.String(64), nullable=True, index=True)
+    added_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    playlist = db.relationship("Playlist", back_populates="items")
+
+
+class Favorite(db.Model):
+    """A starred library object (artist, album or track) for one account."""
+
+    __tablename__ = "favorites"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "item_type", "item_id", name="uq_favorites_item"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    item_type = db.Column(db.String(16), nullable=False, index=True)  # artist | album | track
+    item_id = db.Column(db.Integer, nullable=False, index=True)
+    name = db.Column(db.String(512), nullable=True)   # snapshot for display
+    isrc = db.Column(db.String(64), nullable=True, index=True)  # tracks only; re-link key
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Rating(db.Model):
+    """A 1..5 rating of a library object for one account."""
+
+    __tablename__ = "ratings"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "item_type", "item_id", name="uq_ratings_item"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    item_type = db.Column(db.String(16), nullable=False, index=True)  # artist | album | track
+    item_id = db.Column(db.Integer, nullable=False, index=True)
+    rating = db.Column(db.Integer, nullable=False)  # 1..5
+    isrc = db.Column(db.String(64), nullable=True, index=True)  # tracks only; re-link key
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class Bookmark(db.Model):
+    """A per-account playback position inside a track (or album)."""
+
+    __tablename__ = "bookmarks"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "item_type", "item_id", name="uq_bookmarks_item"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    item_type = db.Column(db.String(16), nullable=False, index=True)  # track | album
+    item_id = db.Column(db.Integer, nullable=False, index=True)
+    position_ms = db.Column(db.Integer, nullable=False, default=0)
+    comment = db.Column(db.Text, nullable=True)
+    title = db.Column(db.String(512), nullable=True)          # snapshot
+    isrc = db.Column(db.String(64), nullable=True, index=True)  # tracks only; re-link key
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class Scrobble(db.Model):
+    """One playback event recorded for an account (play history)."""
+
+    __tablename__ = "scrobbles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    track_id = db.Column(db.Integer, nullable=True, index=True)  # no FK: history outlives tracks
+    # Snapshot so history stays meaningful after library churn.
+    title = db.Column(db.String(512), nullable=True)
+    artist_name = db.Column(db.String(512), nullable=True)
+    album_name = db.Column(db.String(512), nullable=True)
+    duration = db.Column(db.Float, nullable=True)
+    isrc = db.Column(db.String(64), nullable=True, index=True)
+    played_at = db.Column(db.DateTime, nullable=False, index=True,
+                          default=lambda: datetime.now(timezone.utc))
+    submission = db.Column(db.Boolean, nullable=False, default=True)  # reported vs started
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class PlayQueue(db.Model):
+    """The account's saved play queue (one per account) with its cursor."""
+
+    __tablename__ = "play_queues"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    current_index = db.Column(db.Integer, nullable=False, default=0)
+    position_ms = db.Column(db.Integer, nullable=False, default=0)
+    changed_by = db.Column(db.String(128), nullable=True)
+    changed_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    entries = db.relationship(
+        "PlayQueueEntry",
+        back_populates="queue",
+        cascade="all, delete-orphan",
+        order_by="PlayQueueEntry.position",
+    )
+
+
+class PlayQueueEntry(db.Model):
+    """One track in a saved queue; `position` is unique per account."""
+
+    __tablename__ = "play_queue_entries"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "position", name="uq_play_queue_entries_position"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    queue_id = db.Column(db.Integer, db.ForeignKey("play_queues.id"), nullable=False, index=True)
+    position = db.Column(db.Integer, nullable=False, index=True)
+    track_id = db.Column(db.Integer, nullable=True, index=True)  # no FK: state outlives tracks
+    title = db.Column(db.String(512), nullable=True)
+    artist_name = db.Column(db.String(512), nullable=True)
+    album_name = db.Column(db.String(512), nullable=True)
+    duration = db.Column(db.Float, nullable=True)
+    isrc = db.Column(db.String(64), nullable=True, index=True)
+    added_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    queue = db.relationship("PlayQueue", back_populates="entries")

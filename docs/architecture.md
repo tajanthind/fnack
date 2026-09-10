@@ -180,6 +180,40 @@ initial **admin** account is created; `/login` then guards everything else.
 - `/health`, `/static` and the Socket.IO transport stay open (probes/UX);
   every data-bearing route requires an identity.
 
+## Accounts, user state & integrations
+
+fnack core owns three generic things that any external server, client or
+automation can build on — and nothing protocol-specific:
+
+- **Accounts** (`services/accounts.py`): multiple independent users, scrypt
+  password hashes, session login for the web UI, and account-scoped **API
+  tokens** stored only as SHA-256 hashes.
+- **Library queries** (`services/library_query.py`): provider-neutral artist /
+  album / track search, filters, sorting, direct id lookup and counts, always
+  SQL-paginated (an integration never loads the library into memory).
+- **Per-account user state** (`services/user_state.py`): playlists with
+  deterministic, unique per-owner ordering, favorites, ratings, bookmarks,
+  scrobble history and the saved play queue.
+
+Interaction rules:
+
+- Everything user-state is scoped to an account and enforced in the service
+  layer; cross-account access is reported as "not found" rather than leaking
+  existence.
+- User state references the **internal** `Artist`/`Album`/`Track` ids. The id
+  columns carry no foreign key on purpose: hard-deleting a library row must
+  never cascade away or block user state. Rows keep a snapshot and are
+  re-attached by ISRC if the recording is re-created (e.g. by a different
+  provider) — see "State outlives the library" in docs/integration-api.md.
+- Metadata providers stay separately scoped and opaque: `provider_id` +
+  `external_id` identify an object *to that provider only* and are never a
+  primary reference or a requirement for resolving saved state.
+- The integration boundary is the versioned HTTP API in
+  `services/integration_api.py` (`/api/integration/v1`, see
+  docs/integration-api.md). External systems consume JSON over HTTP with an
+  account token; they do not import core modules and core does not implement
+  their protocols. SQLAlchemy models are not the integration contract.
+
 ## Essential vs optional packaging
 
 The Docker image ships **only** the essential plugins — the set required for

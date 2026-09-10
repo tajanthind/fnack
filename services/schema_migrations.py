@@ -193,6 +193,25 @@ def run_schema_migrations(engine=None) -> None:
             except Exception:
                 logger.exception("[SCHEMA] artists per-provider rebuild failed")
 
+            # Per-account user state + API tokens (playlists, playlist items,
+            # favorites, ratings, bookmarks, scrobble history, saved queue,
+            # account tokens). Additive and idempotent: create_all with
+            # checkfirst only creates what is missing, so an existing
+            # installation keeps every library row and every account.
+            try:
+                from models import (  # noqa: PLC0415 - migration-local import
+                    ApiToken, Bookmark, Favorite, Playlist, PlaylistItem, PlayQueue,
+                    PlayQueueEntry, Rating, Scrobble,
+                )
+                _user_state_tables = [
+                    ApiToken.__table__, Playlist.__table__, PlaylistItem.__table__,
+                    Favorite.__table__, Rating.__table__, Bookmark.__table__,
+                    Scrobble.__table__, PlayQueue.__table__, PlayQueueEntry.__table__,
+                ]
+                db.metadata.create_all(bind=conn, tables=_user_state_tables, checkfirst=True)
+            except Exception:
+                logger.exception("[SCHEMA] user-state tables migration failed")
+
             # Indexes for the provider-scoped identity model (recreated after
             # the artists rebuild dropped the old ones; idempotent).
             for ddl in [

@@ -102,14 +102,14 @@ class LibraryContext:
         return [{"id": t.id, "title": t.title, "isrc": t.isrc} for t in rows]
 
     def list_artists(self) -> list[dict]:
-        """All artists (for Subsonic-style server extensions)."""
+        """All artists (for server-extension plugins)."""
         self._check("library:read")
         from models import Artist
         return [{"id": a.id, "name": a.name, "image_url": a.image_url}
                 for a in Artist.query.order_by(Artist.name).all()]
 
     def list_albums(self, artist_id: Optional[int] = None, limit: int = 500) -> list[dict]:
-        """Albums, optionally filtered by artist (Subsonic album list)."""
+        """Albums, optionally filtered by artist (server album listing)."""
         self._check("library:read")
         from models import Album
         q = Album.query
@@ -121,7 +121,7 @@ class LibraryContext:
                  "is_downloaded": a.is_downloaded} for a in rows]
 
     def list_tracks(self, album_id: Optional[int] = None, limit: int = 1000) -> list[dict]:
-        """Tracks, optionally filtered by album (Subsonic song list)."""
+        """Tracks, optionally filtered by album (server track listing)."""
         self._check("library:read")
         from models import Track
         q = Track.query
@@ -156,7 +156,7 @@ class LibraryContext:
 
     def get_api_key(self) -> str:
         """The configured M2M API key ('' if unset). Exposed so server-
-        extension plugins (e.g. Subsonic) can authenticate clients against
+        server-extension plugins can authenticate clients against
         the same key without touching models directly."""
         self._check("library:read")
         return self.get_setting("api_key", "").strip()
