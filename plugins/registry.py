@@ -98,10 +98,22 @@ class PluginRegistry:
     # -- browsing -----------------------------------------------------------
 
     def list_available(self) -> list[dict]:
-        """Merged, de-duplicated (by id, newest wins) plugin listing across
-        every enabled repository's cached index, annotated with whether
-        it's already installed and whether the id is a bundled plugin
-        (bundled wins — never installable from a repo).
+        """Marketplace browse — ONE entry per (repository, plugin), no
+        silent cross-repo de-duplication.
+
+        Identity contract (see docs/architecture.md, "Marketplace identity"):
+          * A plugin id names a plugin ON DISK; repositories are independent
+            catalogs and may publish the same id with different content.
+          * Browse shows every (repo, plugin) pair, each tagged with its
+            source repository. Duplicates are surfaced, never resolved
+            implicitly: every entry carries ``also_in_repos`` (the other
+            enabled repositories publishing the same id) and
+            ``installed_elsewhere`` when the id is already installed from a
+            different repository.
+          * Install/update always name their source repository
+            (source_repo_id). An install WITHOUT one is refused when more
+            than one enabled repository publishes the id — no implicit
+            "first repo that has it" anywhere.
 
         "Installed" is computed from what is PHYSICALLY present (a bundled
         dir in the image or a dir under the plugins dir), not from orphaned
@@ -123,6 +135,11 @@ class PluginRegistry:
             pass
         installed_ids = {p.id: p.version for p in InstalledPlugin.query.all()
                          if p.id in present_ids}
+        installed_sources = {
+            p.id: p.source_repo_id
+            for p in InstalledPlugin.query.all()
+            if p.id in present_ids and p.source_repo_id is not None
+        }
         bundled_ids = set()
         try:
             bundled_ids = {d.name for d in self.manager.discover_bundled()}
@@ -139,11 +156,15 @@ class PluginRegistry:
             }
         except Exception:
             tombstoned = set()
-        merged: dict[str, dict] = {}
+        entries: list[dict] = []
+        by_id: dict[str, list[dict]] = {}
         for repo in PluginRepository.query.filter_by(enabled=True).all():
             if not repo.cached_index_json:
                 continue
-            index = json.loads(repo.cached_index_json)
+            try:
+                index = json.loads(repo.cached_index_json)
+            except Exception:
+                continue
             for entry in index.get("plugins", []):
                 entry = dict(entry)
                 entry["source_repo_id"] = repo.id
@@ -161,17 +182,119 @@ class PluginRegistry:
                 if isinstance(caps, str):
                     caps = [caps]
                 entry["capabilities"] = [str(c) for c in caps]
-                merged[entry["id"]] = entry
-        return list(merged.values())
+                entry["installed_from_repo_id"] = installed_sources.get(entry.get("id"))
+                entry["installed_elsewhere"] = bool(
+                    entry["installed_from_repo_id"]
+                    and entry["installed_from_repo_id"] != repo.id
+                )
+                by_id.setdefault(entry["id"], []).append(entry)
+                entries.append(entry)
+        # Duplicate detection across enabled repositories: every entry lists
+        # the OTHER repositories publishing the same id (warning surface).
+        for e in entries:
+            others = [o for o in by_id.get(e["id"], [])
+                      if o is not e and o["source_repo_id"] != e["source_repo_id"]]
+            e["also_in_repos"] = [{
+                "repo_id": o["source_repo_id"],
+                "repo_name": o["source_repo_name"],
+                "latest_version": o.get("latest_version"),
+            } for o in others]
+        return entries
+
+    def _repos_publishing(self, plugin_id: str) -> list[dict]:
+        """Every enabled repository whose cached index publishes ``plugin_id``
+        as [{repo_id, repo_name, entry}]. One per repository."""
+        out: list[dict] = []
+        for repo in PluginRepository.query.filter_by(enabled=True).all():
+            if not repo.cached_index_json:
+                continue
+            try:
+                index = json.loads(repo.cached_index_json)
+            except Exception:
+                continue
+            for entry in index.get("plugins", []):
+                if entry.get("id") == plugin_id:
+                    out.append({
+                        "repo_id": repo.id,
+                        "repo_name": repo.name,
+                        "entry": entry,
+                    })
+                    break
+        return out
+
+    def repository_conflicts(self, repo_id: int) -> list[dict]:
+        """Duplicate-id warnings for one repository: every plugin id it
+        publishes that ANOTHER enabled repository also publishes. Returns
+        [{plugin_id, other_repos: [names]}] — empty when no duplicates."""
+        repo = db.session.get(PluginRepository, repo_id)
+        if not repo or not repo.cached_index_json:
+            return []
+        try:
+            mine_ids = {e.get("id") for e in (json.loads(repo.cached_index_json) or {}).get("plugins", []) if e.get("id")}
+        except Exception:
+            return []
+        others = [
+            o for o in PluginRepository.query.filter(
+                PluginRepository.enabled.is_(True),
+                PluginRepository.id != repo_id).all()
+            if o.cached_index_json
+        ]
+        other_ids: dict[str, set] = {}
+        for o in others:
+            try:
+                oids = {e.get("id") for e in (json.loads(o.cached_index_json) or {}).get("plugins", []) if e.get("id")}
+            except Exception:
+                continue
+            for pid in oids:
+                other_ids.setdefault(pid, set()).add(o.name)
+        return [
+            {"plugin_id": pid, "other_repos": sorted(names)}
+            for pid, names in other_ids.items() if pid in mine_ids
+        ]
 
     # -- install / update / uninstall ---------------------------------------
 
-    def install(self, plugin_id: str, version: Optional[str] = None) -> InstalledPlugin:
-        entry, repo_id = self._find_entry(plugin_id)
+    def install(self, plugin_id: str, version: Optional[str] = None,
+                source_repo_id: Optional[int] = None) -> InstalledPlugin:
+        """Install ``plugin_id`` FROM AN EXPLICIT SOURCE REPOSITORY.
+
+        ``source_repo_id`` is provenance, not a hint: when given, the id must
+        be published by that repository or the install is refused. When
+        omitted, exactly one enabled repository may publish the id — more
+        than one is REFUSED as ambiguous (candidates are listed) rather than
+        silently resolving to whichever repo was added first."""
+        repos = self._repos_publishing(plugin_id)
+        if not repos:
+            raise RegistryError(f"{plugin_id} not found in any added repository")
+        if source_repo_id is not None:
+            chosen = next((r for r in repos if r["repo_id"] == source_repo_id), None)
+            if chosen is None:
+                names = ", ".join(f"{r['repo_name']} (id {r['repo_id']})" for r in repos)
+                raise RegistryError(
+                    f"{plugin_id} is not published by repository {source_repo_id} — "
+                    f"it is published by: {names}"
+                )
+        elif len(repos) == 1:
+            chosen = repos[0]
+        else:
+            names = ", ".join(
+                f"{r['repo_name']} (id {r['repo_id']}, v{r['entry'].get('latest_version')})"
+                for r in repos
+            )
+            raise RegistryError(
+                f"'{plugin_id}' is published by more than one enabled repository: "
+                f"{names}. Installs are repo-scoped — pass the source_repo_id "
+                f"of the repository you want to install from."
+            )
+        entry = chosen["entry"]
+        repo_id = chosen["repo_id"]
         version = version or entry["latest_version"]
         version_info = entry.get("versions", {}).get(version)
         if not version_info:
-            raise RegistryError(f"{plugin_id} has no published version {version}")
+            raise RegistryError(
+                f"{plugin_id} {version} is not published by repository "
+                f"'{chosen['repo_name']}' (has: {sorted((entry.get('versions') or {}).keys())})"
+            )
 
         # FAIL CLOSED: every install must be checksummed. A repository index
         # entry that omits sha256 is refused — no unchecked code path exists.
@@ -204,7 +327,7 @@ class PluginRegistry:
         row.version = manifest.version
         row.type = ",".join(manifest.type)
         row.trust_level = manifest.trust_level
-        row.source_repo_id = repo_id
+        row.source_repo_id = repo_id  # provenance recorded for future updates
         row.manifest_json = json.dumps(entry)
         row.enabled = True
         db.session.commit()
@@ -213,9 +336,24 @@ class PluginRegistry:
         return row
 
     def update(self, plugin_id: str) -> InstalledPlugin:
-        # Settings (PluginSetting rows) are keyed by plugin_id, independent
-        # of InstalledPlugin, so they survive this re-install untouched.
-        return self.install(plugin_id, version=None)
+        """Update an installed plugin from the repository it was INSTALLED
+        from (row.source_repo_id) — never from whichever repo happens to be
+        queried first. Settings (PluginSetting rows) are keyed by plugin_id,
+        independent of InstalledPlugin, so they survive this re-install
+        untouched."""
+        row = db.session.get(InstalledPlugin, plugin_id)
+        if row is None or row.source_repo_id is None:
+            raise RegistryError(
+                f"{plugin_id} has no recorded source repository — only "
+                f"marketplace-installed plugins can update independently"
+            )
+        repo = db.session.get(PluginRepository, row.source_repo_id)
+        if repo is None or not repo.enabled or not repo.cached_index_json:
+            raise RegistryError(
+                f"the source repository of {plugin_id} is gone or disabled — "
+                f"re-add/refresh it, then update"
+            )
+        return self.install(plugin_id, version=None, source_repo_id=row.source_repo_id)
 
     def uninstall(self, plugin_id: str) -> None:
         self.manager.unload_plugin(plugin_id)
@@ -227,33 +365,27 @@ class PluginRegistry:
         if dest_dir.exists():
             shutil.rmtree(dest_dir)
 
-    def _find_entry(self, plugin_id: str) -> tuple[dict, Optional[int]]:
-        for repo in PluginRepository.query.filter_by(enabled=True).all():
-            if not repo.cached_index_json:
-                continue
-            index = json.loads(repo.cached_index_json)
-            for entry in index.get("plugins", []):
-                if entry.get("id") == plugin_id:
-                    return entry, repo.id
-        raise RegistryError(f"{plugin_id} not found in any added repository")
-
     def latest_versions(self) -> dict[str, str]:
-        """{plugin_id: latest_version} across every enabled repository's
-        cached index (newest wins for duplicates). Used by the Installed
-        list to flag update_available (Brief 6 §3)."""
+        """{plugin_id: latest_version} for update flags — SOURCE-AWARE: each
+        installed plugin is checked against the repository it was installed
+        from, so a duplicate id in another repository never drives the
+        "update available" flag for an install that did not come from it."""
         out: dict[str, str] = {}
-        for repo in PluginRepository.query.filter_by(enabled=True).all():
-            if not repo.cached_index_json:
-                continue
+        for row in InstalledPlugin.query.filter(
+                InstalledPlugin.source_repo_id.isnot(None)).all():
+            repo = db.session.get(PluginRepository, row.source_repo_id)
+            if not repo or not repo.enabled or not repo.cached_index_json:
+                continue  # source repo gone — no update signal
             try:
                 index = json.loads(repo.cached_index_json)
             except Exception:
                 continue
             for entry in index.get("plugins", []):
-                pid = entry.get("id")
-                lv = entry.get("latest_version")
-                if pid and lv:
-                    out[pid] = lv
+                if entry.get("id") == row.id:
+                    lv = entry.get("latest_version")
+                    if lv:
+                        out[row.id] = lv
+                    break
         return out
 
     def _download(self, url: str) -> bytes:

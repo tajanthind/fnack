@@ -48,8 +48,14 @@ function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
 
-  const bg = type === 'error' ? 'bg-danger' : type === 'success' ? 'bg-success' : 'bg-info text-dark';
-  const icon = type === 'error' ? 'fa-exclamation-circle' : type === 'success' ? 'fa-check-circle' : 'fa-info-circle';
+  const bg = (type === 'error' || type === 'danger') ? 'bg-danger'
+    : type === 'success' ? 'bg-success'
+    : type === 'warning' ? 'bg-warning text-dark'
+    : 'bg-info text-dark';
+  const icon = (type === 'error' || type === 'danger') ? 'fa-exclamation-circle'
+    : type === 'success' ? 'fa-check-circle'
+    : type === 'warning' ? 'fa-exclamation-triangle'
+    : 'fa-info-circle';
   const id = 'toast_' + Date.now();
 
   const html = `
@@ -2079,21 +2085,33 @@ async function loadMarketplacePage() {
       const bundled = e.bundled;
       const hasUpdate = installedV && e.latest_version && installedV !== e.latest_version;
       const compat = pluginCompat(e);
+      // Repo-scoped identity: installs carry source_repo_id. A duplicate id
+      // from another repo is a DIFFERENT listing, shown and labelled as such.
+      const src = e.source_repo_id ? `, '${e.source_repo_id}'` : '';
       let action = '';
       if (!compat.compatible) {
         // Brief 6 §4: incompatible — show it, grey it out, explain why.
         action = `<span class="badge bg-danger-subtle text-danger" title="${escapeHtml(compat.reason)}">Unsupported — ${escapeHtml(compat.reason)}</span>`;
       } else if (bundled) {
         action = '<span class="badge bg-secondary-subtle text-secondary">Installed (bundled)</span>';
+      } else if (e.installed_elsewhere) {
+        // Same id, installed from a DIFFERENT repository — switching source
+        // is an explicit user action, never implicit.
+        action = `<span class="badge bg-info-subtle text-info small me-1">Installed from another repo</span>
+                  <button class="btn btn-sm btn-brand" onclick="installPlugin('${escapeHtml(e.id)}', '${escapeHtml(e.latest_version)}'${src})">Switch to v${escapeHtml(e.latest_version)}</button>`;
       } else if (installedV && !hasUpdate) {
         action = `<span class="badge bg-success-subtle text-success">Installed v${escapeHtml(installedV)}</span>`;
       } else if (installedV && hasUpdate) {
-        action = `<button class="btn btn-sm btn-brand" onclick="installPlugin('${escapeHtml(e.id)}', '${escapeHtml(e.latest_version)}')">Update to v${escapeHtml(e.latest_version)}</button>`;
+        action = `<button class="btn btn-sm btn-brand" onclick="installPlugin('${escapeHtml(e.id)}', '${escapeHtml(e.latest_version)}'${src})">Update to v${escapeHtml(e.latest_version)}</button>`;
       } else {
-        action = `<button class="btn btn-sm btn-brand" onclick="installPlugin('${escapeHtml(e.id)}', '${escapeHtml(e.latest_version)}')">Install v${escapeHtml(e.latest_version)}</button>`;
+        action = `<button class="btn btn-sm btn-brand" onclick="installPlugin('${escapeHtml(e.id)}', '${escapeHtml(e.latest_version)}'${src})">Install v${escapeHtml(e.latest_version)}</button>`;
       }
       const perms = (e.permissions || []).length
         ? `<div class="small text-secondary mt-1">Permissions: ${e.permissions.map(escapeHtml).join(', ')}</div>`
+        : '';
+      // Duplicate warning: the same id exists in another enabled repository.
+      const dupWarn = (e.also_in_repos || []).length
+        ? `<div class="small text-warning mt-1" title="This plugin id is published by multiple enabled repositories — installs are repo-scoped, so you choose the source; duplicates are never merged silently."><i class="fas fa-exclamation-triangle me-1"></i>Also in: ${e.also_in_repos.map(o => escapeHtml(o.repo_name) + ' v' + escapeHtml(o.latest_version || '?')).join(', ')}</div>`
         : '';
       html += `<div class="col-12 col-md-6 col-xl-4">
         <div class="card bg-dark-card border-0 shadow-sm h-100">
@@ -2107,7 +2125,8 @@ async function loadMarketplacePage() {
             </div>
             <p class="text-secondary small mt-2 mb-2">${escapeHtml(e.description || '')}</p>
             ${(e.capabilities || []).length ? `<div class="small mb-2">${(e.capabilities || []).map(c => `<span class="badge bg-info-subtle text-info font-monospace me-1" style="font-size: 0.7rem;">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
-            <div class="small text-secondary">${escapeHtml(e.source_repo_name || '')}</div>
+            <div class="small text-secondary"><i class="fas fa-database me-1"></i>${escapeHtml(e.source_repo_name || '')}</div>
+            ${dupWarn}
             ${perms}
             <div class="d-flex align-items-center justify-content-between mt-3">
               ${pluginCompatBadge(e)}
@@ -2124,20 +2143,23 @@ async function loadMarketplacePage() {
   }
 }
 
-async function installPlugin(pluginId, version) {
+async function installPlugin(pluginId, version, sourceRepoId) {
   // Community trust confirmation dialog (PLUGIN_ARCHITECTURE.md §6).
+  // sourceRepoId is PROVENANCE: the repo this listing came from.
   showConfirmModal(
     `Install ${pluginId}`,
     `<div class="small">
-      <p>This will download and install <strong>${escapeHtml(pluginId)}</strong> v${escapeHtml(version)} from a third-party repository.</p>
+      <p>This will download and install <strong>${escapeHtml(pluginId)}</strong> v${escapeHtml(version)}${sourceRepoId ? ' from the selected repository' : ''}.</p>
       <p class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>Plugins run in-process. Only install from sources you trust.</p>
     </div>`,
     async () => {
       try {
+        const body = { plugin_id: pluginId, version };
+        if (sourceRepoId) body.source_repo_id = sourceRepoId;
         const resp = await fetch('/api/plugins/install', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ plugin_id: pluginId, version }),
+          body: JSON.stringify(body),
         });
         const data = await resp.json();
         if (!resp.ok) { showToast(data.error || 'Install failed', 'danger'); return; }
@@ -2210,6 +2232,7 @@ async function addRepository() {
     const data = await resp.json();
     if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
     showToast(`Added repository '${data.name}'`, 'success');
+    if (data.warning) { showToast(data.warning, 'warning'); }
     loadRepositoriesPage();
   } catch (e) {
     showToast('Network error: ' + e.message, 'danger');
@@ -2222,6 +2245,7 @@ async function refreshRepository(repoId) {
     const data = await resp.json();
     if (!resp.ok) { showToast(data.error || 'Failed', 'danger'); return; }
     showToast('Repository refreshed', 'success');
+    if (data.warning) { showToast(data.warning, 'warning'); }
     loadRepositoriesPage();
   } catch (e) {
     showToast('Network error: ' + e.message, 'danger');
